@@ -221,6 +221,25 @@ impl MemoryMissionRegistry {
     }
 }
 
+/// Terminated tombstones are retained for this long PAST their own expiry, so a
+/// deliberately-ended grant cannot be replayed the moment it lapses. The identity
+/// layer's `approve()` expiry guard is the primary defense (a dead mission is never
+/// granted); this keeps the store itself refusing re-registration for a bounded
+/// window and bounds how long a terminated tombstone lingers. Active entries are
+/// still evicted at their expiry.
+const TERMINATED_TOMBSTONE_RETENTION_SECS: u64 = 30 * 24 * 60 * 60; // 30 days
+
+/// Whether a registry entry survives GC at `now`: an active entry lives until its
+/// expiry; a terminated tombstone lives for a retention horizon past it, so expiry
+/// can never launder a termination into an Active re-registration.
+fn mission_entry_retained(e: &MissionEntry, now: u64) -> bool {
+    if e.terminated {
+        e.expiry.saturating_add(TERMINATED_TOMBSTONE_RETENTION_SECS) > now
+    } else {
+        e.expiry > now
+    }
+}
+
 /// Shared register logic: GC expired, then insert-if-new / no-op-if-active /
 /// refuse-if-terminated. Returns `(result, dirty)` for the durable backend.
 fn mission_register(
@@ -229,7 +248,7 @@ fn mission_register(
     entry: MissionEntry,
     now: u64,
 ) -> (Result<(), StoreError>, bool) {
-    map.retain(|_, e| e.expiry > now);
+    map.retain(|_, e| mission_entry_retained(e, now));
     match map.get(s256) {
         Some(existing) if existing.terminated => (
             Err(StoreError::Invalid(format!(
@@ -238,6 +257,19 @@ fn mission_register(
             false,
         ),
         Some(_) => (Ok(()), false), // already active — idempotent no-op
+        None if entry.expiry <= now => (
+            // Self-monotone: refuse registering an already-expired mission, independent of
+            // the identity-layer approve() guard. Combined with retaining terminated
+            // tombstones past expiry, this makes "expiry can never launder a termination
+            // into an Active re-registration" true for ALL callers of this crate, not only
+            // approve(). (An expired ACTIVE entry was already dropped by the retain above,
+            // so an expired blob arrives here as None.)
+            Err(StoreError::Invalid(format!(
+                "mission {s256} expiry {} is not in the future (now {now}); cannot register",
+                entry.expiry
+            ))),
+            false,
+        ),
         None => {
             map.insert(s256.to_owned(), entry);
             (Ok(()), true)
@@ -258,7 +290,7 @@ impl MissionRegistry for MemoryMissionRegistry {
 
     fn terminate(&self, s256: &str, now: u64) -> Result<(), StoreError> {
         let mut g = self.inner.lock().map_err(poisoned)?;
-        g.retain(|_, e| e.expiry > now);
+        g.retain(|_, e| mission_entry_retained(e, now));
         if let Some(e) = g.get_mut(s256) {
             e.terminated = true;
         }
@@ -294,7 +326,7 @@ impl MissionRegistry for FileMissionRegistry {
 
     fn terminate(&self, s256: &str, now: u64) -> Result<(), StoreError> {
         self.inner.write(|map| {
-            map.retain(|_, e| e.expiry > now);
+            map.retain(|_, e| mission_entry_retained(e, now));
             let dirty = match map.get_mut(s256) {
                 Some(e) if !e.terminated => {
                     e.terminated = true;
@@ -934,6 +966,56 @@ mod tests {
             "expired mission GC'd on write"
         );
         assert!(r.status("new").unwrap().is_some());
+    }
+
+    #[test]
+    fn terminated_mission_does_not_revive_after_expiry() {
+        // A terminated mission must not come back as Active once its own expiry lapses.
+        // Before the fix, mission_register's `retain(e.expiry > now)` ran BEFORE the
+        // terminated-check, so the terminated tombstone was GC-evicted at expiry and
+        // re-registering the identical s256 returned Active — expiry laundered a
+        // termination. Terminated tombstones are now retained past expiry, so the store
+        // keeps refusing re-registration.
+        let r = MemoryMissionRegistry::new();
+        r.register("m", mentry("corp", 1_000), 100).unwrap();
+        r.terminate("m", 100).unwrap();
+        assert!(
+            r.status("m").unwrap().unwrap().terminated,
+            "terminated tombstone present"
+        );
+        // advance `now` past the mission's own expiry, then re-register the identical
+        // s256: it must STILL be refused, not revived to Active.
+        let revived = r.register("m", mentry("corp", 1_000), 5_000);
+        assert!(
+            revived.is_err(),
+            "a terminated grant must not re-register as Active after its expiry"
+        );
+        if let Some(e) = r.status("m").unwrap() {
+            assert!(e.terminated, "must stay terminated, never revive to Active");
+        }
+    }
+
+    #[test]
+    fn register_refuses_an_already_expired_mission() {
+        // The store is self-monotone: registering a mission whose expiry has already
+        // passed is refused, independent of the identity-layer approve() guard — so a
+        // direct decern-store consumer cannot create (or revive) an expired entry as Active.
+        let r = MemoryMissionRegistry::new();
+        assert!(
+            r.register("m", mentry("corp", 1_000), 5_000).is_err(),
+            "an already-expired new registration must be refused"
+        );
+        // The direct-bypass revival: terminate, wait past the tombstone retention horizon
+        // (so the tombstone is GC-evicted), then re-register the identical expired grant —
+        // still refused, now by the expiry guard rather than the tombstone.
+        r.register("m2", mentry("corp", 1_000), 100).unwrap();
+        r.terminate("m2", 100).unwrap();
+        let past_horizon = 1_000 + 30 * 24 * 60 * 60 + 1;
+        assert!(
+            r.register("m2", mentry("corp", 1_000), past_horizon)
+                .is_err(),
+            "an expired terminated grant must not re-register even after the tombstone horizon"
+        );
     }
 
     #[test]

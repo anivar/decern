@@ -118,7 +118,9 @@ impl ApprovedMission {
 /// When a [`MissionRegistry`] is supplied the approval is RECORDED (active, keyed by
 /// its `s256`) so that a later mint can verify the mission reference names a real,
 /// live approval — and so a termination is effective beyond this handle. Registering
-/// an `s256` already present as terminated is refused by the registry (no revival).
+/// an `s256` already present as terminated is refused by the registry, and an
+/// already-expired mission is refused outright — so a terminated grant cannot revive,
+/// even after its tombstone is GC-evicted at expiry.
 pub fn approve(
     model: &Model,
     mission: Mission,
@@ -145,6 +147,18 @@ pub fn approve(
         return Err(IdentityError::SubjectInvalid(format!(
             "mission expiry {} outlives approver {} authority ({expiry})",
             mission.expiry, mission.approver
+        )));
+    }
+    // An already-expired mission must never be approved. `now` is authoritative
+    // (server-set). Without this guard, a terminated mission whose registry tombstone
+    // has been GC-evicted after its own expiry could be re-approved with the identical
+    // blob and re-registered as Active — a revival. Refusing a dead mission at the
+    // source makes termination and expiry jointly monotone (see decern-store's
+    // terminated-tombstone retention for the store-layer half of the same guarantee).
+    if mission.expiry <= now {
+        return Err(IdentityError::SubjectInvalid(format!(
+            "mission expiry {} is not in the future (now {now}); an expired mission cannot be approved",
+            mission.expiry
         )));
     }
 
@@ -311,6 +325,50 @@ mod tests {
             approve(&Model::builtin(), m, 100, None).unwrap_err(),
             IdentityError::SubjectInvalid(_)
         ));
+    }
+
+    #[test]
+    fn approve_refuses_an_already_expired_mission() {
+        // Guard: an expiry at-or-before `now` is a dead mission and must be refused.
+        // Identity-layer half of closing the terminated-grant revival — a terminated
+        // mission whose registry tombstone is GC-evicted after its own expiry can never
+        // be re-approved back into Active.
+        let err = approve(&Model::builtin(), mission(&["read"], 1_000), 1_000, None).unwrap_err();
+        assert!(
+            matches!(err, IdentityError::SubjectInvalid(_)),
+            "expiry == now: {err}"
+        );
+        let err = approve(&Model::builtin(), mission(&["read"], 1_000), 5_000, None).unwrap_err();
+        assert!(
+            matches!(err, IdentityError::SubjectInvalid(_)),
+            "expiry < now: {err}"
+        );
+    }
+
+    #[test]
+    fn approve_refuses_reviving_an_expired_terminated_grant() {
+        // approve (future expiry) → terminate → advance past expiry → an identical
+        // re-approval must be refused, not re-registered as Active.
+        let reg = decern_store::MemoryMissionRegistry::new();
+        let mut m = approve(
+            &Model::builtin(),
+            mission(&["read"], 1_000),
+            100,
+            Some(&reg),
+        )
+        .unwrap();
+        m.terminate(Some(&reg), 100).unwrap();
+        let err = approve(
+            &Model::builtin(),
+            mission(&["read"], 1_000),
+            5_000,
+            Some(&reg),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, IdentityError::SubjectInvalid(_)),
+            "an identical, now-expired grant must not revive to Active: {err}"
+        );
     }
 
     #[test]
