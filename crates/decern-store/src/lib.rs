@@ -225,7 +225,8 @@ impl MemoryMissionRegistry {
 /// deliberately-ended grant cannot be replayed the moment it lapses. The identity
 /// layer's `approve()` expiry guard is the primary defense (a dead mission is never
 /// granted); this keeps the store itself refusing re-registration for a bounded
-/// window and caps map growth. Active entries are still evicted at their expiry.
+/// window and bounds how long a terminated tombstone lingers. Active entries are
+/// still evicted at their expiry.
 const TERMINATED_TOMBSTONE_RETENTION_SECS: u64 = 30 * 24 * 60 * 60; // 30 days
 
 /// Whether a registry entry survives GC at `now`: an active entry lives until its
@@ -256,6 +257,19 @@ fn mission_register(
             false,
         ),
         Some(_) => (Ok(()), false), // already active — idempotent no-op
+        None if entry.expiry <= now => (
+            // Self-monotone: refuse registering an already-expired mission, independent of
+            // the identity-layer approve() guard. Combined with retaining terminated
+            // tombstones past expiry, this makes "expiry can never launder a termination
+            // into an Active re-registration" true for ALL callers of this crate, not only
+            // approve(). (An expired ACTIVE entry was already dropped by the retain above,
+            // so an expired blob arrives here as None.)
+            Err(StoreError::Invalid(format!(
+                "mission {s256} expiry {} is not in the future (now {now}); cannot register",
+                entry.expiry
+            ))),
+            false,
+        ),
         None => {
             map.insert(s256.to_owned(), entry);
             (Ok(()), true)
@@ -979,6 +993,29 @@ mod tests {
         if let Some(e) = r.status("m").unwrap() {
             assert!(e.terminated, "must stay terminated, never revive to Active");
         }
+    }
+
+    #[test]
+    fn register_refuses_an_already_expired_mission() {
+        // The store is self-monotone: registering a mission whose expiry has already
+        // passed is refused, independent of the identity-layer approve() guard — so a
+        // direct decern-store consumer cannot create (or revive) an expired entry as Active.
+        let r = MemoryMissionRegistry::new();
+        assert!(
+            r.register("m", mentry("corp", 1_000), 5_000).is_err(),
+            "an already-expired new registration must be refused"
+        );
+        // The direct-bypass revival: terminate, wait past the tombstone retention horizon
+        // (so the tombstone is GC-evicted), then re-register the identical expired grant —
+        // still refused, now by the expiry guard rather than the tombstone.
+        r.register("m2", mentry("corp", 1_000), 100).unwrap();
+        r.terminate("m2", 100).unwrap();
+        let past_horizon = 1_000 + 30 * 24 * 60 * 60 + 1;
+        assert!(
+            r.register("m2", mentry("corp", 1_000), past_horizon)
+                .is_err(),
+            "an expired terminated grant must not re-register even after the tombstone horizon"
+        );
     }
 
     #[test]

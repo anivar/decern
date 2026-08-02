@@ -346,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn no_post_expiry_revival_of_a_terminated_mission() {
+    fn approve_refuses_reviving_an_expired_terminated_grant() {
         // approve (future expiry) → terminate → advance past expiry → an identical
         // re-approval must be refused, not re-registered as Active.
         let reg = decern_store::MemoryMissionRegistry::new();
