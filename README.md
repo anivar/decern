@@ -113,7 +113,7 @@ shard's hash chain and signatures and exits non-zero if any shard fails.
 Hosted (multi-host): `--sharded` also accepts a `postgres://` URL, backed by the
 `decern-store-postgres` advisory-lock head store, so replicas on *different* hosts share one ledger.
 That backend needs a TLS stack, so it is behind a build flag — `cargo build -p decern-server
---features postgres` — and the default binary stays pure Rust. The postgres URL is never logged.
+--features postgres` — and the default binary carries no TLS stack. The postgres URL is never logged.
 
 `--sharded` and `--ledger` are mutually exclusive.
 
@@ -140,9 +140,14 @@ verify → tamper-is-rejected — end to end. Contributors run [`./scripts/verif
   default. It is **not** a multi-*host* distributed store — `flock` is
   host-local. For multi-*host* deployments, `decern-store-postgres` implements
   the same `LedgerHeadStore` trait over Postgres transaction advisory locks
-  (`--sharded postgres://…`, build with `--features postgres`); it carries the
-  one documented compiled-C-FFI dependency (a TLS stack) and so is optional and
-  off by default.
+  (`--sharded postgres://…`, build with `--features postgres`); it adds a TLS
+  provider (compiled C) and so is optional and off by default.
+
+- **The default build is not free of compiled native code.** It pulls no TLS
+  stack, no OpenSSL and no cmake, but `cedar-policy` → `stacker` → `psm` compiles a
+  small assembly stack-switching routine through `cc`, so building the default
+  binaries needs a C/assembler toolchain. The honest claim is "no TLS/OpenSSL/cmake
+  in the default build," not "zero compiled native code."
 
 ## Contributing
 
