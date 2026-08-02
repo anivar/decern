@@ -221,6 +221,24 @@ impl MemoryMissionRegistry {
     }
 }
 
+/// Terminated tombstones are retained for this long PAST their own expiry, so a
+/// deliberately-ended grant cannot be replayed the moment it lapses. The identity
+/// layer's `approve()` expiry guard is the primary defense (a dead mission is never
+/// granted); this keeps the store itself refusing re-registration for a bounded
+/// window and caps map growth. Active entries are still evicted at their expiry.
+const TERMINATED_TOMBSTONE_RETENTION_SECS: u64 = 30 * 24 * 60 * 60; // 30 days
+
+/// Whether a registry entry survives GC at `now`: an active entry lives until its
+/// expiry; a terminated tombstone lives for a retention horizon past it, so expiry
+/// can never launder a termination into an Active re-registration.
+fn mission_entry_retained(e: &MissionEntry, now: u64) -> bool {
+    if e.terminated {
+        e.expiry.saturating_add(TERMINATED_TOMBSTONE_RETENTION_SECS) > now
+    } else {
+        e.expiry > now
+    }
+}
+
 /// Shared register logic: GC expired, then insert-if-new / no-op-if-active /
 /// refuse-if-terminated. Returns `(result, dirty)` for the durable backend.
 fn mission_register(
@@ -229,7 +247,7 @@ fn mission_register(
     entry: MissionEntry,
     now: u64,
 ) -> (Result<(), StoreError>, bool) {
-    map.retain(|_, e| e.expiry > now);
+    map.retain(|_, e| mission_entry_retained(e, now));
     match map.get(s256) {
         Some(existing) if existing.terminated => (
             Err(StoreError::Invalid(format!(
@@ -258,7 +276,7 @@ impl MissionRegistry for MemoryMissionRegistry {
 
     fn terminate(&self, s256: &str, now: u64) -> Result<(), StoreError> {
         let mut g = self.inner.lock().map_err(poisoned)?;
-        g.retain(|_, e| e.expiry > now);
+        g.retain(|_, e| mission_entry_retained(e, now));
         if let Some(e) = g.get_mut(s256) {
             e.terminated = true;
         }
@@ -294,7 +312,7 @@ impl MissionRegistry for FileMissionRegistry {
 
     fn terminate(&self, s256: &str, now: u64) -> Result<(), StoreError> {
         self.inner.write(|map| {
-            map.retain(|_, e| e.expiry > now);
+            map.retain(|_, e| mission_entry_retained(e, now));
             let dirty = match map.get_mut(s256) {
                 Some(e) if !e.terminated => {
                     e.terminated = true;
@@ -934,6 +952,33 @@ mod tests {
             "expired mission GC'd on write"
         );
         assert!(r.status("new").unwrap().is_some());
+    }
+
+    #[test]
+    fn terminated_mission_does_not_revive_after_expiry() {
+        // A terminated mission must not come back as Active once its own expiry lapses.
+        // Before the fix, mission_register's `retain(e.expiry > now)` ran BEFORE the
+        // terminated-check, so the terminated tombstone was GC-evicted at expiry and
+        // re-registering the identical s256 returned Active — expiry laundered a
+        // termination. Terminated tombstones are now retained past expiry, so the store
+        // keeps refusing re-registration.
+        let r = MemoryMissionRegistry::new();
+        r.register("m", mentry("corp", 1_000), 100).unwrap();
+        r.terminate("m", 100).unwrap();
+        assert!(
+            r.status("m").unwrap().unwrap().terminated,
+            "terminated tombstone present"
+        );
+        // advance `now` past the mission's own expiry, then re-register the identical
+        // s256: it must STILL be refused, not revived to Active.
+        let revived = r.register("m", mentry("corp", 1_000), 5_000);
+        assert!(
+            revived.is_err(),
+            "a terminated grant must not re-register as Active after its expiry"
+        );
+        if let Some(e) = r.status("m").unwrap() {
+            assert!(e.terminated, "must stay terminated, never revive to Active");
+        }
     }
 
     #[test]
