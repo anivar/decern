@@ -1,6 +1,6 @@
 {
   "name": "decern",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Dependency-free TypeScript client for the decern PDP (AuthZEN 1.0 Access Evaluation).",
   "license": "Apache-2.0",
   "type": "module",

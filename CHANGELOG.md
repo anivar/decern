@@ -6,7 +6,27 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [0.1.1] - 2026-08-02
+
+### Fixed
+
+- **Mission: a terminated grant could revive to Active after its own expiry.** The registry evicted the
+  terminated tombstone at expiry and `approve()` had no future-expiry guard, so re-approving an
+  identical lapsed grant returned Active. Fixed at both layers — `approve()` refuses an already-expired
+  mission, and the store retains terminated tombstones past expiry and is self-monotone (refuses
+  re-registering an expired entry). A registry-layer enforcement bug found by the pre-release audit;
+  the proven kernel (`decay` et al.) and the tamper-evident ledger were unaffected and would have
+  recorded the transition. (#7, #8)
+
+### Changed
+
+- Honesty corrections from the pre-release audit: the transitive-closure derivation is covered by
+  re-derivation **unit** tests (not "property tests"); the default build is not zero-compiled-native
+  (cedar → stacker → psm compiles an assembly routine via `cc`), corrected in the README and on the
+  site; and `decern verify` now prints a prominent notice when run without `--pubkey`, since a
+  chain-only pass is not a full verify. (#9, #10)
+
+## [0.1.0] - 2026-08-02
 
 Initial release.
 
