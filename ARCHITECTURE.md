@@ -35,7 +35,7 @@ Two binaries over seven library crates. The stock build is pure Rust; the one ex
 | `decern-cli` | bin → `decern` | `prove` / `decide` / `verify`. |
 | `decern-server` | bin → `decern-serve` | The fail-closed AuthZEN PDP: evaluate, record, serve. Also serves the Mission lifecycle over `decern-identity` (`POST /mission/v1/approve`, `GET`/`terminate`), recording each transition to the ledger. |
 
-`model/` holds the Cedar policy, schema, and entities the kernel loads. `.agent/` holds the working
+`crates/decern-kernel/model/` holds the Cedar policy, schema, and entities the kernel loads. `.agent/` holds the working
 method and the standards registry. `scripts/verify.sh` is the one gate every change must pass.
 
 ## How a decision flows
@@ -82,7 +82,7 @@ Match a contribution area to the crate that owns it:
 - **Authority-graph tooling** (traversal, blast-radius, export) → `decern-kernel`'s `Directory`.
 - **A new ledger backend** → implement `decern-store`'s `LedgerHeadStore` trait.
 - **A new proven property** → `decern-proof` (add the invariant *and* its negative control).
-- **Model / policy packs** → `model/`.
+- **Model / policy packs** → `crates/decern-kernel/model/`.
 
 Read [`AGENTS.md`](AGENTS.md) (the method), [`.agent/standards/`](.agent/standards/) (the conventions,
 including the comment standard), and [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change.
