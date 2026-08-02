@@ -106,7 +106,7 @@
           </div>
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
             <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Deps</dt>
-            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">no compiled C by default</dd>
+            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">no TLS/OpenSSL by default</dd>
           </div>
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
             <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Licence</dt>
@@ -467,7 +467,7 @@
         <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">What it is made of</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
         <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Two binaries over seven small crates.</h2>
-        <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">The default build is pure Rust with no compiled-C dependency. One exception — the Postgres head store — pulls in a TLS stack, so it sits behind <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">--features postgres</span>, and is off by default.</p>
+        <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">The default build pulls no TLS stack, OpenSSL or cmake — though cedar's stacker/psm compiles one small assembly routine via cc. The Postgres head store adds a TLS provider, so it sits behind <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">--features postgres</span>, and is off by default.</p>
 
         
           <figure style="margin:34px 0 0;border:1px solid #0C0F0E;background:#FFFFFF;padding:30px">
