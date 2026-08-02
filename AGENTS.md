@@ -9,7 +9,7 @@ guarantees are the product — a change that weakens one is a regression, even i
 - 7 library crates, plus `decern-cli` (binary `decern`: `prove` / `decide` / `verify`) and
   `decern-server` (binary `decern-serve`: a thin, AuthZEN-shaped, fail-closed PDP).
   See [ARCHITECTURE.md](ARCHITECTURE.md) for the crate map and where each contribution area lives.
-- `model/` — the Cedar policy, schema, and entities the kernel loads.
+- `crates/decern-kernel/model/` — the Cedar policy, schema, and entities the kernel loads.
 - `.agent/` — how agents and contributors work here (method only, no project history).
 
 ## Conventions

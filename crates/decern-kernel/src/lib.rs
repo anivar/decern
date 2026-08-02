@@ -50,18 +50,18 @@ impl Model {
     pub fn builtin() -> Self {
         let entities: Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../model/entities.json"
+            "/model/entities.json"
         )))
         .unwrap_or(Value::Null); // include_str is compile-time constant; parse cannot fail in practice
         Model {
             schema: include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../model/authority.cedarschema"
+                "/model/authority.cedarschema"
             ))
             .to_owned(),
             policies: include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../model/authority.cedar"
+                "/model/authority.cedar"
             ))
             .to_owned(),
             entities,
