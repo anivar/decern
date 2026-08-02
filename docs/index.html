@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>decern — proven authorization for agents</title>
-<meta name="description" content="A deterministic authorization kernel for agents, people and services. Nine safety invariants are machine-checked by cvc5 over every case the model allows; every decision is recorded in a tamper-evident, verifiable ledger. Pure Rust, Apache-2.0.">
+<meta name="description" content="A deterministic authorization kernel for agents, people and services. Nine safety invariants are machine-checked by cvc5 over every possible input; every decision is recorded in a tamper-evident, verifiable ledger. Pure Rust, Apache-2.0.">
 <meta name="author" content="Anivar A. Aravind">
 <link rel="canonical" href="https://decern.anivar.net/">
 <link rel="icon" type="image/svg+xml" href="img/decern-mark.svg">
@@ -66,7 +66,7 @@
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
         <h1 style="font:600 clamp(52px,8.5vw,82px)/0.98 'IBM Plex Mono',monospace;letter-spacing:-0.03em;color:#0C0F0E;margin:24px 0 0">decern</h1>
         <p style="font:500 clamp(25px,3.2vw,35px)/1.18 Newsreader,serif;letter-spacing:-0.01em;color:#0C0F0E;margin:24px 0 0;max-width:28ch;text-wrap:pretty">Decide what an agent, a person or a service is allowed to do. Keep proof of every answer.</p>
-        <p style="font:400 17px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:22px 0 0;max-width:60ch;text-wrap:pretty">Two things set it apart. A solver checks the safety rules against every case the model allows, instead of the handful a test file covers. And every answer goes into a signed, linked log, so anyone can check later that nothing was changed or removed — including people who don't trust whoever ran the server.</p>
+        <p style="font:400 17px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:22px 0 0;max-width:60ch;text-wrap:pretty">Two things set it apart. A solver checks the safety rules against every possible input, instead of the handful a test file covers. And every answer goes into a signed, linked log, so anyone can check later that nothing was changed or removed — including people who don't trust whoever ran the server.</p>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:34px">
           <a href="https://github.com/anivar/decern" style="display:inline-flex;align-items:center;gap:10px;background:#0E7C6B;color:#FFFFFF;border:1px solid #0E7C6B;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="background:#0A5B4E;border-color:#0A5B4E"><svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="display:block"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>Contribute on GitHub</a>
           <a href="#contribute" style="display:inline-flex;align-items:center;background:transparent;color:#0C0F0E;border:1px solid #0C0F0E;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="background:#0C0F0E;color:#F5F7F6">Where to start</a>
@@ -77,7 +77,7 @@
       <aside style="border:1px solid #0C0F0E;background:#FFFFFF">
         <div style="border-bottom:1px solid #0C0F0E;background:#EDF3F1;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px">
           <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67">At a glance</span>
-          <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;border:1px solid #C4CFCB;padding:6px 8px">v0.1.0 · released</span>
+          <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;border:1px solid #C4CFCB;padding:6px 8px">released</span>
         </div>
         <dl style="margin:0;padding:8px 20px 20px">
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
@@ -139,7 +139,7 @@
           <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:32px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">01 · Proven, not tested</p>
             <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">A solver checks every case, not a few</h3>
-            <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">An answer depends on four things only: who is asking, what authority exists, the policy, and the time. Because it is that contained, cvc5 can search every case the model allows for one that breaks a rule. Nine rules are checked this way. Green means it found nothing.</p>
+            <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">An answer depends on four things only: who is asking, what authority exists, the policy, and the time. Because it is that contained, cvc5 can search every possible input for one that breaks a rule. Nine rules are checked this way. Green means it found nothing.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:26px 0 0">
             <p style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-proof · runs in <span style="color:#5E6B67">decern prove</span> and CI only, never on the request path</p>
           </article>
@@ -230,7 +230,7 @@
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
         <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Rules</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Nine rules, checked against every case the model allows.</h2>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Nine rules, checked against every possible input.</h2>
         <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">Each line says exactly what the solver checked — never more.</p>
 
         <table style="width:100%;margin-top:34px;border-top:1px solid #0C0F0E">
@@ -290,7 +290,7 @@
           </div>
           <div style="border:1px solid #E1E7E4;background:#EDF3F1;padding:26px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">What it does not prove</p>
-            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">cvc5 proves the kernel's rules. It cannot tell whether your policy says what you meant, and it is never a claim that a deployment is secure. Where a rule leans on a derived value, that part is ordinary tested Rust and is written up as such. The full boundary lives in the repository, under <a href="https://github.com/anivar/decern#known-limitations">known limitations ↗</a>.</p>
+            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">cvc5 proves the kernel's rules. It cannot tell whether your policy says what you meant, and it is never a claim that a deployment is secure — the HTTP endpoints are unauthenticated by design, meant to run behind an authenticating proxy. Where a rule leans on a derived value, that part is ordinary tested Rust and is written up as such. The full boundary lives in the repository, under <a href="https://github.com/anivar/decern#known-limitations">known limitations ↗</a>.</p>
           </div>
         </div>
       </div>
@@ -342,7 +342,7 @@
           <div>
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Who is answerable</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:24px;margin:14px 0 0">
-            <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">Every record names an accountable owner: the top of the asker's delegation chain, worked out by the server from its own directory — never taken from the request. A stand-in's record names whoever is finally answerable for it; a top-level principal vouches for itself; a caller the directory does not know gets none.</p>
+            <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">A record names an accountable owner: the top of the asker's delegation chain, worked out by the server from its own directory — never taken from the request. A stand-in's record names whoever is finally answerable for it; a top-level principal vouches for itself; a caller the directory does not know gets none.</p>
             <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">It is there for accountability, not as a gate. It never changes the answer.</p>
           </div>
         </div>
@@ -498,7 +498,7 @@
             <tr>
               <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;vertical-align:top">decern-identity</td>
               <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">lib</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;vertical-align:top">The Mission core — approval-backed, provably attenuated authority.</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;vertical-align:top">The Mission core — approval-backed, fail-closed-attenuated authority.</td>
             </tr>
             <tr>
               <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;vertical-align:top">decern-crypto</td>
@@ -546,8 +546,8 @@
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid #0C0F0E;margin-top:30px">
           <div style="padding:24px;border-right:1px solid #0C0F0E;background:#EDF3F1">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Prebuilt binaries</p>
-            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:12px 0 0;text-wrap:pretty">Download the v0.1.0 archive for your platform, unpack, and put both binaries on your <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">PATH</span>.</p>
-            <p style="margin:16px 0 0"><a href="https://github.com/anivar/decern/releases/latest" style="font:500 13px/1.6 'IBM Plex Mono',monospace">Releases ↗</a></p>
+            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:12px 0 0;text-wrap:pretty">Prebuilt for Linux (x64/arm64), macOS (Apple Silicon) and Windows (x64) — grab the latest archive on GitHub, unpack, and put both binaries on your <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">PATH</span>.</p>
+            <p style="margin:16px 0 0"><a href="https://github.com/anivar/decern" style="font:500 13px/1.6 'IBM Plex Mono',monospace">Get it on GitHub ↗</a></p>
           </div>
           <div style="padding:24px;background:#FFFFFF">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">From source</p>
@@ -631,9 +631,10 @@
       <div style="display:flex;align-items:center;gap:11px">
         <img src="img/decern-mark.svg" alt="" width="20" height="20" style="display:block">
         <span style="font:600 16px/1 'IBM Plex Mono',monospace;color:#0C0F0E">decern</span>
-        <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;margin-left:8px">v0.1.0 · Apache-2.0</span>
+        <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;margin-left:8px">Apache-2.0</span>
       </div>
       <div style="display:flex;gap:20px;flex-wrap:wrap">
+        <!-- Announcement (Layer 8): once the post is live, set ANNOUNCE_URL at the top of build_site.py and rebuild to add the link here -->
         <a href="https://github.com/anivar/decern" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Repository</a>
         <a href="https://github.com/anivar/decern/blob/main/ARCHITECTURE.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Architecture</a>
         <a href="https://github.com/anivar/decern/blob/main/ROADMAP.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Roadmap</a>
