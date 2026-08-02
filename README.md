@@ -56,6 +56,26 @@ delegate's record names the principal ultimately answerable for it; a root princ
 itself; a caller the directory doesn't recognize has none. It is a recorded accountability column,
 not a decision gate — it never changes the allow/deny outcome.
 
+A recorded decision looks like this. Here an unrecognized caller — `agent-7`, not in the directory —
+is refused a `MoveMoney`, so the record carries `decision: false` and **no `sponsor`** (an
+accountable-owner is derived only for a caller the directory knows), and its `prev` is the previous
+record's `hash` — the chain link:
+
+```json
+{"entry":{"seq":1,"ts_ms":1785682110000,
+          "subject_type":"Principal","subject_id":"agent-7",
+          "action":"MoveMoney","resource_type":"Resource","resource_id":"account9",
+          "context":{"now":1785682110},"decision":false,"reasons":["policy9"]},
+ "prev":   "8f658ccb5595b7e85a9f020f6a128985929865558c642505e206134337e40e41",
+ "hash":   "590547867e1d4592d68d028f0d61745146ab986499dfadd073eacafcf58e63b8",
+ "sig_b64":"vtUu4gP1CkgqKIYDpHuYHtbez/XROdcnpOq8Y3aZdbfeVHK2tT3mpp9yvmTlTF2QtYtZxg7TbP/f6SqfZ/eWDQ==",
+ "kid":    "d9396c76113e7aa7126b8358063331f9749ece673ddfdbe8b29661bf03714372"}
+```
+
+`reasons:["policy9"]` is the deny-by-default catch-all; the missing `sponsor` is the "unknown caller
+has none" case above. `decern verify --ledger <file> --pubkey <kid>` re-checks the chain (always) and
+every signature (with the key).
+
 ## Missions
 
 `decern-serve` also serves a **Mission lifecycle** over `decern-identity`: an approver grants an
