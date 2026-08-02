@@ -1,0 +1,6 @@
+target/
+# keys and regenerable crypto artifacts — never commit
+*.key
+*.pub
+*.bundle
+*.ledger

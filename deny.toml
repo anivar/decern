@@ -1,0 +1,46 @@
+# cargo-deny 0.19.x (schema v2) — supply-chain policy.
+# permissive licenses only, crates.io only,
+# vulnerabilities and yanked crates denied (schema-v2 defaults).
+
+[advisories]
+unmaintained = "all"
+ignore = []
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    # MPL-2.0 is file-level (weak) copyleft: acceptable as long
+    # as MPL-licensed files are used UNMODIFIED. Modify one → publish that file.
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[licenses.private]
+# Our own workspace path-crates (Apache-2.0); not re-checked here.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# our own workspace path-deps carry no version; that's not a supply-chain hole
+allow-wildcard-paths = true
+highlight = "all"
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

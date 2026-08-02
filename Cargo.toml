@@ -1,0 +1,61 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/decern-crypto",
+    "crates/decern-kernel",
+    "crates/decern-ledger",
+    "crates/decern-store",
+    "crates/decern-identity",
+    "crates/decern-proof",
+    "crates/decern-cli",
+    "crates/decern-server",
+    "crates/decern-store-postgres",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = true
+repository = "https://github.com/anivar/decern"
+homepage = "https://github.com/anivar/decern"
+
+[workspace.dependencies]
+decern-crypto = { path = "crates/decern-crypto", version = "0.1.0" }
+decern-kernel = { path = "crates/decern-kernel", version = "0.1.0" }
+decern-ledger = { path = "crates/decern-ledger", version = "0.1.0" }
+decern-store = { path = "crates/decern-store", version = "0.1.0" }
+decern-identity = { path = "crates/decern-identity", version = "0.1.0" }
+decern-proof = { path = "crates/decern-proof", version = "0.1.0" }
+decern-store-postgres = { path = "crates/decern-store-postgres", version = "0.1.0" }
+
+# Postgres backend deps — used ONLY by the optional `decern-store-postgres` crate,
+# never by the core libs or the `decern`/`decern-serve` binaries. rustls is pinned
+# to the pure-Rust `ring` provider (default features off) so the multi-host backend
+# carries exactly one documented compiled-C-FFI stack (see that crate's README) and
+# no cmake-driven `aws-lc-rs` toolchain requirement.
+postgres = "0.19"
+tokio-postgres-rustls = { version = "0.14", default-features = false, features = ["ring", "native-certs"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
+
+cedar-policy = "=4.11.2"
+cedar-policy-symcc = "0.5"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ed25519-dalek = "2"
+sha2 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+getrandom = "0.3"
+zeroize = "1"
+thiserror = "2"
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+axum = "0.8"
+
+[profile.release]
+lto = true
+strip = true

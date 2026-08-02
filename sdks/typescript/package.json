@@ -1,0 +1,25 @@
+{
+  "name": "decern",
+  "version": "0.1.0",
+  "description": "Dependency-free TypeScript client for the decern PDP (AuthZEN 1.0 Access Evaluation).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test \"dist/tests/**/*.test.js\""
+  },
+  "engines": { "node": ">=22" },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "^5.7"
+  }
+}

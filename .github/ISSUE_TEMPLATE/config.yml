@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: How to contribute (start here)
+    url: https://github.com/anivar/decern/blob/main/CONTRIBUTING.md
+    about: The verify loop, DCO, and how PRs are reviewed — for people and agents.
+  - name: Architecture & where to start
+    url: https://github.com/anivar/decern/blob/main/ARCHITECTURE.md
+    about: The crate map, and each contribution area matched to the crate that owns it.
+  - name: Agent contributor guide
+    url: https://github.com/anivar/decern/blob/main/AGENTS.md
+    about: The working method for agents contributing to decern.

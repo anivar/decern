@@ -1,0 +1,39 @@
+[package]
+name = "decern-server"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "decern-serve: a fail-closed, AuthZEN-shaped authorization PDP with a tamper-evident ledger."
+repository.workspace = true
+
+[[bin]]
+name = "decern-serve"
+path = "src/main.rs"
+
+[dependencies]
+decern-kernel = { workspace = true }
+decern-ledger = { workspace = true }
+decern-store = { workspace = true }
+decern-identity = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+getrandom = { workspace = true }
+# Optional: multi-host sharded head store. Off by default so `decern-serve`
+# stays pure Rust; enabling it pulls in the one documented C-FFI stack (TLS).
+decern-store-postgres = { workspace = true, optional = true }
+
+[features]
+postgres = ["dep:decern-store-postgres"]
+
+[dev-dependencies]
+tokio = { workspace = true }
+# Router-level integration tests drive requests through `app()` via `oneshot`.
+# Dev-only; `tower` is already in the tree via `axum`, so the shipped binary is unaffected.
+tower = { version = "0.5", features = ["util"] }

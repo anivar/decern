@@ -1,0 +1,83 @@
+// decern authority model — schema v3 (CIAM)
+// ONE principal type for humans, agents, and machines (the keystone).
+// `kind` is an attribute, never a separate model or code path.
+//
+// v3 adds a CIAM layer WITHOUT breaking v2: Organization tenancy, org/role
+// membership, and consent-gated access to a customer's protected data. Every
+// v3 attribute is optional, so a v2 graph loads and proves unchanged.
+
+// A customer organization — the CIAM tenancy anchor. `parent` models B2B
+// sub-organizations (a hierarchy inside one isolation tenant).
+entity Organization {
+  tenant: String,           // the hard isolation domain this org lives in
+  parent?: Organization,    // sub-org edge; child org ⊆ parent (same tenant, acyclic)
+};
+
+entity Principal {
+  kind: String,             // "Human" | "Agent" | "Machine"
+  tenant: String,           // hard isolation boundary
+  org?: Organization,       // CIAM: which customer org this identity belongs to
+  expiry: Long,             // epoch seconds; authority decays past this
+  scopes: Set<String>,      // capability attenuation surface
+  roles?: Set<String>,      // CIAM RBAC labels; delegate.roles ⊆ delegator.roles
+  jurisdictions?: Set<String>, // data-residency clearances (e.g. "EU","UAE","IN")
+                            // this principal may access; delegate ⊆ delegator,
+                            // enforced at load like roles/scopes.
+  delegator?: Principal,    // delegation / on-behalf-of edge; child ⊆ delegator
+  ancestors: Set<Principal>, // DERIVED at load: the full transitive delegator
+                            // chain (roots included). Authors write `delegator`
+                            // only; the kernel computes this so a delegate can
+                            // reach any authority ancestor's resource (multi-hop).
+  revoked: Bool,            // DERIVED at load: true if this principal OR any of
+                            // its authority ancestors is revoked. Authors set
+                            // `revoked` on the principal they revoke; the kernel
+                            // propagates it down the chain, so revoking upstream
+                            // instantly kills every delegate beneath it.
+};
+
+entity Resource {
+  owner: Principal,
+  tenant: String,
+  org?: Organization,       // CIAM: the org that owns this resource
+  sensitivity?: String,     // CIAM: e.g. "pii" — triggers the consent gate
+  residency?: String,       // data-residency label (e.g. "EU"): this data may
+                            // only be accessed by a principal cleared for that
+                            // jurisdiction. Triggers the residency gate.
+  required_role?: String,   // CIAM RBAC gate: this data may only be accessed by a
+                            // principal whose `roles` includes this label. Triggers
+                            // the role gate (F-role) via ANY action. Roles are
+                            // attenuated by construction (delegate ⊆ delegator), so a
+                            // delegate can never present a role its delegator lacked.
+  viewers?: Set<Principal>, // ReBAC / Zanzibar visibility relation: principals
+                            // explicitly granted read access without being the
+                            // owner or a delegate (the "who may SEE what" edge,
+                            // e.g. object#viewer@subject). This grant is an
+                            // ADDITIONAL edge only — it is still bounded by every
+                            // forbid: it cannot cross a tenant, expose PII without
+                            // consent, act past expiry, survive revocation, or
+                            // bypass the scope gate. Set via `authz.rebac`.
+};
+
+// CIAM: `consent` is available on every verb, because the consent gate is
+// DATA-scoped (it protects `sensitivity == "pii"` resources), not verb-scoped.
+// Protecting the data, not one action, is what closes the Read-path bypass.
+action Read appliesTo {
+  principal: [Principal],
+  resource: [Resource],
+  context: { now: Long, consent?: Bool }
+};
+
+action MoveMoney appliesTo {
+  principal: [Principal],
+  resource: [Resource],
+  context: { now: Long, human_approved?: Bool, consent?: Bool }
+};
+
+// CIAM: an explicit verb for reading a customer's protected/PII data. The
+// consent gate does not live here — it lives on the data's `sensitivity`
+// label — so accessing PII via ANY action is gated identically.
+action AccessPII appliesTo {
+  principal: [Principal],
+  resource: [Resource],
+  context: { now: Long, consent?: Bool }
+};

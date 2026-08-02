@@ -1,0 +1,67 @@
+[
+  { "uid": {"type":"Principal","id":"corp"},
+    "attrs": {"kind":"Human","tenant":"A","expiry":32503680000,
+              "scopes":["read","move_money"]},
+    "parents": [] },
+
+  { "uid": {"type":"Principal","id":"corpB"},
+    "attrs": {"kind":"Human","tenant":"B","expiry":32503680000,
+              "scopes":["read","move_money"]},
+    "parents": [] },
+
+  { "uid": {"type":"Principal","id":"agent1"},
+    "attrs": {"kind":"Agent","tenant":"A","expiry":200,
+              "scopes":["read","move_money"],
+              "delegator":{"__entity":{"type":"Principal","id":"corp"}}},
+    "parents": [] },
+
+  { "uid": {"type":"Principal","id":"agent2"},
+    "attrs": {"kind":"Agent","tenant":"A","expiry":200,
+              "scopes":["read"],
+              "delegator":{"__entity":{"type":"Principal","id":"corp"}}},
+    "parents": [] },
+
+  { "uid": {"type":"Principal","id":"machine1"},
+    "attrs": {"kind":"Machine","tenant":"A","expiry":32503680000,
+              "scopes":["read"]},
+    "parents": [] },
+
+  { "uid": {"type":"Resource","id":"claim1"},
+    "attrs": {"owner":{"__entity":{"type":"Principal","id":"corp"}},"tenant":"A"},
+    "parents": [] },
+
+  { "uid": {"type":"Resource","id":"claimB"},
+    "attrs": {"owner":{"__entity":{"type":"Principal","id":"corpB"}},"tenant":"B"},
+    "parents": [] },
+
+  { "uid": {"type":"Organization","id":"acme"},
+    "attrs": {"tenant":"acme"},
+    "parents": [] },
+
+  { "uid": {"type":"Organization","id":"acme_eu"},
+    "attrs": {"tenant":"acme",
+              "parent":{"__entity":{"type":"Organization","id":"acme"}}},
+    "parents": [] },
+
+  { "uid": {"type":"Principal","id":"alice"},
+    "attrs": {"kind":"Human","tenant":"acme","expiry":32503680000,
+              "org":{"__entity":{"type":"Organization","id":"acme"}},
+              "scopes":["read","pii:read"],
+              "roles":["customer"]},
+    "parents": [] },
+
+  { "uid": {"type":"Principal","id":"acme_agent"},
+    "attrs": {"kind":"Agent","tenant":"acme","expiry":200,
+              "org":{"__entity":{"type":"Organization","id":"acme"}},
+              "scopes":["read","pii:read"],
+              "roles":["customer"],
+              "delegator":{"__entity":{"type":"Principal","id":"alice"}}},
+    "parents": [] },
+
+  { "uid": {"type":"Resource","id":"alice_profile"},
+    "attrs": {"owner":{"__entity":{"type":"Principal","id":"alice"}},
+              "tenant":"acme",
+              "org":{"__entity":{"type":"Organization","id":"acme"}},
+              "sensitivity":"pii"},
+    "parents": [] }
+]

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# Pinned toolchain — the single source of truth for reproducible builds and proofs.
+
+[toolchain]
+channel = "1.97"
+components = ["rustfmt", "clippy"]
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+]
+profile = "minimal"

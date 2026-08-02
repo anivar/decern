@@ -1,0 +1,3 @@
+# Default reviewer for everything. Advisory (review is auto-requested, not required
+# by branch protection) — see GOVERNANCE.md for the merge policy.
+* @anivar

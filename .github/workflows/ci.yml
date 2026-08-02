@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # cvc5 static release used by the proof suite.
+  CVC5_TAG: cvc5-1.3.4
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain (honors rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add clippy rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cvc5
+        run: |
+          curl -sSfL -o /tmp/cvc5.zip \
+            "https://github.com/cvc5/cvc5/releases/download/${CVC5_TAG}/cvc5-Linux-x86_64-static.zip"
+          unzip -q /tmp/cvc5.zip -d /tmp/cvc5
+          sudo install -m 0755 /tmp/cvc5/cvc5-Linux-x86_64-static/bin/cvc5 /usr/local/bin/cvc5
+          cvc5 --version
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      # One canonical loop — identical to what contributors run locally.
+      - name: Verify (build · test · cvc5 proofs · clippy · fmt · deny · no-lineage)
+        run: ./scripts/verify.sh

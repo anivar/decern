@@ -1,0 +1,20 @@
+[package]
+name = "decern-proof"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "SMT proof harness that machine-checks decern's authorization invariants with cvc5."
+repository.workspace = true
+
+[dependencies]
+decern-kernel = { workspace = true }
+cedar-policy = { workspace = true }
+cedar-policy-symcc = { workspace = true }
+thiserror = { workspace = true }
+# Minimal footprint: only the "time" feature for
+# tokio::time::timeout — this crate doesn't need the workspace's "full" set.
+tokio = { version = "1", default-features = false, features = ["time"] }
+
+[dev-dependencies]
+tokio = { workspace = true }

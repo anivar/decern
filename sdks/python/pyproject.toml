@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "decern"
+version = "0.1.0"
+description = "Dependency-free Python client for the decern PDP (AuthZEN 1.0 Access Evaluation)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["decern"]

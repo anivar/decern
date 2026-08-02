@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+# External standards decern implements or aligns with.
+
+rule: >-
+  Before implementing or changing any standard-facing surface, fetch and READ
+  the current spec at its url. Never work from memory — specs move.
+
+standards:
+  - name: AuthZEN Authorization API 1.0
+    url: https://openid.net/specs/authorization-api-1_0.html
+    conformance: >-
+      decern-serve exposes POST /access/v1/evaluation (and /decide as an alias): AuthZEN 1.0
+      request (subject/resource {type,id}, action {name}, optional context) and response
+      (boolean decision; any reasons under context). Metadata discovery
+      (access_evaluation_endpoint) is a follow-up. Verified against the spec 2026-08-02.
+
+  - name: Cedar policy language
+    url: https://docs.cedarpolicy.com/
+    conformance: >-
+      The policy, schema, and entities in model/ are Cedar; the engine is pinned
+      to cedar-policy =4.11.2 in Cargo.toml.
+
+  - name: Ed25519 (RFC 8032)
+    url: https://www.rfc-editor.org/rfc/rfc8032
+    conformance: >-
+      Ledger records are signed and verified with Ed25519 (EdDSA over edwards25519).
+
+  - name: JSON Canonicalization Scheme (RFC 8785)
+    url: https://www.rfc-editor.org/rfc/rfc8785
+    conformance: >-
+      Records are canonicalized with JCS before they are hashed and signed, so the
+      hash chain is reproducible by any verifier.

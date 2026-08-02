@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "decern-store-postgres"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = true
+description = "Optional Postgres-backed, multi-host LedgerHeadStore for decern. Carries decern's one documented compiled-C-FFI (TLS) exception; the core libraries and binaries stay pure Rust."
+
+[dependencies]
+decern-store.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+postgres.workspace = true
+tokio-postgres-rustls.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+
+[dev-dependencies]
+# tokio is a DEV dependency only: it powers the no-database regression test that
+# proves the sync client is created off the async runtime. It never enters the
+# crate's normal dependency tree, and never touches the binaries' trees.
+tokio = { workspace = true }

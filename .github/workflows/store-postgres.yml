@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Optional, NON-required check for the multi-host Postgres LedgerHeadStore.
+# The main CI (ci.yml) never touches a database and stays the required gate; the
+# core build stays pure Rust. This job spins up a Postgres service container and
+# runs ONLY `decern-store-postgres`'s DB-backed tests against it.
+name: store-postgres
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Consumed by the crate's tests; unset ⇒ every DB test skips (see the crate).
+  DECERN_TEST_POSTGRES_URL: postgres://decern:decern@127.0.0.1:5432/decern_test?sslmode=disable
+
+jobs:
+  store-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: decern
+          POSTGRES_PASSWORD: decern
+          POSTGRES_DB: decern_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U decern"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain (honors rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Lint the feature-gated decern-serve wiring (`--sharded postgres://…`)
+        run: cargo clippy -p decern-server --features postgres --all-targets -- -D warnings
+
+      - name: Test the Postgres ledger-head store against the service container
+        run: cargo test -p decern-store-postgres
