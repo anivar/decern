@@ -35,7 +35,9 @@ pub struct Invariant {
 /// that decern-kernel `inject_derived` computes from the transitive delegation chain BEFORE
 /// the prover runs; cvc5 sees them as flat, opaque values and proves membership / the
 /// boolean, not the closure that produced them. That closure is trusted base — covered
-/// instead by the decern-kernel re-derivation property tests. The statements name this split
+/// instead by the decern-kernel re-derivation unit tests (dedicated example-based tests
+/// that re-derive the closure against hand-written ground truth; NOT property/proptest-
+/// generated, and NOT exhaustive). The statements name this split
 /// so "PROVEN" never claims more than the machine actually checks.
 pub fn suite() -> Vec<Invariant> {
     vec![
@@ -65,7 +67,7 @@ pub fn suite() -> Vec<Invariant> {
             // principal.ancestors ∨ principal ∈ resource.viewers. It treats `ancestors`
             // as an opaque set attribute — it does NOT certify that the set is the true
             // transitive delegation closure. That closure is walked by trusted-base Rust
-            // (decern-kernel `ancestors_of`/`inject_derived`) and re-derived in the property
+            // (decern-kernel `ancestors_of`/`inject_derived`) and re-derived in the unit
             // test `ancestors_of_is_the_full_transitive_chain`. Keep the statement to
             // exactly what the prover proves.
             name: "attenuation-edge",
@@ -102,7 +104,7 @@ pub fn suite() -> Vec<Invariant> {
             // cvc5 discharges allow ⟹ principal.revoked == false over the FLAT boolean.
             // The propagation that sets `revoked` true when a transitive delegator is
             // revoked (effective revocation) is trusted-base Rust (decern-kernel
-            // `inject_derived`), re-derived in the property test
+            // `inject_derived`), re-derived in the unit test
             // `inject_derived_propagates_effective_revocation`. The statement claims only
             // the flat check the prover certifies.
             name: "revocation-gate",

@@ -180,6 +180,14 @@ async fn run() -> Result<ExitCode> {
                 );
             }
             let report = decern_ledger::verify(&ledger, key.as_ref())?;
+            if !report.signatures_checked {
+                // Prominent, at the TOP: a chain-only pass is NOT a full verify — it does
+                // not catch a record signed by nobody, so it is not "verify without trusting
+                // the operator". Do not let it read as a clean pass.
+                println!("NOTE: no --pubkey given — hash chain verified, signatures NOT checked.");
+                println!("      This is a chain-only pass, not a full verify; pass --pubkey <kid>");
+                println!("      to check every record's signature.");
+            }
             println!("OK  {} entries", report.entries);
             println!("    root: {}", report.root.as_deref().unwrap_or("(empty)"));
             println!(
@@ -222,14 +230,13 @@ fn verify_sharded(
     // Describe the mode BEFORE the per-shard results — it is what will be checked,
     // not a verdict. A failing shard aborts its own signature check, so printing
     // "verified" as a trailer after a TAMPER line would misread as a pass.
-    println!(
-        "signatures: {}",
-        if key.is_some() {
-            "checked against --pubkey"
-        } else {
-            "not checked (no key given)"
-        }
-    );
+    if key.is_some() {
+        println!("signatures: checked against --pubkey");
+    } else {
+        // Prominent, at the TOP: a chain-only pass is NOT a full verify.
+        println!("NOTE: no --pubkey given — hash chains verified, signatures NOT checked.");
+        println!("      This is a chain-only pass, not a full verify; pass --pubkey <kid>.");
+    }
     let total = results.len();
     let mut failed = 0usize;
     for (shard, res) in &results {
