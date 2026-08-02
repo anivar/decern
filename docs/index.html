@@ -28,9 +28,11 @@
   a:hover { color: #0A5B4E; text-decoration-thickness: 2px; }
   ::selection { background: #C9E4DD; color: #0C0F0E; }
   table { border-collapse: collapse; }
-  /* the ledger tamper demo shows only the active variant (hide the other) */
-  #ledger-demo[data-state="clean"] .dc-tampered { display: none; }
-  #ledger-demo[data-state="tampered"] .dc-clean { display: none; }
+  /* the ledger tamper demo shows only the active variant (hide the other).
+     !important is required: the design's row elements carry inline display:grid,
+     which would otherwise win over a stylesheet rule. */
+  #ledger-demo[data-state="clean"] .dc-tampered { display: none !important; }
+  #ledger-demo[data-state="tampered"] .dc-clean { display: none !important; }
   :focus-visible { outline: 2px solid #0E7C6B; outline-offset: 2px; }
 </style>
 </head>
