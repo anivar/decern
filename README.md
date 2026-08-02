@@ -103,14 +103,26 @@ Humans, agents, and workloads are one principal type, decided by the same proven
 
 ## Quickstart
 
-Requires the pinned toolchain (`rust-toolchain.toml`) and the **cvc5** solver on `PATH` for the proofs.
+### Install
+
+Two binaries: `decern` to prove and verify, `decern-serve` to answer requests.
+
+```sh
+cargo install decern-cli decern-server
+```
+
+Or grab a prebuilt, signed binary for Linux (x64/arm64), macOS (Apple Silicon) or Windows (x64) from
+the [releases page](https://github.com/anivar/decern/releases). The proofs (`decern prove`) also need
+the **cvc5** solver on `PATH`; serving answers does not.
+
+### Prove → serve → decide → verify
 
 ```sh
 # 1. Prove all invariants hold over every input (cvc5)
-cargo run -p decern-cli -- prove
+decern prove
 
 # 2. Run the PDP (writes a tamper-evident ledger)
-cargo run -p decern-server -- --ledger /tmp/decern.jsonl &
+decern-serve --ledger /tmp/decern.jsonl &
 
 # 3. Decide over HTTP (AuthZEN-shaped) — corp reads a claim it owns
 curl -s localhost:8080/access/v1/evaluation -H 'content-type: application/json' -d '{
@@ -120,9 +132,23 @@ curl -s localhost:8080/access/v1/evaluation -H 'content-type: application/json' 
 }'
 
 # 4. Verify the ledger (hash chain + every signature)
-cargo run -p decern-cli -- verify --ledger /tmp/decern.jsonl \
+decern verify --ledger /tmp/decern.jsonl \
   --pubkey "$(curl -s localhost:8080/pubkey | jq -r .kid)"
 ```
+
+From a source checkout, use `cargo run -p decern-cli --` and `cargo run -p decern-server --` in place
+of `decern` and `decern-serve`.
+
+### Client SDKs
+
+To call a running `decern-serve` from an application, thin AuthZEN 1.0 PDP clients are published:
+
+```sh
+uv add decern           # Python
+npm install decern      # TypeScript / JavaScript
+```
+
+### Hosted
 
 Hosted (multi-process, single host): `decern-serve --sharded <dir>` runs the multi-process sharded
 ledger instead of the single file — several `decern-serve` processes on one host share one
