@@ -1,0 +1,224 @@
+<title>decern — proven authorization for agents</title>
+<style>
+  :root{
+    --paper:#F5F7F6; --ink:#0C0F0E; --muted:#5E6B67; --line:#E1E7E4;
+    --accent:#0E7C6B; --accent-ink:#0A5B4E; --card:#FFFFFF; --chip:#EDF3F1; --code:#0E1513;
+    --mono:ui-monospace,"SF Mono","IBM Plex Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --paper:#0B0E0D; --ink:#EAF0ED; --muted:#8EA09A; --line:#1E2825;
+    --accent:#34C6AB; --accent-ink:#8FE9D6; --card:#111917; --chip:#14201D; --code:#070C0B; }}
+  :root[data-theme="light"]{--paper:#F5F7F6;--ink:#0C0F0E;--muted:#5E6B67;--line:#E1E7E4;--accent:#0E7C6B;--accent-ink:#0A5B4E;--card:#FFFFFF;--chip:#EDF3F1;--code:#0E1513}
+  :root[data-theme="dark"]{--paper:#0B0E0D;--ink:#EAF0ED;--muted:#8EA09A;--line:#1E2825;--accent:#34C6AB;--accent-ink:#8FE9D6;--card:#111917;--chip:#14201D;--code:#070C0B}
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 clamp(20px,4vw,40px)}
+  a{color:var(--accent-ink);text-decoration:none}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 12px}
+  h2{font-size:clamp(22px,3.2vw,30px);letter-spacing:-.02em;margin:0 0 10px;text-wrap:balance}
+  p{color:var(--muted);max-width:64ch}
+  .mark{color:var(--accent);display:inline-block}
+  .mark svg{display:block}
+
+  /* header */
+  header{position:sticky;top:0;z-index:10;backdrop-filter:blur(8px);
+    background:color-mix(in srgb,var(--paper) 82%,transparent);border-bottom:1px solid var(--line)}
+  header .wrap{display:flex;align-items:center;gap:14px;height:60px}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-weight:600;font-size:19px;letter-spacing:-.01em;color:var(--ink)}
+  .brand .mark svg{width:26px;height:26px}
+  header nav{margin-left:auto;display:flex;gap:22px;align-items:center;font-size:14px}
+  header nav a{color:var(--muted)}
+  header nav a:hover{color:var(--ink)}
+  .btn{font-family:var(--sans);font-size:14px;font-weight:600;padding:9px 16px;border-radius:9px;border:1px solid var(--line);color:var(--ink);white-space:nowrap}
+  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .btn.primary:hover{filter:brightness(1.06)}
+
+  section{padding:clamp(56px,8vw,96px) 0;border-top:1px solid var(--line)}
+  section:first-of-type{border-top:0}
+
+  /* hero */
+  .hero{text-align:center;padding-top:clamp(56px,9vw,104px)}
+  .hero .mark svg{width:clamp(60px,10vw,84px);height:clamp(60px,10vw,84px);margin:0 auto}
+  .hero h1{font-family:var(--mono);font-weight:600;font-size:clamp(40px,8vw,76px);letter-spacing:-.02em;line-height:.95;margin:22px 0 0}
+  .hero .tag{font-size:clamp(19px,2.6vw,26px);color:var(--ink);margin:20px auto 0;max-width:22ch;font-weight:500;text-wrap:balance}
+  .hero .sub{margin:16px auto 0;max-width:60ch;font-size:clamp(15px,1.8vw,17px)}
+  .hero .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:30px}
+  .facts{display:flex;gap:8px 20px;justify-content:center;flex-wrap:wrap;margin-top:28px;font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+  .facts b{color:var(--accent);font-weight:600}
+
+  /* two guarantees */
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:8px}
+  @media (max-width:680px){.duo{grid-template-columns:1fr}}
+  .g{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:clamp(22px,3vw,30px)}
+  .g .k{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin:0 0 12px}
+  .g h3{font-size:19px;letter-spacing:-.01em;margin:0 0 8px}
+  .g p{font-size:15px;margin:0}
+
+  /* invariants */
+  .inv{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden;margin-top:26px}
+  @media (max-width:720px){.inv{grid-template-columns:1fr}}
+  .inv .i{background:var(--card);padding:18px 20px}
+  .inv .i .n{font-family:var(--mono);font-size:14px;color:var(--accent);font-weight:600}
+  .inv .i .d{font-size:13.5px;color:var(--muted);margin-top:5px;line-height:1.5}
+
+  /* flow */
+  .flow{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch;margin-top:24px;counter-reset:s}
+  .flow .step{flex:1 1 150px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;position:relative}
+  .flow .step .num{font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:.1em}
+  .flow .step .t{font-size:14.5px;color:var(--ink);margin-top:6px;font-weight:500}
+  .flow .step .x{font-size:12.5px;color:var(--muted);margin-top:4px}
+
+  /* code */
+  pre{background:var(--code);color:#dfe8e4;border:1px solid var(--line);border-radius:14px;
+    padding:20px 22px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.7;margin-top:22px}
+  pre .c{color:#5f8f83}
+  pre .a{color:#34C6AB}
+
+  /* honesty */
+  .honest{background:var(--chip);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:14px;padding:clamp(20px,3vw,28px);margin-top:8px}
+  .honest h3{margin:0 0 8px;font-size:18px}
+  .honest p{margin:0;font-size:15px;color:var(--ink)}
+  .honest code{font-family:var(--mono);color:var(--accent-ink);font-size:.92em}
+
+  footer{border-top:1px solid var(--line);padding:40px 0 60px}
+  footer .wrap{display:flex;gap:16px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+  footer .brand{font-size:16px}
+  footer .fl{display:flex;gap:20px;font-size:14px;flex-wrap:wrap}
+  footer .fl a{color:var(--muted)}
+  .dots{font-family:var(--mono);font-size:12px;color:var(--muted)}
+</style>
+
+<!-- ⊢ turnstile mark (docs/img/decern-mark.svg): the "proves" symbol; its arm is three ledger segments.
+     Inlined with fill:currentColor so it inherits the spruce accent from its .mark span. -->
+
+<header>
+  <div class="wrap">
+    <span class="brand"><span class="mark"><svg width="26" height="26" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><rect x="14" y="10" width="9" height="44" rx="4.5"/><rect x="22.5" y="27.5" width="10.5" height="9" rx="4.5"/><rect x="35.5" y="27.5" width="9.5" height="9" rx="4.5"/><rect x="47.5" y="27.5" width="8.5" height="9" rx="4.5"/></svg></span>decern</span>
+    <nav>
+      <a href="#proof">Proof</a>
+      <a href="#invariants">Invariants</a>
+      <a href="#start">Quickstart</a>
+      <a href="https://github.com/anivar/decern">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap">
+      <span class="mark"><svg viewBox="0 0 64 64" fill="currentColor" role="img" aria-label="decern"><rect x="14" y="10" width="9" height="44" rx="4.5"/><rect x="22.5" y="27.5" width="10.5" height="9" rx="4.5"/><rect x="35.5" y="27.5" width="9.5" height="9" rx="4.5"/><rect x="47.5" y="27.5" width="8.5" height="9" rx="4.5"/></svg></span>
+      <h1>decern</h1>
+      <p class="tag">Proven authorization for agentic systems.</p>
+      <p class="sub">A small, deterministic authorization kernel. Humans, AI agents, and workloads are one principal, decided by the same pure function — its safety machine-checked over every input, every decision recorded in a ledger anyone can verify.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/anivar/decern">View on GitHub →</a>
+        <a class="btn" href="https://github.com/anivar/decern/blob/main/ARCHITECTURE.md">Architecture</a>
+      </div>
+      <div class="facts">
+        <span><b>9</b> invariants proven by cvc5</span>
+        <span><b>0</b> compiled-C deps (pure Rust)</span>
+        <span>Apache-2.0</span>
+        <span>v0.1.0</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="proof">
+    <div class="wrap">
+      <p class="eyebrow">Two guarantees</p>
+      <h2>Proof over promises.</h2>
+      <p>Most authorization layers assert their safety and test a few examples. decern proves it, and records it.</p>
+      <div class="duo">
+        <div class="g">
+          <p class="k">Proven, not tested</p>
+          <h3>Machine-checked over every input</h3>
+          <p>The decision is a pure function of <em>(principal, authority graph, policy, now)</em>. Nine safety invariants over that function are discharged across the entire input space by the cvc5 SMT solver — a green proof means the kernel can't violate them on <em>any</em> input, not just the ones in a test file.</p>
+        </div>
+        <div class="g">
+          <p class="k">Verifiable, not trusted</p>
+          <h3>A tamper-evident ledger</h3>
+          <p>Every decision lands in an append-only, Ed25519-signed, hash-chained ledger. A signature proves each record authentic; the chain proves nothing was dropped. Anyone can verify it offline — without trusting the operator who produced it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="invariants">
+    <div class="wrap">
+      <p class="eyebrow">What is proven</p>
+      <h2>Nine invariants, over the whole input space.</h2>
+      <p>Each statement is calibrated to exactly what the solver certifies — a proof never claims more than the machine verified. Each ships with a negative control that fails if the guarantee is removed.</p>
+      <div class="inv">
+        <div class="i"><div class="n">money-gate</div><div class="d">No privileged money action without explicit approval.</div></div>
+        <div class="i"><div class="n">isolation</div><div class="d">No decision ever crosses a tenant boundary.</div></div>
+        <div class="i"><div class="n">decay</div><div class="d">Nothing allowed once authority has expired.</div></div>
+        <div class="i"><div class="n">attenuation-edge</div><div class="d">No access without ownership, a delegation ancestor, or an explicit grant.</div></div>
+        <div class="i"><div class="n">scope-gate</div><div class="d">Bounded actions require their named scope.</div></div>
+        <div class="i"><div class="n">revocation-gate</div><div class="d">A revoked principal is allowed nothing.</div></div>
+        <div class="i"><div class="n">residency-gate</div><div class="d">Residency-labeled resources need matching clearance.</div></div>
+        <div class="i"><div class="n">role-gate</div><div class="d">Role-required resources need the role.</div></div>
+        <div class="i"><div class="n">consent-gate</div><div class="d">Non-owned PII needs explicit consent.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <p class="eyebrow">How it works</p>
+      <h2>Decide. Record. Or refuse.</h2>
+      <p>A thin, fail-closed PDP: a decision is served only if its audit record was written first.</p>
+      <div class="flow">
+        <div class="step"><div class="num">01</div><div class="t">Evaluate</div><div class="x">The proven kernel decides over the authority graph. The server owns the clock.</div></div>
+        <div class="step"><div class="num">02</div><div class="t">Record</div><div class="x">The decision + a derived accountable-owner are appended, signed, to the ledger.</div></div>
+        <div class="step"><div class="num">03</div><div class="t">Serve or 503</div><div class="x">Returned only if the record was written — never a bare allow.</div></div>
+        <div class="step"><div class="num">04</div><div class="t">Verify</div><div class="x"><code style="font-family:var(--mono);font-size:.9em">decern verify</code> re-checks the chain and every signature, offline.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="wrap">
+      <p class="eyebrow">Quickstart</p>
+      <h2>Prove it, run it, verify it.</h2>
+<pre><span class="c"># 1. Prove all invariants hold over every input (cvc5)</span>
+cargo run -p decern-cli -- <span class="a">prove</span>
+
+<span class="c"># 2. Run the fail-closed PDP (writes a tamper-evident ledger)</span>
+cargo run -p decern-server -- --ledger /tmp/decern.jsonl &amp;
+
+<span class="c"># 3. Decide over HTTP (AuthZEN-shaped)</span>
+curl -s localhost:8080/access/v1/evaluation -d '{
+  "subject":{"type":"Principal","id":"corp"},
+  "action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"}}'
+
+<span class="c"># 4. Verify the ledger — chain + every signature</span>
+cargo run -p decern-cli -- <span class="a">verify</span> --ledger /tmp/decern.jsonl</pre>
+      <p style="margin-top:18px;font-size:14.5px">There's also an approval-backed, provably-attenuated <b style="color:var(--ink)">Mission</b> — a scoped, bounded authority that can neither out-scope nor outlive the approver who granted it, with every transition recorded to the same ledger.</p>
+    </div>
+  </section>
+
+  <section id="honest">
+    <div class="wrap">
+      <div class="honest">
+        <h3>What "proven" means here</h3>
+        <p>cvc5 proves the <b>kernel's</b> invariants over every input — that delegation can only narrow, that a revoked principal is denied, and the rest. It does <b>not</b> prove that your <code>Cedar</code> policy expresses what you intended. The guarantee is about the mechanism, never a claim that a given deployment is "secure." That line is the whole point — decern is careful not to cross it.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="brand"><span class="mark"><svg width="22" height="22" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><rect x="14" y="10" width="9" height="44" rx="4.5"/><rect x="22.5" y="27.5" width="10.5" height="9" rx="4.5"/><rect x="35.5" y="27.5" width="9.5" height="9" rx="4.5"/><rect x="47.5" y="27.5" width="8.5" height="9" rx="4.5"/></svg></span>decern</span>
+    <span class="dots">proven · sovereign · verifiable — for people and agents</span>
+    <div class="fl">
+      <a href="https://github.com/anivar/decern">GitHub</a>
+      <a href="https://github.com/anivar/decern/blob/main/ARCHITECTURE.md">Architecture</a>
+      <a href="https://github.com/anivar/decern/blob/main/CONTRIBUTING.md">Contribute</a>
+      <a href="https://github.com/anivar/decern/labels/help%20wanted">Help wanted</a>
+    </div>
+  </div>
+</footer>
