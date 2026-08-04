@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+name: SDKs
+
+# The `ci` workflow is Cargo only, so until this existed nothing verified
+# sdks/go, sdks/python or sdks/typescript on any push. Each has a test suite
+# that passes locally; none of them ran here, which means a break would have
+# surfaced first to whoever depended on a client rather than to us.
+#
+# No path filter. Filtering to sdks/** would skip these jobs on a change that
+# alters what a client is written against, and the jobs are cheap enough that
+# the saved minutes are not worth reasoning about which changes can reach them.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/go
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          # go.mod holds the floor the module claims to support; building on
+          # exactly that version is what catches a use of a newer builtin.
+          go-version-file: sdks/go/go.mod
+          # No cache-dependency-path: the client is stdlib only, so the module
+          # has no go.sum and setup-go errors on a path it cannot resolve.
+          cache: false
+
+      - run: go build ./...
+
+      - run: go vet ./...
+
+      # gofmt exits 0 whether or not it reformatted anything, so the check is
+      # that it named no files.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go test ./...
+
+  python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          # The floor declared in pyproject.toml, for the same reason as Go.
+          python-version: "3.11"
+
+      # The client declares no dependencies and the suite uses unittest, so
+      # there is nothing to install. Discovery runs from the package root so
+      # `decern` imports from the tree rather than from an installed copy.
+      - name: unittest
+        run: python -m unittest discover -s tests -t .
+
+  typescript:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdks/typescript/package-lock.json
+
+      - run: npm ci
+
+      # `npm test` runs tsc and then node --test over the emitted dist, so the
+      # type check is part of the test step rather than a separate one.
+      - run: npm test
