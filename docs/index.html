@@ -42,6 +42,117 @@
   #ledger-demo[data-state="clean"] .dc-tampered { display: none !important; }
   #ledger-demo[data-state="tampered"] .dc-clean { display: none !important; }
   :focus-visible { outline: 2px solid #0E7C6B; outline-offset: 2px; }
+
+  /* Responsive layout.
+     The page is laid out entirely in inline styles, which is workable for one
+     hand-written file but leaves no way to say "not on a phone" — a style
+     attribute carries no media context and outranks any stylesheet rule.
+     Until this block there was no @media rule anywhere in the file, so every
+     desktop grid kept its shape on a 360px screen and the page scrolled
+     sideways at every phone width.
+     Overriding by attribute selector rather than adding classes to sixty
+     elements: each declaration below is matched verbatim against one the
+     document actually contains, and !important is needed for the same reason
+     the ledger demo above needs it.
+     900px, not 760: the hero's second track is a fixed 340px, so at 768 the
+     prose column was down to about 280px and wrapping every five words. The
+     page stopped overflowing there but did not become readable until the
+     columns actually stacked. Above 900px nothing here applies and the
+     desktop layout is untouched. */
+  @media (max-width: 900px) {
+    /* Every section is centred by the same 1180px/40px wrapper, and 40px an
+       edge is a seventh of a folded phone. */
+    [style*="max-width:1180px"] {
+      padding-left: 22px !important;
+      padding-right: 22px !important;
+    }
+    /* Content grids collapse to one column. The 340px and 296px tracks are
+       fixed sidebars: those are the ones that made the document wider than
+       the screen rather than merely cramped. */
+    [style*="grid-template-columns:minmax(0,1fr) 340px"],
+    [style*="grid-template-columns:minmax(0,1fr) 296px"],
+    [style*="grid-template-columns:minmax(0,1fr) minmax(0,1fr)"],
+    [style*="grid-template-columns:minmax(0,1fr) minmax(0,1.1fr)"],
+    [style*="grid-template-columns:minmax(0,1fr) minmax(0,1.05fr)"],
+    [style*="grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)"],
+    [style*="grid-template-columns:repeat(2,minmax(0,1fr))"],
+    [style*="grid-template-columns:repeat(3,minmax(0,1fr))"],
+    [style*="grid-template-columns:repeat(5,minmax(0,1fr))"] {
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: 24px !important;
+    }
+    /* A rule drawn between two side-by-side panels is a stray line under the
+       first one as soon as they stack. */
+    [style*="border-right:1px solid #0C0F0E"] {
+      border-right: 0 !important;
+      border-bottom: 1px solid #0C0F0E !important;
+    }
+    /* The header is a fixed 66px row; its links need two lines on a phone. */
+    header [style*="height:66px"] {
+      height: auto !important;
+      min-height: 66px !important;
+      padding-top: 14px !important;
+      padding-bottom: 14px !important;
+      flex-wrap: wrap !important;
+      gap: 14px 20px !important;
+    }
+    /* Section rhythm set for a desktop column is a screenful of nothing on a
+       phone, where the reader is already scrolling more to cover the same
+       text. */
+    [style*="padding:88px 0 0"] { padding-top: 56px !important; }
+    [style*="padding:84px 0 0"] { padding-top: 44px !important; }
+  }
+
+  /* The two three-column tables — the nine rules, and the crate list — become
+     two-line rows. Both spend their first two columns on fixed widths (44px
+     and 196px for the rules, 212px and 80px for the crates) and give the rest
+     to the sentence that actually says something. On a 360px screen that left
+     the sentence about 60px, which set "No privileged money action without
+     explicit approval" one word to a line and ran the row to ten lines deep.
+     Stacked, the identifier keeps its own line and the sentence gets the
+     full width. Not a horizontal scroll like the ledger: the ledger is a
+     record whose columns have to stay aligned to be read as a record, and
+     these are a list of nine sentences. */
+  @media (max-width: 560px) {
+    #rules table tr,
+    #build table tr {
+      display: block;
+      border-bottom: 1px solid #E1E7E4;
+      padding: 13px 0;
+    }
+    #rules table td,
+    #build table td {
+      display: inline-block;
+      width: auto !important;
+      border-bottom: 0 !important;
+      padding: 0 14px 0 0 !important;
+    }
+    /* The sentence, third in both tables. */
+    #rules table td:nth-child(3),
+    #build table td:nth-child(3) {
+      display: block;
+      margin-top: 7px !important;
+      padding-right: 0 !important;
+    }
+  }
+
+  @media (max-width: 400px) {
+    [style*="max-width:1180px"] {
+      padding-left: 16px !important;
+      padding-right: 16px !important;
+    }
+    /* 32px of card padding leaves a 26-character line on a folded phone. */
+    [style*="padding:32px"] { padding: 20px !important; }
+    [style*="padding:28px"] { padding: 18px !important; }
+    [style*="padding:26px"] { padding: 18px !important; }
+    /* The ledger already scrolls inside its own well. This only keeps the
+       well's chrome off the edges of the screen. */
+    [style*="padding:6px 24px 22px"],
+    [style*="padding:14px 24px"] {
+      padding-left: 16px !important;
+      padding-right: 16px !important;
+    }
+  }
 </style>
 </head>
 <body>
