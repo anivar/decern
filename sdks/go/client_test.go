@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -192,3 +193,5 @@ func TestClientHTTPErrorBodyTruncation(t *testing.T) {
 		t.Errorf("expected error message to end with '...', got %q", decErr.Error())
 	}
 }
+
+

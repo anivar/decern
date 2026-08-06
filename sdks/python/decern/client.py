@@ -60,7 +60,7 @@ class Client:
     def _build_http_error(method: str, path: str, e: urllib.error.HTTPError) -> DecernError:
         try:
             raw_body = e.read().decode("utf-8", errors="replace")
-        except Exception:
+        except (OSError, ValueError):
             raw_body = ""
 
         body_str = raw_body.strip()

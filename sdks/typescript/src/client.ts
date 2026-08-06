@@ -51,7 +51,13 @@ export class DecernError extends Error {
 
 function buildHttpError(method: string, path: string, res: Response, raw: string): DecernError {
   const bodyStr = raw.trim();
-  const trunc = bodyStr.length > MAX_ERROR_BODY_LEN ? bodyStr.slice(0, MAX_ERROR_BODY_LEN) + "..." : bodyStr;
+  let trunc = bodyStr;
+  if (bodyStr.length > MAX_ERROR_BODY_LEN) {
+    const cps = Array.from(bodyStr);
+    if (cps.length > MAX_ERROR_BODY_LEN) {
+      trunc = cps.slice(0, MAX_ERROR_BODY_LEN).join("") + "...";
+    }
+  }
   const msg = bodyStr
     ? `${method} ${path} -> ${res.status} ${res.statusText}: ${trunc}`
     : `${method} ${path} -> ${res.status} ${res.statusText}`;

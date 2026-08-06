@@ -129,7 +129,10 @@ func buildHTTPError(method, path string, statusCode int, respBody []byte) *Decer
 	if bodyStr != "" {
 		trunc := bodyStr
 		if len(bodyStr) > 512 {
-			trunc = bodyStr[:512] + "..."
+			runes := []rune(bodyStr)
+			if len(runes) > 512 {
+				trunc = string(runes[:512]) + "..."
+			}
 		}
 		msg = fmt.Sprintf("%s %s -> %d %s: %s", method, path, statusCode, http.StatusText(statusCode), trunc)
 	}

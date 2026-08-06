@@ -148,3 +148,4 @@ test("healthy false on transport error", async () => {
   const { c } = clientWith(503, "down");
   assert.equal(await c.healthy(), false);
 });
+
