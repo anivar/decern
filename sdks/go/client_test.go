@@ -117,3 +117,78 @@ func TestClientHealthy(t *testing.T) {
 		t.Errorf("expected healthy to be true")
 	}
 }
+
+func TestClientHTTPErrorWithBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":"access_denied"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(&ClientOptions{
+		BaseURL: server.URL,
+	})
+
+	_, err := client.Evaluate(context.Background(), EvaluateArgs{
+		Subject:  Entity{"type": "Principal", "id": "corp"},
+		Action:   "Read",
+		Resource: Entity{"type": "Resource", "id": "claim1"},
+	})
+
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+
+	decErr, ok := err.(*DecernError)
+	if !ok {
+		t.Fatalf("expected *DecernError, got %T", err)
+	}
+
+	if decErr.StatusCode != 403 {
+		t.Errorf("expected StatusCode 403, got %d", decErr.StatusCode)
+	}
+
+	if decErr.Body != `{"error":"access_denied"}` {
+		t.Errorf("expected Body `{\"error\":\"access_denied\"}`, got %q", decErr.Body)
+	}
+
+	if !strings.Contains(decErr.Error(), `403 Forbidden: {"error":"access_denied"}`) {
+		t.Errorf("expected error message to contain body, got %q", decErr.Error())
+	}
+}
+
+func TestClientHTTPErrorBodyTruncation(t *testing.T) {
+	longBody := strings.Repeat("x", 600)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(longBody))
+	}))
+	defer server.Close()
+
+	client := NewClient(&ClientOptions{
+		BaseURL: server.URL,
+	})
+
+	_, err := client.Evaluate(context.Background(), EvaluateArgs{
+		Subject:  Entity{"type": "Principal", "id": "corp"},
+		Action:   "Read",
+		Resource: Entity{"type": "Resource", "id": "claim1"},
+	})
+
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+
+	decErr, ok := err.(*DecernError)
+	if !ok {
+		t.Fatalf("expected *DecernError, got %T", err)
+	}
+
+	if decErr.Body != longBody {
+		t.Errorf("expected Body len %d, got len %d", len(longBody), len(decErr.Body))
+	}
+
+	if !strings.HasSuffix(decErr.Error(), "...") {
+		t.Errorf("expected error message to end with '...', got %q", decErr.Error())
+	}
+}

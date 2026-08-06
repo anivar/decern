@@ -103,5 +103,77 @@ class TestPubkeyHealth(unittest.TestCase):
         self.assertFalse(c.healthy())
 
 
+class TestHttpError(unittest.TestCase):
+    def test_http_error_attaches_status_and_body(self):
+        import io
+        import urllib.error
+
+        body = b'{"error": "denied"}'
+        err = urllib.error.HTTPError(
+            "http://127.0.0.1:8080/access/v1/evaluation",
+            403,
+            "Forbidden",
+            {},
+            io.BytesIO(body),
+        )
+
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            c = Client()
+            with self.assertRaises(DecernError) as cm:
+                c.evaluate({"id": "a"}, "Read", {"id": "b"})
+
+            e = cm.exception
+            self.assertEqual(e.status_code, 403)
+            self.assertEqual(e.body, '{"error": "denied"}')
+            self.assertIn("403 Forbidden: ", str(e))
+            self.assertIn('{"error": "denied"}', str(e))
+
+    def test_http_error_empty_body(self):
+        import io
+        import urllib.error
+
+        err = urllib.error.HTTPError(
+            "http://127.0.0.1:8080/access/v1/evaluation",
+            503,
+            "Service Unavailable",
+            {},
+            io.BytesIO(b""),
+        )
+
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            c = Client()
+            with self.assertRaises(DecernError) as cm:
+                c.evaluate({"id": "a"}, "Read", {"id": "b"})
+
+            e = cm.exception
+            self.assertEqual(e.status_code, 503)
+            self.assertEqual(e.body, "")
+            self.assertEqual(str(e), "POST /access/v1/evaluation -> 503 Service Unavailable")
+
+    def test_http_error_body_truncation(self):
+        import io
+        import urllib.error
+
+        long_body = "x" * 600
+        err = urllib.error.HTTPError(
+            "http://127.0.0.1:8080/access/v1/evaluation",
+            400,
+            "Bad Request",
+            {},
+            io.BytesIO(long_body.encode("utf-8")),
+        )
+
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            c = Client()
+            with self.assertRaises(DecernError) as cm:
+                c.evaluate({"id": "a"}, "Read", {"id": "b"})
+
+            e = cm.exception
+            self.assertEqual(e.status_code, 400)
+            self.assertEqual(e.body, long_body)
+            self.assertIn("...", str(e))
+            self.assertTrue(str(e).endswith("..."))
+
+
 if __name__ == "__main__":
     unittest.main()
