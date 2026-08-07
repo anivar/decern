@@ -19,6 +19,8 @@ UX into `decern-serve`.
   recorded to the tamper-evident ledger (`/mission/v1/*`).
 - **Decision-under-mission** — `--require-mission` gates decide on a live Mission; server-derived
   approval flags; Mission ref + `parameter_digest` on the Entry.
+- **Anchoring** — a signed tree head over HTTP, and `decern verify --anchor`, so a record dropped
+  after it was committed is detectable by someone who is not the operator.
 - **Decision-subject column** — the party a decision is taken *upon*, distinct from who asked and
   from the accountable owner, carried as a pseudonymous handle and never reaching the decision.
   Implements [draft-aravind-oauth-decision-subject-00](https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/).
@@ -27,8 +29,6 @@ UX into `decern-serve`.
 
 - **Default money path behind Mission** — require a Mission for MoveMoney without the opt-in flag
   (read-only default, mutation gated).
-- **Anchor verification command** — verify a lone ledger file against an external anchor from the
-  CLI, closing the "verify without trusting the operator" loop offline.
 - **MCP evaluation mapping** — document a thin `tools/call` → AuthZEN evaluate mapping with a golden
   test, so a gateway can call decern per tool invocation. A worked integration example, not an
   enforcement product ([#6](https://github.com/anivar/decern/issues/6)).
