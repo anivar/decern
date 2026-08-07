@@ -56,6 +56,11 @@ jobs:
 
   python:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The floor declared in pyproject.toml (for the same reason as Go)
+        # plus current stable, absorbed from the retired sdk-python workflow.
+        python-version: ["3.11", "3.13"]
     defaults:
       run:
         working-directory: sdks/python
@@ -64,8 +69,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          # The floor declared in pyproject.toml, for the same reason as Go.
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       # The client declares no dependencies and the suite uses unittest, so
       # there is nothing to install. Discovery runs from the package root so
@@ -75,6 +79,12 @@ jobs:
 
   typescript:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Both maintained LTS lines, absorbed from the retired sdk-typescript
+        # workflow. npm ci stays strict: a lockfile that no longer installs is
+        # a failure to report, not something to fall back from.
+        node-version: [22, 24]
     defaults:
       run:
         working-directory: sdks/typescript
@@ -83,7 +93,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: sdks/typescript/package-lock.json
 
