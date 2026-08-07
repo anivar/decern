@@ -17,7 +17,9 @@ use axum::{
 use clap::Parser;
 use decern_identity::{IdentityError, mission, mission::Mission};
 use decern_kernel::{Directory, EntityRef, Kernel, Model};
-use decern_ledger::{Entry, Ledger, LedgerError, Party, ShardedLedger, UNATTRIBUTED_SHARD};
+use decern_ledger::{
+    Entry, Ledger, LedgerError, Party, ShardedLedger, SubjectSource, UNATTRIBUTED_SHARD,
+};
 use decern_store::{FileLedgerHeadStore, FileMissionRegistry, MissionRegistry, StoreError};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::Deserialize;
@@ -378,6 +380,65 @@ fn resolve_sponsor(dir: &Directory, subject_id: &str) -> Option<Party> {
     })
 }
 
+/// Resolve the party a decision is ABOUT, and say how it was established.
+///
+/// Where the directory knows who a resource belongs to, that owner IS the party
+/// the decision affects, and the server derives it rather than believing the
+/// caller. Where it does not — an unowned or unknown resource — only the caller
+/// can say whose data the request concerns, so an assertion is accepted, checked
+/// against the directory, and recorded as the weaker claim it is.
+///
+/// Both are refusals, never silent corrections:
+///   - an asserted subject the directory does not know is refused, because a
+///     phantom party in a signed record is worse than an absent one;
+///   - an assertion that CONTRADICTS the derived owner is refused rather than
+///     overwritten in either direction. Quietly preferring the derivation would
+///     record something the caller never claimed; quietly preferring the caller
+///     would let the request pick who a decision was about. A disagreement about
+///     whose data this is means the two sides disagree about the request itself.
+fn resolve_decision_subject(
+    dir: &Directory,
+    resource_id: &str,
+    asserted: Option<Ref>,
+) -> Result<(Option<Party>, SubjectSource), String> {
+    let derived = dir.resources.get(resource_id).map(|r| Party {
+        kind: "Principal".to_owned(),
+        id: r.owner.clone(),
+    });
+
+    match (derived, asserted) {
+        (Some(owner), None) => Ok((Some(owner), SubjectSource::Derived)),
+        (Some(owner), Some(claim)) => {
+            if claim.id != owner.id {
+                return Err(format!(
+                    "decision_subject {} contradicts the directory, which records {} as the party \
+                     resource {resource_id} belongs to",
+                    claim.id, owner.id
+                ));
+            }
+            // The caller agreed with the directory, so the directory is what was
+            // established; the assertion added nothing to trust.
+            Ok((Some(owner), SubjectSource::Derived))
+        }
+        (None, Some(claim)) => {
+            if !dir.contains(&claim.id) {
+                return Err(format!(
+                    "decision_subject {} is not a principal this directory knows",
+                    claim.id
+                ));
+            }
+            Ok((
+                Some(Party {
+                    kind: claim.ty,
+                    id: claim.id,
+                }),
+                SubjectSource::Asserted,
+            ))
+        }
+        (None, None) => Ok((None, SubjectSource::Derived)),
+    }
+}
+
 async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Response {
     let now_s = now_secs();
     let mut ctx = if req.context.is_object() {
@@ -455,34 +516,20 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
     // are carried into the append closure so they fail closed as a 503.
     let shard = shard_for(&st.backend, st.kernel.directory(), &subject.id);
 
-    // The party a decision is ABOUT. Only the caller knows whose data a request
-    // concerns, so this one is caller-named — but a name the directory cannot
-    // vouch for is refused rather than recorded. An accountability column that
-    // accepts any string is decoration, and this one is bound into
-    // `parameter_digest` below. Caller-named, server-validated; `sponsor` above
-    // stays strictly server-derived.
-    let decision_subject = match req.decision_subject {
-        None => None,
-        Some(r) => {
-            if !st.kernel.directory().contains(&r.id) {
+    // The party a decision is ABOUT — distinct from who asked (`subject`) and from
+    // who answers for it (`sponsor`). Derived where the directory establishes it,
+    // asserted only where it cannot, and the record says which.
+    let (decision_subject, decision_subject_source) =
+        match resolve_decision_subject(st.kernel.directory(), &resource.id, req.decision_subject) {
+            Ok(pair) => pair,
+            Err(detail) => {
                 return (
                     StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({
-                        "error": "unknown decision_subject",
-                        "detail": format!(
-                            "decision_subject {} is not a principal this directory knows",
-                            r.id
-                        ),
-                    })),
+                    Json(json!({ "error": "decision_subject", "detail": detail })),
                 )
                     .into_response();
             }
-            Some(Party {
-                kind: r.ty,
-                id: r.id,
-            })
-        }
-    };
+        };
 
     if let Some(m) = &mission_for_context {
         ctx["mission"] = m.clone();
@@ -496,6 +543,7 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
         "context": ctx,
         "mission": mission_ref.as_ref().map(|m| json!({"approver": m.approver, "s256": m.s256})),
         "decision_subject": decision_subject.as_ref().map(|p| json!({"kind": p.kind, "id": p.id})),
+        "decision_subject_source": decision_subject.as_ref().map(|_| decision_subject_source),
     })));
 
     let entry = Entry {
@@ -512,6 +560,7 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
         parameter_digest,
         mission: mission_ref,
         decision_subject,
+        decision_subject_source,
         ..Default::default()
     };
 
@@ -1945,17 +1994,83 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// A decision-subject the directory cannot vouch for is refused, not recorded.
-    /// The column names the party a decision is about; accepting an arbitrary
-    /// string would make it decoration and would bind a phantom into the digest.
+    /// Where the directory knows who a resource belongs to, that owner is the party
+    /// the decision is about — established by the server, not taken on the caller's
+    /// word, and recorded as derived.
     #[tokio::test]
-    async fn decide_refuses_an_unknown_decision_subject() {
+    async fn decision_subject_is_derived_from_the_resource_owner() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        // claim1 belongs to corp, and the request says nothing about a subject.
+        let req: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"corp"},
+                "action":{"name":"Read"},
+                "resource":{"type":"Resource","id":"claim1"}}"#,
+        )
+        .unwrap();
+        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
+        let last = records.last().expect("decision recorded");
+        assert_eq!(
+            last["entry"]["decision_subject"]["id"], "corp",
+            "the resource owner is the party the decision is about: {last}"
+        );
+        // Derived is the default, so it is skipped on the wire — its ABSENCE is the
+        // claim, and an asserted subject is what shows up explicitly.
+        assert!(
+            last["entry"].get("decision_subject_source").is_none(),
+            "a derived subject records no source marker: {last}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A caller that contradicts the directory about whose data this is does not get
+    /// to pick, and is not silently corrected either — the two sides disagree about
+    /// the request itself, so the request is refused.
+    #[tokio::test]
+    async fn decide_refuses_a_decision_subject_that_contradicts_the_owner() {
         let base = mission_base();
         let (st, _pk) = mission_state_at(&base);
+        // claim1 belongs to corp; the caller claims it is about agent1.
         let req: DecideReq = serde_json::from_str(
             r#"{"subject":{"type":"Principal","id":"corp"},
                 "action":{"name":"Read"},
                 "resource":{"type":"Resource","id":"claim1"},
+                "decision_subject":{"type":"Principal","id":"agent1"}}"#,
+        )
+        .unwrap();
+        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "a contradicted decision_subject must be refused: {body}"
+        );
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let recorded = std::fs::read_to_string(&ledger_path).unwrap_or_default();
+        assert!(
+            !recorded.contains("agent1"),
+            "a refused decision_subject must never reach the ledger: {recorded}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A decision-subject the directory cannot vouch for is refused, not recorded.
+    /// A phantom party bound into a signed record is worse than an absent one.
+    #[tokio::test]
+    async fn decide_refuses_an_unknown_decision_subject() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        // An unowned resource, so nothing can be derived and the assertion is
+        // considered on its own — and rejected, because the party is unknown.
+        let req: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"corp"},
+                "action":{"name":"Read"},
+                "resource":{"type":"Resource","id":"no-such-resource"},
                 "decision_subject":{"type":"Principal","id":"ghost-not-in-directory"}}"#,
         )
         .unwrap();
@@ -1965,13 +2080,43 @@ mod tests {
             StatusCode::UNPROCESSABLE_ENTITY,
             "unknown decision_subject must be refused: {body}"
         );
-        assert_eq!(body["error"], "unknown decision_subject");
+        assert_eq!(body["error"], "decision_subject");
 
         let ledger_path = base.join("decern-ledger.jsonl");
         let recorded = std::fs::read_to_string(&ledger_path).unwrap_or_default();
         assert!(
             !recorded.contains("ghost-not-in-directory"),
             "a refused decision_subject must never reach the ledger: {recorded}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Where the directory cannot establish an owner, only the caller can say whose
+    /// data the request concerns. That assertion is accepted once it names someone
+    /// the directory knows — and is marked as asserted, so an auditor reading the
+    /// record can weigh it for what it is.
+    #[tokio::test]
+    async fn an_asserted_decision_subject_is_recorded_as_asserted() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let req: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"corp"},
+                "action":{"name":"Read"},
+                "resource":{"type":"Resource","id":"no-such-resource"},
+                "decision_subject":{"type":"Principal","id":"agent1"}}"#,
+        )
+        .unwrap();
+        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
+        let last = records.last().expect("decision recorded");
+        assert_eq!(last["entry"]["decision_subject"]["id"], "agent1");
+        assert_eq!(
+            last["entry"]["decision_subject_source"], "Asserted",
+            "an assertion must be recorded as one, never as a derivation: {last}"
         );
         let _ = std::fs::remove_dir_all(&base);
     }

@@ -18,15 +18,15 @@ UX into `decern-serve`.
 - **Mission-lifecycle service** — approve / look up / terminate over HTTP, every transition
   recorded to the tamper-evident ledger (`/mission/v1/*`).
 - **Decision-under-mission** — `--require-mission` gates decide on a live Mission; server-derived
-  approval flags; Mission ref + `parameter_digest` + optional `decision_subject` on the Entry.
+  approval flags; Mission ref + `parameter_digest` on the Entry.
+- **Decision-subject column** — the party a decision is *about*, distinct from who asked and from
+  the accountable owner. Derived from the directory where it knows who a resource belongs to,
+  asserted only where it cannot, and the record says which of the two it was.
 
 ## Next — the secure agent-action path
 
 - **Default money path behind Mission** — require a Mission for MoveMoney without the opt-in flag
   (read-only default, mutation gated).
-- **Decision-subject column** — the party a decision is *about*, distinct from who asked and from
-  the accountable-owner. Recorded today alongside a Mission; the work ahead is deriving it where
-  the directory can, rather than accepting it named.
 - **Anchor verification command** — verify a lone ledger file against an external anchor from the
   CLI, closing the "verify without trusting the operator" loop offline.
 - **MCP evaluation mapping** — document a thin `tools/call` → AuthZEN evaluate mapping with a golden
