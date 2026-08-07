@@ -38,13 +38,13 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Install Rust toolchain (honors rust-toolchain.toml)
         run: rustup show active-toolchain || rustup toolchain install
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Lint the feature-gated decern-serve wiring (`--sharded postgres://…`)
         run: cargo clippy -p decern-server --features postgres --all-targets -- -D warnings
