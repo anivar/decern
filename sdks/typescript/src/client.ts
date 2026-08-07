@@ -36,32 +36,82 @@ export interface ClientOptions {
 
 const MAX_ERROR_BODY_LEN = 512;
 
+// Caps how much of a non-2xx response body the client buffers. base_url can
+// point at an intermediary (see deployment guidance), so an error body's
+// size isn't bounded by decern-serve's own behavior.
+const MAX_ERROR_BODY_BYTES = 64 * 1024; // 64 KiB
+
 /** Transport failure or non-2xx response from the PDP. */
 export class DecernError extends Error {
   readonly status?: number;
   readonly body?: string;
+  /** True when `body` was cut off at MAX_ERROR_BODY_BYTES. */
+  readonly truncated?: boolean;
 
-  constructor(message: string, status?: number, body?: string) {
+  constructor(message: string, status?: number, body?: string, truncated?: boolean) {
     super(message);
     this.name = "DecernError";
     this.status = status;
     this.body = body;
+    this.truncated = truncated;
   }
 }
 
-function buildHttpError(method: string, path: string, res: Response, raw: string): DecernError {
+// Reads at most maxBytes of a response body, decoding as UTF-8, and cancels
+// the stream once the cap is hit instead of buffering the rest. Falls back
+// to a full read when the runtime's fetch doesn't expose a streamable body.
+async function readCapped(res: Response, maxBytes: number): Promise<{ text: string; truncated: boolean }> {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    return { text: await res.text(), truncated: false };
+  }
+
+  const decoder = new TextDecoder();
+  let text = "";
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    if (total + value.length > maxBytes) {
+      text += decoder.decode(value.subarray(0, maxBytes - total), { stream: true });
+      total = maxBytes;
+      await reader.cancel();
+      text += decoder.decode();
+      return { text, truncated: true };
+    }
+
+    text += decoder.decode(value, { stream: true });
+    total += value.length;
+  }
+
+  text += decoder.decode();
+  return { text, truncated: false };
+}
+
+function buildHttpError(
+  method: string,
+  path: string,
+  res: Response,
+  raw: string,
+  bodyTruncated: boolean,
+): DecernError {
   const bodyStr = raw.trim();
   let trunc = bodyStr;
+  let truncated = bodyTruncated;
   if (bodyStr.length > MAX_ERROR_BODY_LEN) {
     const cps = Array.from(bodyStr);
     if (cps.length > MAX_ERROR_BODY_LEN) {
-      trunc = cps.slice(0, MAX_ERROR_BODY_LEN).join("") + "...";
+      trunc = cps.slice(0, MAX_ERROR_BODY_LEN).join("");
+      truncated = true;
     }
   }
+  if (truncated) trunc += "...";
   const msg = bodyStr
     ? `${method} ${path} -> ${res.status} ${res.statusText}: ${trunc}`
     : `${method} ${path} -> ${res.status} ${res.statusText}`;
-  return new DecernError(msg, res.status, raw);
+  return new DecernError(msg, res.status, raw, truncated);
 }
 
 /** Client for a decern PDP speaking AuthZEN 1.0 Access Evaluation. */
@@ -86,11 +136,11 @@ export class Client {
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });
-      const raw = await res.text();
       if (!res.ok) {
-        throw buildHttpError(method, path, res, raw);
+        const { text: raw, truncated } = await readCapped(res, MAX_ERROR_BODY_BYTES);
+        throw buildHttpError(method, path, res, raw, truncated);
       }
-      return raw;
+      return await res.text();
     } catch (e) {
       if (e instanceof DecernError) throw e;
       throw new DecernError(`${method} ${path} failed: ${(e as Error).message}`);
