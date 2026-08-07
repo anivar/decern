@@ -150,6 +150,32 @@ class TestHttpError(unittest.TestCase):
             self.assertEqual(e.body, "")
             self.assertEqual(str(e), "POST /access/v1/evaluation -> 503 Service Unavailable")
 
+    def test_http_error_body_capped_at_64kib(self):
+        # One byte over the cap so the fix must actually stop reading, not
+        # just display-truncate a fully-buffered string.
+        import io
+        import urllib.error
+
+        huge_body = "y" * (64 * 1024 + 1)
+        err = urllib.error.HTTPError(
+            "http://127.0.0.1:8080/access/v1/evaluation",
+            500,
+            "Internal Server Error",
+            {},
+            io.BytesIO(huge_body.encode("utf-8")),
+        )
+
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            c = Client()
+            with self.assertRaises(DecernError) as cm:
+                c.evaluate({"id": "a"}, "Read", {"id": "b"})
+
+            e = cm.exception
+            self.assertEqual(e.status_code, 500)
+            self.assertEqual(len(e.body), 64 * 1024)
+            self.assertTrue(e.truncated)
+            self.assertTrue(str(e).endswith("..."))
+
     def test_http_error_body_truncation(self):
         import io
         import urllib.error
