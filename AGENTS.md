@@ -30,6 +30,10 @@ Run the canonical script (the same gates CI runs) and keep it green:
 
 Needs the pinned toolchain, `cargo-deny`, and **cvc5** for the proofs. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+`--skip-proofs` runs every gate except the proofs, for iterating on a change that cannot reach
+authorization semantics. It exits non-zero regardless, so it can never stand in for a passing
+run: finish with `./scripts/verify.sh` and no flags before you commit.
+
 ## Proof-first
 Any change touching authorization semantics — the kernel decision function, the Cedar model,
 the invariants, or their inputs — must keep the proofs green:
