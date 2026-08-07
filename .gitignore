@@ -4,3 +4,5 @@ target/
 *.pub
 *.bundle
 *.ledger
+# proptest failure corpus (local)
+**/proptest-regressions/

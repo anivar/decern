@@ -178,6 +178,13 @@ pub struct MissionEntry {
     /// Once true, the mission mints no further tokens and can never revert to active.
     #[serde(default)]
     pub terminated: bool,
+    /// Agent principal the mission authorizes. Empty on pre-decision-under-mission
+    /// registry rows (serde default); a decide-under-mission check requires it set.
+    #[serde(default)]
+    pub agent: String,
+    /// Tools/scopes approved for the agent. Empty on legacy rows.
+    #[serde(default)]
+    pub approved_tools: Vec<String>,
 }
 
 /// The **mission registry** — the authoritative, persistent record of approved
@@ -906,6 +913,8 @@ mod tests {
             approver: approver.into(),
             expiry,
             terminated: false,
+            agent: String::new(),
+            approved_tools: Vec::new(),
         }
     }
 

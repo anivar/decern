@@ -12,6 +12,9 @@ A deterministic authorization kernel whose safety properties are **machine-check
 every possible input**, not just tested on examples — with a hash-chained, tamper-evident
 decision ledger anyone can verify without trusting the operator.
 
+[Website](https://decern.anivar.net/) · [Roadmap](ROADMAP.md) ·
+[Releases](https://github.com/anivar/decern/releases) · [Security](SECURITY.md)
+
 The industry standardizes how authority is *represented* — tokens, delegation envelopes,
 decision-request formats — and defers the *guarantee* (that attenuation holds, that nothing
 was dropped from the log, that a decision stayed within its mandate) to implementer policy.
@@ -212,7 +215,10 @@ owns it) and the [`help wanted`](https://github.com/anivar/decern/labels/help%20
   same rules — a human still sign-offs the DCO.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full loop and [GOVERNANCE.md](GOVERNANCE.md) for how
-changes are reviewed and merged.
+changes are reviewed and merged. Project-health evidence is kept explicit:
+[ADOPTERS.md](ADOPTERS.md) names deployments only with permission,
+[RELEASES.md](RELEASES.md) documents the release mechanics, and
+[DEPENDENCIES.md](DEPENDENCIES.md) documents dependency and license controls.
 
 ## License
 

@@ -36,8 +36,9 @@ pub struct Invariant {
 /// the prover runs; cvc5 sees them as flat, opaque values and proves membership / the
 /// boolean, not the closure that produced them. That closure is trusted base — covered
 /// instead by the decern-kernel re-derivation unit tests (dedicated example-based tests
-/// that re-derive the closure against hand-written ground truth; NOT property/proptest-
-/// generated, and NOT exhaustive). The statements name this split
+/// that re-derive the closure against hand-written ground truth, PLUS proptest
+/// coverage over random forests/cycles (see `graph::tests` and `inject_derived`
+/// prop tests). Still NOT exhaustive SMT — the statements name this split
 /// so "PROVEN" never claims more than the machine actually checks.
 pub fn suite() -> Vec<Invariant> {
     vec![

@@ -12,3 +12,8 @@ cedar-policy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# Property tests for the trusted-base transitive closure / effective-revocation
+# derivation that cvc5 does not certify.
+proptest = "1.11"
