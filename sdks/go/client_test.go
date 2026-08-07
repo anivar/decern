@@ -193,5 +193,3 @@ func TestClientHTTPErrorBodyTruncation(t *testing.T) {
 		t.Errorf("expected error message to end with '...', got %q", decErr.Error())
 	}
 }
-
-
