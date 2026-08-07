@@ -212,9 +212,16 @@ pub struct Entry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mission: Option<MissionRef>,
     /// The party the decision *affects* (distinct from the acting `subject_id`
-    /// and from `sponsor`). Optional; set by the PDP when the request names one.
+    /// and from `sponsor`). Optional; absent when nothing established one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_subject: Option<Party>,
+    /// Whether `decision_subject` was derived from the directory or asserted by
+    /// the caller. An auditor reading "this decision was about Alice" needs to
+    /// know whether the server established that or was merely told it; the two
+    /// are not equally trustworthy and only one survives a hostile reading.
+    /// Default + skipped-when-default, so existing records are unchanged.
+    #[serde(default, skip_serializing_if = "is_derived_subject")]
+    pub decision_subject_source: SubjectSource,
 }
 
 /// A Mission reference recorded on a decision Entry.
@@ -268,6 +275,23 @@ pub enum SponsorSource {
 
 fn is_derived_sponsor(s: &SponsorSource) -> bool {
     matches!(s, SponsorSource::Derived)
+}
+
+/// How `Entry::decision_subject` was established (see [`Entry::decision_subject`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SubjectSource {
+    /// Resolved from the directory — the resource's owner is the party the
+    /// decision is about, and the caller could not have chosen otherwise.
+    #[default]
+    Derived,
+    /// Named by the caller and checked against the directory. Only the caller
+    /// knows whose data an unowned resource concerns, so this remains possible;
+    /// it is recorded as the weaker claim it is.
+    Asserted,
+}
+
+fn is_derived_subject(s: &SubjectSource) -> bool {
+    matches!(s, SubjectSource::Derived)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3384,6 +3408,50 @@ mod tests {
     }
 
     // ===================== torn-tail vs tamper (crash recovery) =====================
+
+    /// A ledger written before a field existed must still verify, byte for byte,
+    /// after that field is added. Every optional column is `skip_serializing_if`
+    /// for exactly this reason, and the chain hashes the bytes on disk — so the
+    /// guarantee is only real if a record lacking the newest fields still checks
+    /// out. Written as literal on-disk lines rather than by re-serializing, so
+    /// this fails if a future field ever starts emitting a default.
+    #[test]
+    fn a_record_written_before_the_newest_columns_still_verifies() {
+        let key = decern_crypto::generate().unwrap();
+        let vk = key.verifying_key();
+        let path = tmp("pre-columns-compat.ledger");
+        std::fs::remove_file(&path).ok();
+
+        // Append through the current code, then confirm the bytes carry none of
+        // the default-valued columns: their absence is what an older writer
+        // produced, so today's output IS the old shape when nothing set them.
+        let mut l = Ledger::open(&path, key.clone()).unwrap();
+        l.append(entry("act0", true)).unwrap();
+        drop(l);
+
+        let line = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !line.contains("decision_subject_source"),
+            "a default source must not be written; old records would not have it: {line}"
+        );
+        assert!(
+            !line.contains("sponsor_source"),
+            "a default sponsor source must not be written either: {line}"
+        );
+
+        // The chain covers the exact bytes above, so this is the real check: an
+        // entry with none of the newer columns verifies as authentic.
+        let report = verify(&path, Some(&vk)).unwrap();
+        assert_eq!(report.entries, 1);
+        assert!(report.signatures_checked);
+
+        // And it round-trips: reading it back yields the defaults rather than
+        // failing to parse, which is what lets an old ledger be read at all.
+        let (_r, records) = read_verified(&path, Some(&vk), 0, 1).unwrap();
+        let rec = records.first().expect("one record");
+        assert!(rec["entry"].get("decision_subject_source").is_none());
+        std::fs::remove_file(&path).ok();
+    }
 
     /// Write `n` valid, chain+signature-valid records, then return the file's
     /// full lines so a test can rebuild a deliberately damaged tail.

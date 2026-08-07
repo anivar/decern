@@ -59,6 +59,15 @@ delegate's record names the principal ultimately answerable for it; a root princ
 itself; a caller the directory doesn't recognize has none. It is a recorded accountability column,
 not a decision gate — it never changes the allow/deny outcome.
 
+A record also names the **decision subject** — the party the decision is *about*, which is a
+different question from who asked for it and from who answers for it. Where the directory knows
+who a resource belongs to, that owner is the subject and the server establishes it; a caller that
+contradicts it is refused rather than believed or silently corrected. Where the directory cannot
+establish one, only the caller knows whose data a request concerns, so an assertion is accepted
+once it names a principal the directory knows — and the record marks it `Asserted`, because an
+auditor reading "this decision was about Alice" needs to know whether the server established that
+or was told it. Neither form is a decision gate either.
+
 A recorded decision looks like this. Here an unrecognized caller — `agent-7`, not in the directory —
 is refused a `MoveMoney`, so the record carries `decision: false` and **no `sponsor`** (an
 accountable-owner is derived only for a caller the directory knows), and its `prev` is the previous
