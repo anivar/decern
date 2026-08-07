@@ -83,6 +83,59 @@ fn explain_outputs_human_readable_entry() {
     assert!(stdout.contains("Read"), "output must show action");
     assert!(stdout.contains("ALLOW"), "output must show decision");
     assert!(stdout.contains("owner:alice"), "output must show reasoning");
+
+    // This run supplied --pubkey, so the signature genuinely was verified.
+    let sig_line = stdout
+        .lines()
+        .find(|l| l.contains("signature:"))
+        .expect("output must report signature status");
+    assert!(
+        sig_line.contains("(verified)"),
+        "with --pubkey the signature must be reported as verified: {sig_line}"
+    );
+}
+
+/// An explanation must never claim a verification it did not perform. Without
+/// `--pubkey` the chain is still checked, but no signature is examined.
+#[test]
+fn explain_without_pubkey_does_not_claim_verification() {
+    let dir = std::env::temp_dir().join(format!("decern-cli-explain-nokey-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let ledger_path = dir.join("ledger.jsonl");
+
+    let key = generate().unwrap();
+    {
+        let mut ledger = decern_ledger::Ledger::open(&ledger_path, key).unwrap();
+        let _ = ledger.append(entry("claim1", true, "owner:alice"));
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_decern"))
+        .args(["explain", "--ledger"])
+        .arg(&ledger_path)
+        .args(["--seq", "0"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "explain must succeed without a key; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let sig_line = stdout
+        .lines()
+        .find(|l| l.contains("signature:"))
+        .expect("output must report signature status");
+    assert!(
+        sig_line.contains("not checked"),
+        "without --pubkey the signature must be reported as not checked: {sig_line}"
+    );
+    assert!(
+        !sig_line.contains("(verified)"),
+        "an unchecked signature must never be labelled verified: {sig_line}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

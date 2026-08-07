@@ -166,9 +166,16 @@ fn explain(
         println!("chain:");
         println!("  prev:       {}", record.prev);
         println!("  hash:       {}", record.hash);
+        // "(verified)" belongs only to the branch that actually verified something:
+        // without a key the chain still checks out but no signature was examined, and
+        // saying otherwise would be the explanation claiming more than it did.
         println!(
-            "  signature:  {} (verified)",
-            if key.is_some() { "yes" } else { "not checked" }
+            "  signature:  {}",
+            if key.is_some() {
+                "yes (verified)"
+            } else {
+                "not checked — pass --pubkey to verify it"
+            }
         );
         if let Some(kid) = &record.kid {
             println!("  signed_by:  {}", kid);
