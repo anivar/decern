@@ -174,6 +174,8 @@ pub fn approve(
                 approver: mission.approver.clone(),
                 expiry: mission.expiry,
                 terminated: false,
+                agent: mission.agent.clone(),
+                approved_tools: mission.approved_tools.clone(),
             },
             now,
         )?;

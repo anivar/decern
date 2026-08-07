@@ -180,9 +180,7 @@ pub struct Entry {
     pub reasons: Vec<String>,
     /// RFC 8785 SHA-256 digest of the parameters a decision was made over — binds a
     /// record to the EXACT arguments, closing the TOCTOU gap between "authorized"
-    /// and "executed". Reserved and inert: never set by any shipped
-    /// path, `None` and skipped-when-None, so existing records' bytes and hashes are
-    /// unchanged.
+    /// and "executed". Set by `decern-serve` on decide / mission transitions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parameter_digest: Option<String>,
     /// The authority-graph edge type: `Attenuate` (default, omitted) = offline
@@ -209,10 +207,25 @@ pub struct Entry {
     /// bytes and hashes are unchanged.
     #[serde(default, skip_serializing_if = "is_derived_sponsor")]
     pub sponsor_source: SponsorSource,
+    /// The Mission that justified this decision, when decide ran under a live
+    /// approval. `None` when no mission was bound (or on pre-mission records).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mission: Option<MissionRef>,
+    /// The party the decision *affects* (distinct from the acting `subject_id`
+    /// and from `sponsor`). Optional; set by the PDP when the request names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_subject: Option<Party>,
 }
 
-/// A party referenced by a record — the accountable owner named by `sponsor`. The
-/// acting subject is `subject_id` on the entry itself.
+/// A Mission reference recorded on a decision Entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionRef {
+    pub approver: String,
+    pub s256: String,
+}
+
+/// A party referenced by a record — the accountable owner named by `sponsor`,
+/// or the `decision_subject`. The acting subject is `subject_id` on the entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Party {
     pub kind: String,

@@ -46,7 +46,16 @@ pub struct ResourceRec {
     pub sensitivity: Option<String>,
     /// Data-residency label, e.g. "EU" (optional); gates by principal clearance.
     pub residency: Option<String>,
+    /// ReBAC viewers — principals explicitly granted read without ownership/delegation.
+    /// Load-validated: each must exist and share the resource's tenant.
+    pub viewers: BTreeSet<String>,
 }
+
+/// Tenant id reserved for the unattributed ledger shard (`__system__`).
+/// A real directory tenant with this name would co-mingle with that shard;
+/// [`Directory::validate`] refuses it at load so every consumer fails closed,
+/// not only `decern-serve`.
+pub const RESERVED_TENANT: &str = "__system__";
 
 /// CIAM v3: a customer organization — a tenancy anchor with an optional
 /// sub-organization parent edge (a hierarchy inside one isolation tenant).
@@ -81,6 +90,38 @@ fn attr_set(attrs: &serde_json::Map<String, Value>, name: &str) -> BTreeSet<Stri
                 .collect::<BTreeSet<_>>()
         })
         .unwrap_or_default()
+}
+
+/// Extract a Set of entity references (e.g. resource.viewers). Absent => empty.
+/// Both Cedar encodings accepted per element; malformed / wrong-type → Err.
+fn attr_entity_set(
+    attrs: &serde_json::Map<String, Value>,
+    name: &str,
+    expected_type: &str,
+) -> Result<BTreeSet<String>, String> {
+    let Some(v) = attrs.get(name) else {
+        return Ok(BTreeSet::new());
+    };
+    let Some(arr) = v.as_array() else {
+        return Err(format!("{name}: expected array of entity refs"));
+    };
+    let mut out = BTreeSet::new();
+    for (i, elem) in arr.iter().enumerate() {
+        let fake = {
+            let mut m = serde_json::Map::new();
+            m.insert(name.to_owned(), elem.clone());
+            m
+        };
+        match attr_entity_ref(&fake, name, expected_type)? {
+            Some(id) => {
+                out.insert(id);
+            }
+            None => {
+                return Err(format!("{name}[{i}]: missing entity ref"));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Extract an entity reference attribute. Cedar accepts TWO encodings —
@@ -230,6 +271,13 @@ impl Directory {
                             continue;
                         }
                     };
+                    let viewers = match attr_entity_set(attrs, "viewers", "Principal") {
+                        Ok(v) => v,
+                        Err(e) => {
+                            violations.push(format!("Resource::{id}: {e}"));
+                            continue;
+                        }
+                    };
                     let rec = ResourceRec {
                         id: id.to_owned(),
                         owner,
@@ -237,6 +285,7 @@ impl Directory {
                         org,
                         sensitivity: attr_str(attrs, "sensitivity"),
                         residency: attr_str(attrs, "residency"),
+                        viewers,
                     };
                     if rec.owner.is_empty() {
                         violations.push(format!("Resource::{id}: missing owner"));
@@ -401,6 +450,49 @@ impl Directory {
                     r.id, o.id, o.tenant, r.tenant
                 )),
                 Some(_) => {}
+            }
+            // ReBAC viewers: each must exist and share the resource's tenant —
+            // a cross-tenant viewer edge would otherwise only be caught at
+            // decision time by F-tenant, after the graph had already loaded.
+            for viewer_id in &r.viewers {
+                match self.principals.get(viewer_id) {
+                    None => v.push(format!(
+                        "Resource::{}: viewer {viewer_id} does not exist",
+                        r.id
+                    )),
+                    Some(p) if p.tenant != r.tenant => v.push(format!(
+                        "Resource::{}: viewer {viewer_id} is in tenant {} but resource is in tenant {}",
+                        r.id, p.tenant, r.tenant
+                    )),
+                    Some(_) => {}
+                }
+            }
+        }
+
+        // Reserved tenant: never a real isolation domain (collides with the
+        // unattributed ledger shard name).
+        for p in self.principals.values() {
+            if p.tenant == RESERVED_TENANT {
+                v.push(format!(
+                    "Principal::{}: tenant {RESERVED_TENANT:?} is reserved",
+                    p.id
+                ));
+            }
+        }
+        for r in self.resources.values() {
+            if r.tenant == RESERVED_TENANT {
+                v.push(format!(
+                    "Resource::{}: tenant {RESERVED_TENANT:?} is reserved",
+                    r.id
+                ));
+            }
+        }
+        for o in self.orgs.values() {
+            if o.tenant == RESERVED_TENANT {
+                v.push(format!(
+                    "Organization::{}: tenant {RESERVED_TENANT:?} is reserved",
+                    o.id
+                ));
             }
         }
 
@@ -740,5 +832,195 @@ mod tests {
         ]);
         let dir = Directory::parse(&ents).unwrap();
         assert!(dir.validate().iter().any(|v| v.contains("does not exist")));
+    }
+
+    #[test]
+    fn cross_tenant_viewer_rejected_at_load() {
+        let ents = json!([
+            principal("corp", "A", 1000, &["read"], None),
+            principal("outsider", "B", 1000, &["read"], None),
+            {"uid": {"type": "Resource", "id": "doc"},
+             "attrs": {
+                "owner": {"__entity": {"type": "Principal", "id": "corp"}},
+                "tenant": "A",
+                "viewers": [{"__entity": {"type": "Principal", "id": "outsider"}}]
+             },
+             "parents": []}
+        ]);
+        let dir = Directory::parse(&ents).unwrap();
+        assert!(
+            dir.validate()
+                .iter()
+                .any(|v| v.contains("viewer outsider") && v.contains("tenant")),
+            "{:?}",
+            dir.validate()
+        );
+    }
+
+    #[test]
+    fn unknown_viewer_rejected_at_load() {
+        let ents = json!([
+            principal("corp", "A", 1000, &["read"], None),
+            {"uid": {"type": "Resource", "id": "doc"},
+             "attrs": {
+                "owner": {"__entity": {"type": "Principal", "id": "corp"}},
+                "tenant": "A",
+                "viewers": [{"__entity": {"type": "Principal", "id": "ghost"}}]
+             },
+             "parents": []}
+        ]);
+        let dir = Directory::parse(&ents).unwrap();
+        assert!(
+            dir.validate()
+                .iter()
+                .any(|v| v.contains("viewer ghost") && v.contains("does not exist")),
+            "{:?}",
+            dir.validate()
+        );
+    }
+
+    #[test]
+    fn reserved_tenant_rejected_at_load() {
+        let ents = json!([
+            {"uid": {"type": "Principal", "id": "sys"},
+             "attrs": {"kind": "Agent", "tenant": RESERVED_TENANT, "expiry": 1000, "scopes": []},
+             "parents": []}
+        ]);
+        let dir = Directory::parse(&ents).unwrap();
+        assert!(
+            dir.validate().iter().any(|v| v.contains("reserved")),
+            "{:?}",
+            dir.validate()
+        );
+    }
+
+    // ===================== proptest: trusted-base closure =====================
+    // `ancestors_of` is the transitive walk cvc5 does NOT certify. Generate random
+    // delegation forests (and cyclic graphs) and check the production walk against
+    // an independent set-closure + nearest-first order discipline.
+
+    /// Set-based closure: follow `delegator` into a set until fixpoint / cycle.
+    /// The starting id is never an ancestor of itself (a cycle back to start stops
+    /// without inserting it) — matching `ancestors_of`.
+    fn reference_ancestor_set(dir: &Directory, id: &str) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        let mut cur = id.to_owned();
+        let mut guard = 0usize;
+        let limit = dir.principals.len().saturating_add(1);
+        while let Some(p) = dir.principals.get(&cur) {
+            let Some(d) = &p.delegator else {
+                break;
+            };
+            // Stop before inserting the start (not your own ancestor) or a repeat.
+            if d == id || !out.insert(d.clone()) {
+                break;
+            }
+            cur = d.clone();
+            guard += 1;
+            if guard > limit {
+                break;
+            }
+        }
+        out
+    }
+
+    fn dir_from_edges(n: usize, parent_of: &[Option<usize>], revoked: &[bool]) -> Directory {
+        let mut principals = BTreeMap::new();
+        for i in 0..n {
+            let id = format!("p{i}");
+            let delegator = parent_of.get(i).and_then(|p| p.map(|j| format!("p{j}")));
+            principals.insert(
+                id.clone(),
+                PrincipalRec {
+                    id,
+                    kind: "Agent".into(),
+                    tenant: "T".into(),
+                    expiry: 1000 - i as i64,
+                    scopes: BTreeSet::from(["read".into()]),
+                    delegator,
+                    org: None,
+                    roles: BTreeSet::new(),
+                    jurisdictions: BTreeSet::new(),
+                    revoked: revoked.get(i).copied().unwrap_or(false),
+                },
+            );
+        }
+        Directory {
+            principals,
+            resources: BTreeMap::new(),
+            orgs: BTreeMap::new(),
+        }
+    }
+
+    /// Forest: node i's parent is None or in 0..i — acyclic by construction.
+    #[test]
+    fn prop_ancestors_of_matches_reference_on_random_forests() {
+        use proptest::prelude::*;
+
+        // parent_of[i] encoded as u8: 0 = root, else parent = (v-1) % i
+        proptest!(|(n in 1usize..16, bits in proptest::collection::vec(any::<u8>(), 1usize..16))| {
+            let n = n.min(bits.len()).max(1);
+            let mut parent_of = vec![None; n];
+            let mut revoked = vec![false; n];
+            for (i, &b) in bits.iter().take(n).enumerate() {
+                revoked[i] = b & 1 != 0;
+                if i == 0 || (b >> 1) & 3 == 0 {
+                    parent_of[i] = None;
+                } else {
+                    parent_of[i] = Some(((b >> 2) as usize) % i);
+                }
+            }
+            let dir = dir_from_edges(n, &parent_of, &revoked);
+            for i in 0..n {
+                let id = format!("p{i}");
+                let got = dir.ancestors_of(&id);
+                let as_set: BTreeSet<_> = got.iter().cloned().collect();
+                prop_assert_eq!(
+                    as_set,
+                    reference_ancestor_set(&dir, &id),
+                    "{}: set closure mismatch",
+                    id
+                );
+                // Nearest-first: each step is the authored delegator of the previous node.
+                let mut prev = id.clone();
+                for a in &got {
+                    let prev_del = dir
+                        .principals
+                        .get(&prev)
+                        .and_then(|p| p.delegator.clone());
+                    prop_assert_eq!(
+                        prev_del.as_deref(),
+                        Some(a.as_str()),
+                        "{}: order break at {} after {}",
+                        id,
+                        a,
+                        prev
+                    );
+                    prev = a.clone();
+                }
+            }
+        });
+    }
+
+    /// Cycles must not hang: every id appears at most once; set agrees with reference.
+    #[test]
+    fn prop_ancestors_of_terminates_on_random_cycles() {
+        use proptest::prelude::*;
+
+        proptest!(|(n in 2usize..12, cycle_shift in 0usize..16)| {
+            let mut parent_of = vec![None; n];
+            for (i, parent) in parent_of.iter_mut().enumerate() {
+                *parent = Some((i + 1 + cycle_shift) % n);
+            }
+            let dir = dir_from_edges(n, &parent_of, &vec![false; n]);
+            for i in 0..n {
+                let id = format!("p{i}");
+                let got = dir.ancestors_of(&id);
+                prop_assert!(got.len() < n, "{}: walk longer than n on a cycle", id);
+                let as_set: BTreeSet<_> = got.iter().cloned().collect();
+                prop_assert_eq!(as_set.len(), got.len(), "{}: duplicate in walk", id);
+                prop_assert_eq!(as_set, reference_ancestor_set(&dir, &id));
+            }
+        });
     }
 }

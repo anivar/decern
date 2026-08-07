@@ -49,6 +49,12 @@ struct Args {
     /// checks (`decern-identity`). Default: `decern-missions.json` alongside the ledger.
     #[arg(long, value_name = "PATH")]
     missions: Option<PathBuf>,
+    /// Require every decision to name a live Mission in `context.mission`.
+    /// When set, client-supplied `human_approved` / `consent` are ignored; those
+    /// flags are derived server-side from the verified Mission (or the decision
+    /// is Denied). Start opt-in; operators harden MoveMoney behind this flag.
+    #[arg(long)]
+    require_mission: bool,
     #[arg(long, default_value = "127.0.0.1:8080")]
     addr: String,
 }
@@ -110,6 +116,8 @@ struct AppState {
     /// outlives any single in-memory handle and is seen across processes.
     missions: Arc<FileMissionRegistry>,
     pubkey: VerifyingKey,
+    /// When true, every decide must name a live `context.mission`.
+    require_mission: bool,
 }
 
 /// Resolve the ledger shard for a decision: the subject's directory tenant.
@@ -142,9 +150,10 @@ fn resolve_shard(dir: &Directory, subject_id: &str) -> Result<String, String> {
 
 /// Reject booting a `--sharded` deployment whose directory contains any tenant
 /// (on a principal, resource, or org) literally equal to the reserved
-/// [`UNATTRIBUTED_SHARD`] name. This is the load-time enforcement the
-/// `UNATTRIBUTED_SHARD` contract calls for, which the kernel itself does not do;
-/// it turns "some requests 503" into "this deployment never starts".
+/// [`UNATTRIBUTED_SHARD`] name. Defense in depth: the kernel already refuses
+/// this at `Directory::validate` / `Kernel::new`, so a normal boot never
+/// reaches here with a colliding model — this catches a hand-built / bypassed
+/// directory and turns "some requests 503" into "this deployment never starts".
 fn reserved_tenant_collision(dir: &Directory) -> Option<String> {
     let from_principals = dir
         .principals
@@ -186,6 +195,9 @@ struct DecideReq {
     resource: Ref,
     #[serde(default)]
     context: Value,
+    /// Optional party the decision affects (≠ acting subject, ≠ sponsor).
+    #[serde(default)]
+    decision_subject: Option<Ref>,
 }
 
 fn load_signing_key(path: Option<&PathBuf>) -> Result<SigningKey> {
@@ -388,7 +400,50 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
         id: req.resource.id,
     };
     let action = req.action.name;
-    let r = st.kernel.check(&subject, &action, &resource, &ctx);
+
+    // Decision-under-mission: bind (and optionally require) a live Mission.
+    // Client-supplied human_approved/consent are stripped whenever a mission is
+    // in play; the server re-derives them from the verified grant.
+    let mission_bind = bind_mission(
+        st.missions.as_ref(),
+        st.require_mission,
+        &subject.id,
+        &action,
+        &ctx,
+        now_s,
+    );
+    let (mission_ref, mission_errors) = match mission_bind {
+        // No Mission named and none required: `context` is left as the caller sent
+        // it, including any approval flags. That is this server's standing trust
+        // boundary — the endpoints are unauthenticated by design and the PEP in
+        // front supplies the context — not something Missions relax. It does mean
+        // approval is server-derived only under a Mission, so an operator who wants
+        // that guarantee for money must run `--require-mission`.
+        MissionBind::None => (None, Vec::new()),
+        MissionBind::Ok(mref) => {
+            apply_mission_context(&mut ctx, &action);
+            (Some(mref), Vec::new())
+        }
+        MissionBind::Deny(errs) => {
+            // Strip forged approval flags; force a Deny path (kernel will Deny
+            // MoveMoney without human_approved, etc.) and surface the mission errors.
+            strip_client_approval_flags(&mut ctx);
+            (None, errs)
+        }
+    };
+    // `mission` is not in the Cedar context schema — strip before check, re-attach
+    // on the ledger Entry (Entry.mission + context.mission for auditors).
+    let mission_for_context = ctx.get("mission").cloned();
+    if let Some(obj) = ctx.as_object_mut() {
+        obj.remove("mission");
+    }
+
+    let mut r = st.kernel.check(&subject, &action, &resource, &ctx);
+    if !mission_errors.is_empty() {
+        r.decision = false;
+        r.errors.extend(mission_errors);
+        r.reasons.clear();
+    }
 
     // Accountable-owner, derived server-side from the delegation chain BEFORE
     // `subject.id` is moved into the entry. Never read from the request body.
@@ -399,6 +454,49 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
     // backend, which has no shards. Resolution errors (reserved-name collision)
     // are carried into the append closure so they fail closed as a 503.
     let shard = shard_for(&st.backend, st.kernel.directory(), &subject.id);
+
+    // The party a decision is ABOUT. Only the caller knows whose data a request
+    // concerns, so this one is caller-named — but a name the directory cannot
+    // vouch for is refused rather than recorded. An accountability column that
+    // accepts any string is decoration, and this one is bound into
+    // `parameter_digest` below. Caller-named, server-validated; `sponsor` above
+    // stays strictly server-derived.
+    let decision_subject = match req.decision_subject {
+        None => None,
+        Some(r) => {
+            if !st.kernel.directory().contains(&r.id) {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({
+                        "error": "unknown decision_subject",
+                        "detail": format!(
+                            "decision_subject {} is not a principal this directory knows",
+                            r.id
+                        ),
+                    })),
+                )
+                    .into_response();
+            }
+            Some(Party {
+                kind: r.ty,
+                id: r.id,
+            })
+        }
+    };
+
+    if let Some(m) = &mission_for_context {
+        ctx["mission"] = m.clone();
+    }
+
+    // Bind the exact parameters evaluated: subject/action/resource + post-mission ctx.
+    let parameter_digest = Some(decern_ledger::parameter_digest(&json!({
+        "subject": {"type": subject.ty, "id": subject.id},
+        "action": action,
+        "resource": {"type": resource.ty, "id": resource.id},
+        "context": ctx,
+        "mission": mission_ref.as_ref().map(|m| json!({"approver": m.approver, "s256": m.s256})),
+        "decision_subject": decision_subject.as_ref().map(|p| json!({"kind": p.kind, "id": p.id})),
+    })));
 
     let entry = Entry {
         ts_ms: now_s.saturating_mul(1000),
@@ -411,12 +509,152 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
         decision: r.decision,
         reasons: r.reasons.clone(),
         sponsor,
+        parameter_digest,
+        mission: mission_ref,
+        decision_subject,
         ..Default::default()
     };
 
     let backend = st.backend.clone();
     record_and_respond(r.decision, r.reasons, r.errors, move || {
         append_to_backend(&backend, shard, entry)
+    })
+}
+
+/// Outcome of resolving `context.mission` against the registry.
+enum MissionBind {
+    /// No mission named and `--require-mission` is off.
+    None,
+    /// Live Mission bound; caller should inject server-side approval flags.
+    Ok(decern_ledger::MissionRef),
+    /// Mission required or named but invalid — force Deny with these errors.
+    Deny(Vec<String>),
+}
+
+fn strip_client_approval_flags(ctx: &mut Value) {
+    if let Some(obj) = ctx.as_object_mut() {
+        obj.remove("human_approved");
+        obj.remove("consent");
+    }
+}
+
+/// Map action → required scope name (mirrors the scope-gate convention).
+///
+/// `None` means "this action has no scope mapping", which under a Mission is a
+/// refusal, not a pass — see `bind_mission`. An action added to the model without
+/// a mapping here must not inherit every Mission's approval by omission.
+fn scope_for_action(action: &str) -> Option<&'static str> {
+    match action {
+        "Read" => Some("read"),
+        "MoveMoney" => Some("move_money"),
+        "AccessPII" => Some("pii:read"),
+        _ => None,
+    }
+}
+
+/// After a Mission is verified, set approval flags from the grant — never from the body.
+///
+/// The flags say only what the grant establishes: an approver, holding the scope,
+/// approved this action for this agent. `bind_mission` has already refused any
+/// action the grant does not cover, so each flag set here is backed by that check.
+fn apply_mission_context(ctx: &mut Value, action: &str) {
+    strip_client_approval_flags(ctx);
+    // A verified Mission that covers the action is the human/consent approval.
+    if action == "MoveMoney" {
+        ctx["human_approved"] = json!(true);
+    }
+    // Consent is asserted only where the action is itself the consent-bearing one.
+    // `Read` is not: a Mission approving reads is not a data subject's consent, and
+    // recording it as one would put a claim in the ledger the grant never made.
+    if action == "AccessPII" {
+        ctx["consent"] = json!(true);
+    }
+}
+
+fn bind_mission(
+    registry: &dyn MissionRegistry,
+    require: bool,
+    subject_id: &str,
+    action: &str,
+    ctx: &Value,
+    now: u64,
+) -> MissionBind {
+    let mission_val = ctx.get("mission");
+    let named = mission_val.is_some() && !mission_val.map(|v| v.is_null()).unwrap_or(true);
+    if !named {
+        return if require {
+            MissionBind::Deny(vec![
+                "context.mission is required (--require-mission)".into(),
+            ])
+        } else {
+            MissionBind::None
+        };
+    }
+    let Some(obj) = mission_val.and_then(|v| v.as_object()) else {
+        return MissionBind::Deny(vec![
+            "context.mission must be an object {approver,s256}".into(),
+        ]);
+    };
+    let approver = obj.get("approver").and_then(|v| v.as_str()).unwrap_or("");
+    let s256 = obj.get("s256").and_then(|v| v.as_str()).unwrap_or("");
+    if approver.is_empty() || s256.is_empty() {
+        return MissionBind::Deny(vec![
+            "context.mission requires non-empty approver and s256".into(),
+        ]);
+    }
+
+    let entry = match registry.status(s256) {
+        Ok(Some(e)) => e,
+        Ok(None) => {
+            return MissionBind::Deny(vec![format!("mission {s256} names no registered approval")]);
+        }
+        Err(e) => {
+            return MissionBind::Deny(vec![format!("mission registry unavailable: {e}")]);
+        }
+    };
+    if entry.terminated {
+        return MissionBind::Deny(vec![format!("mission {s256} is terminated")]);
+    }
+    if entry.expiry <= now {
+        return MissionBind::Deny(vec![format!("mission {s256} is expired")]);
+    }
+    if entry.approver != approver {
+        return MissionBind::Deny(vec![format!(
+            "mission {s256} approver mismatch (registry {}, request {approver})",
+            entry.approver
+        )]);
+    }
+    if entry.agent.is_empty() {
+        return MissionBind::Deny(vec![format!(
+            "mission {s256} has no agent on file (re-approve to enable decision-under-mission)"
+        )]);
+    }
+    if entry.agent != subject_id {
+        return MissionBind::Deny(vec![format!(
+            "mission {s256} authorizes agent {}, not subject {subject_id}",
+            entry.agent
+        )]);
+    }
+    match scope_for_action(action) {
+        Some(scope) if !entry.approved_tools.iter().any(|t| t == scope) => {
+            return MissionBind::Deny(vec![format!(
+                "mission {s256} does not approve tool/scope `{scope}` for action {action}"
+            )]);
+        }
+        // An action with no scope mapping cannot be shown to be covered by this
+        // grant, so it is refused. Silently skipping the check would let any new
+        // action ride on every Mission until someone remembered to map it.
+        None => {
+            return MissionBind::Deny(vec![format!(
+                "action {action} has no scope mapping, so mission {s256} cannot be shown to approve it"
+            )]);
+        }
+        _ => {}
+    }
+
+    MissionBind::Ok(decern_ledger::MissionRef {
+        approver: approver.to_owned(),
+        s256: s256.to_owned(),
     })
 }
 
@@ -460,6 +698,12 @@ fn mission_entry(
     // (subject = approver), not the agent the mission authorizes: the approver is who
     // stands behind the grant. Resolved server-side, never read from the request.
     let sponsor = resolve_sponsor(dir, approver);
+    let parameter_digest = Some(decern_ledger::parameter_digest(&json!({
+        "action": action,
+        "approver": approver,
+        "s256": s256,
+        "context": context,
+    })));
     Entry {
         ts_ms: now_s.saturating_mul(1000),
         subject_type: "Principal".into(),
@@ -470,6 +714,11 @@ fn mission_entry(
         context,
         decision: true,
         sponsor,
+        parameter_digest,
+        mission: Some(decern_ledger::MissionRef {
+            approver: approver.to_owned(),
+            s256: s256.to_owned(),
+        }),
         ..Default::default()
     }
 }
@@ -581,6 +830,8 @@ async fn mission_approve(
             approver: approver.clone(),
             expiry: approved.mission.expiry,
             terminated: false,
+            agent: approved.mission.agent.clone(),
+            approved_tools: approved.mission.approved_tools.clone(),
         },
         now_s,
     ) {
@@ -782,6 +1033,7 @@ async fn main() -> Result<()> {
         backend: Arc::new(backend),
         missions,
         pubkey,
+        require_mission: args.require_mission,
     };
     if !addr_is_loopback(&args.addr) {
         eprintln!(
@@ -978,7 +1230,8 @@ mod tests {
     }
 
     /// A directory with one principal whose tenant literally IS the reserved
-    /// unattributed-shard name — the collision the kernel does not reject at load.
+    /// unattributed-shard name. `parse` alone does not validate; `Kernel::new`
+    /// / `validate` refuse it. Used to exercise `resolve_shard`'s Err path.
     fn dir_with_reserved_tenant() -> Directory {
         let ents = json!([{
             "uid": {"type": "Principal", "id": "sneaky"},
@@ -1014,9 +1267,10 @@ mod tests {
         assert_eq!(resolve_shard(&dir, "notenant").unwrap(), UNATTRIBUTED_SHARD);
     }
 
-    /// A builtin model with one extra self-root principal whose tenant literally
-    /// IS the reserved shard name — the collision the kernel does not reject.
-    fn kernel_with_reserved_tenant_subject() -> Kernel {
+    #[test]
+    fn kernel_refuses_reserved_tenant_at_load() {
+        // Kernel-level guard: a model whose principal tenant is `__system__`
+        // must not load — so a colliding graph never reaches decide/shard.
         let mut model = Model::builtin();
         if let Value::Array(ents) = &mut model.entities {
             ents.push(json!({
@@ -1025,56 +1279,13 @@ mod tests {
                 "parents": []
             }));
         }
-        Kernel::new(&model).expect("patched builtin model must still load")
-    }
-
-    #[tokio::test]
-    async fn reserved_tenant_subject_gets_503_through_decide_never_a_misfiled_allow() {
-        use decern_store::{FileLedgerHeadStore, LedgerHeadStore};
-
-        let root = std::env::temp_dir().join(format!(
-            "decern-serve-reserved-test-{}-{}",
-            std::process::id(),
-            now_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let store: Arc<dyn LedgerHeadStore> = Arc::new(FileLedgerHeadStore::new(&root).unwrap());
-        let key = SigningKey::from_bytes(&[3u8; 32]);
-        let pubkey = key.verifying_key();
-
-        let st = AppState {
-            kernel: Arc::new(kernel_with_reserved_tenant_subject()),
-            model: Arc::new(Model::builtin()),
-            backend: Arc::new(LedgerBackend::Sharded(ShardedLedger::new(
-                store.clone(),
-                key,
-                vec![],
-            ))),
-            missions: test_missions(),
-            pubkey,
-        };
-        let req: DecideReq = serde_json::from_str(
-            r#"{"subject":{"type":"Principal","id":"sysguy"},
-                "action":{"name":"Read"},
-                "resource":{"type":"Resource","id":"claimB"}}"#,
-        )
-        .unwrap();
-        let resp = decide(State(st), Json(req)).await;
-        assert_eq!(
-            resp.status(),
-            StatusCode::SERVICE_UNAVAILABLE,
-            "a reserved-name-tenant subject is refused, never served"
-        );
-        // And nothing was misfiled into the reserved shard.
-        let reader = ShardedLedger::new(store.clone(), SigningKey::from_bytes(&[4u8; 32]), vec![]);
-        assert!(
-            reader
-                .read_records(UNATTRIBUTED_SHARD, 0, 100)
-                .unwrap()
-                .is_empty()
-        );
-
-        let _ = std::fs::remove_dir_all(&root);
+        match Kernel::new(&model) {
+            Ok(_) => panic!("reserved tenant must refuse load"),
+            Err(err) => assert!(
+                err.to_string().contains("reserved"),
+                "expected reserved-tenant Graph error, got {err}"
+            ),
+        }
     }
 
     #[test]
@@ -1112,6 +1323,7 @@ mod tests {
             backend: Arc::new(LedgerBackend::Sharded(sharded)),
             missions: test_missions(),
             pubkey,
+            require_mission: false,
         };
 
         // corpB is a builtin principal in tenant "B".
@@ -1209,6 +1421,7 @@ mod tests {
             backend: Arc::new(LedgerBackend::Single(Mutex::new(ledger))),
             missions: Arc::new(FileMissionRegistry::open(&missions_path).unwrap()),
             pubkey,
+            require_mission: false,
         };
         (st, pubkey)
     }
@@ -1596,6 +1809,233 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["state"], "terminated", "{s256}/terminate routed");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn require_mission_denies_without_a_mission() {
+        let base = mission_base();
+        let (mut st, _pk) = mission_state_at(&base);
+        st.require_mission = true;
+        let req: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"agent1"},
+                "action":{"name":"Read"},
+                "resource":{"type":"Resource","id":"claim1"},
+                "context":{"human_approved":true}}"#,
+        )
+        .unwrap();
+        let (status, body) = body_json(decide(State(st), Json(req)).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["decision"], false, "missing mission must Deny: {body}");
+        assert!(
+            body["context"]["errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e.as_str().unwrap_or("").contains("require-mission")),
+            "{body}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn decide_under_live_mission_allows_and_records_mission_ref() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        // Approve a Mission for corp (non-expired builtin principal) with move_money.
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                Json(MissionApproveReq {
+                    approver: "corp".into(),
+                    agent: "corp".into(),
+                    description: "under-mission decide".into(),
+                    approved_tools: vec!["read".into(), "move_money".into()],
+                    capabilities: vec![],
+                    expiry: corp_expiry(),
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+
+        let mut st = st;
+        st.require_mission = true;
+        let req: DecideReq = serde_json::from_str(&format!(
+            r#"{{"subject":{{"type":"Principal","id":"corp"}},
+                "action":{{"name":"MoveMoney"}},
+                "resource":{{"type":"Resource","id":"claim1"}},
+                "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}},
+                "decision_subject":{{"type":"Principal","id":"corp"}}}}"#
+        ))
+        .unwrap();
+        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["decision"], true,
+            "mission-gated MoveMoney allows: {body}"
+        );
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
+        let last = records.last().expect("decision recorded");
+        assert_eq!(last["entry"]["action"], "MoveMoney");
+        assert_eq!(last["entry"]["decision"], true);
+        assert_eq!(last["entry"]["mission"]["s256"], s256);
+        assert!(
+            last["entry"]["parameter_digest"].as_str().is_some(),
+            "parameter_digest must be written: {last}"
+        );
+        assert_eq!(last["entry"]["decision_subject"]["id"], "corp");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A decision-subject the directory cannot vouch for is refused, not recorded.
+    /// The column names the party a decision is about; accepting an arbitrary
+    /// string would make it decoration and would bind a phantom into the digest.
+    #[tokio::test]
+    async fn decide_refuses_an_unknown_decision_subject() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let req: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"corp"},
+                "action":{"name":"Read"},
+                "resource":{"type":"Resource","id":"claim1"},
+                "decision_subject":{"type":"Principal","id":"ghost-not-in-directory"}}"#,
+        )
+        .unwrap();
+        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unknown decision_subject must be refused: {body}"
+        );
+        assert_eq!(body["error"], "unknown decision_subject");
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let recorded = std::fs::read_to_string(&ledger_path).unwrap_or_default();
+        assert!(
+            !recorded.contains("ghost-not-in-directory"),
+            "a refused decision_subject must never reach the ledger: {recorded}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An action with no scope mapping cannot be shown to be covered by a grant,
+    /// so under `--require-mission` it is refused. Skipping the check would let
+    /// every future action ride on every Mission until someone mapped it.
+    #[tokio::test]
+    async fn mission_refuses_an_action_with_no_scope_mapping() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                Json(approve_req(&["read", "move_money"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+
+        let mut st = st;
+        st.require_mission = true;
+        let req: DecideReq = serde_json::from_str(&format!(
+            r#"{{"subject":{{"type":"Principal","id":"corp"}},
+                "action":{{"name":"SomeUnmappedFutureAction"}},
+                "resource":{{"type":"Resource","id":"claim1"}},
+                "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
+        ))
+        .unwrap();
+        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["decision"], false,
+            "an unmapped action must not inherit the grant: {body}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn terminated_mission_cannot_justify_a_decision() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                Json(approve_req(&["read"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+        // approve_req uses agent-mission; terminate then try decide as that agent.
+        let _ = mission_terminate(State(st.clone()), UrlPath(s256.clone())).await;
+
+        let mut st = st;
+        st.require_mission = true;
+        let req: DecideReq = serde_json::from_str(&format!(
+            r#"{{"subject":{{"type":"Principal","id":"agent-mission"}},
+                "action":{{"name":"Read"}},
+                "resource":{{"type":"Resource","id":"claim1"}},
+                "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
+        ))
+        .unwrap();
+        let (status, body) = body_json(decide(State(st), Json(req)).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["decision"], false, "{body}");
+        assert!(
+            body["context"]["errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e.as_str().unwrap_or("").contains("terminated")),
+            "{body}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn mission_tool_mismatch_denies() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                Json(approve_req(&["read"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+
+        let mut st = st;
+        st.require_mission = true;
+        // Mission only has read; MoveMoney needs move_money.
+        let req: DecideReq = serde_json::from_str(&format!(
+            r#"{{"subject":{{"type":"Principal","id":"agent-mission"}},
+                "action":{{"name":"MoveMoney"}},
+                "resource":{{"type":"Resource","id":"claim1"}},
+                "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
+        ))
+        .unwrap();
+        let (status, body) = body_json(decide(State(st), Json(req)).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["decision"], false, "{body}");
+        assert!(
+            body["context"]["errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e.as_str().unwrap_or("").contains("move_money")),
+            "{body}"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }
