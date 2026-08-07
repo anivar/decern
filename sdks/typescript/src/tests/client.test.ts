@@ -86,11 +86,46 @@ test("bare decision leaves context undefined", async () => {
   assert.equal(d.context, undefined);
 });
 
-test("non-2xx throws DecernError", async () => {
-  const { c } = clientWith(500, "boom");
+test("non-2xx throws DecernError with status and body", async () => {
+  const { c } = clientWith(403, '{"error": "denied"}');
   await assert.rejects(
-    () => c.evaluate({ subject: { id: "a" }, action: "Read", resource: { id: "b" } }),
-    DecernError,
+    async () => c.evaluate({ subject: { id: "a" }, action: "Read", resource: { id: "b" } }),
+    (err: unknown) => {
+      assert.ok(err instanceof DecernError);
+      assert.equal(err.status, 403);
+      assert.equal(err.body, '{"error": "denied"}');
+      assert.ok(err.message.includes("403 Error: {\"error\": \"denied\"}"));
+      return true;
+    },
+  );
+});
+
+test("non-2xx with empty body", async () => {
+  const { c } = clientWith(503, "");
+  await assert.rejects(
+    async () => c.evaluate({ subject: { id: "a" }, action: "Read", resource: { id: "b" } }),
+    (err: unknown) => {
+      assert.ok(err instanceof DecernError);
+      assert.equal(err.status, 503);
+      assert.equal(err.body, "");
+      assert.equal(err.message, "POST /access/v1/evaluation -> 503 Error");
+      return true;
+    },
+  );
+});
+
+test("non-2xx body truncation", async () => {
+  const longBody = "x".repeat(600);
+  const { c } = clientWith(400, longBody);
+  await assert.rejects(
+    async () => c.evaluate({ subject: { id: "a" }, action: "Read", resource: { id: "b" } }),
+    (err: unknown) => {
+      assert.ok(err instanceof DecernError);
+      assert.equal(err.status, 400);
+      assert.equal(err.body, longBody);
+      assert.ok(err.message.endsWith("..."));
+      return true;
+    },
   );
 });
 
@@ -113,3 +148,4 @@ test("healthy false on transport error", async () => {
   const { c } = clientWith(503, "down");
   assert.equal(await c.healthy(), false);
 });
+

@@ -34,12 +34,34 @@ export interface ClientOptions {
   fetch?: typeof fetch;
 }
 
+const MAX_ERROR_BODY_LEN = 512;
+
 /** Transport failure or non-2xx response from the PDP. */
 export class DecernError extends Error {
-  constructor(message: string) {
+  readonly status?: number;
+  readonly body?: string;
+
+  constructor(message: string, status?: number, body?: string) {
     super(message);
     this.name = "DecernError";
+    this.status = status;
+    this.body = body;
   }
+}
+
+function buildHttpError(method: string, path: string, res: Response, raw: string): DecernError {
+  const bodyStr = raw.trim();
+  let trunc = bodyStr;
+  if (bodyStr.length > MAX_ERROR_BODY_LEN) {
+    const cps = Array.from(bodyStr);
+    if (cps.length > MAX_ERROR_BODY_LEN) {
+      trunc = cps.slice(0, MAX_ERROR_BODY_LEN).join("") + "...";
+    }
+  }
+  const msg = bodyStr
+    ? `${method} ${path} -> ${res.status} ${res.statusText}: ${trunc}`
+    : `${method} ${path} -> ${res.status} ${res.statusText}`;
+  return new DecernError(msg, res.status, raw);
 }
 
 /** Client for a decern PDP speaking AuthZEN 1.0 Access Evaluation. */
@@ -66,7 +88,7 @@ export class Client {
       });
       const raw = await res.text();
       if (!res.ok) {
-        throw new DecernError(`${method} ${path} -> ${res.status} ${res.statusText}`);
+        throw buildHttpError(method, path, res, raw);
       }
       return raw;
     } catch (e) {

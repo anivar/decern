@@ -13,8 +13,16 @@ Entity = Dict[str, Any]  # {"type": ..., "id": ...}
 Action = Union[str, Dict[str, Any]]
 
 
+_MAX_ERROR_BODY_LEN = 512
+
+
 class DecernError(Exception):
     """Transport failure or non-2xx response from the PDP."""
+
+    def __init__(self, message: str, status_code: Optional[int] = None, body: str = ""):
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
 
 
 @dataclass
@@ -42,12 +50,30 @@ class Client:
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                raw = resp.read().decode()
+                return resp.read().decode()
         except urllib.error.HTTPError as e:
-            raise DecernError(f"{method} {path} -> {e.code} {e.reason}") from e
+            raise self._build_http_error(method, path, e) from e
         except urllib.error.URLError as e:
             raise DecernError(f"{method} {path} failed: {e.reason}") from e
-        return raw
+
+    @staticmethod
+    def _build_http_error(method: str, path: str, e: urllib.error.HTTPError) -> DecernError:
+        try:
+            raw_body = e.read().decode("utf-8", errors="replace")
+        except (OSError, ValueError):
+            raw_body = ""
+
+        body_str = raw_body.strip()
+        if len(body_str) > _MAX_ERROR_BODY_LEN:
+            trunc = body_str[:_MAX_ERROR_BODY_LEN] + "..."
+        else:
+            trunc = body_str
+
+        msg = f"{method} {path} -> {e.code} {e.reason}"
+        if trunc:
+            msg += f": {trunc}"
+
+        return DecernError(msg, status_code=e.code, body=raw_body)
 
     # --- API ----------------------------------------------------------------
 

@@ -50,6 +50,7 @@ type Client struct {
 type DecernError struct {
 	Message    string
 	StatusCode int
+	Body       string
 }
 
 func (e *DecernError) Error() string {
@@ -115,13 +116,31 @@ func (c *Client) request(ctx context.Context, method, path string, body any) ([]
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &DecernError{
-			Message:    fmt.Sprintf("%s %s -> %d %s", method, path, resp.StatusCode, http.StatusText(resp.StatusCode)),
-			StatusCode: resp.StatusCode,
-		}
+		return nil, buildHTTPError(method, path, resp.StatusCode, respBody)
 	}
 
 	return respBody, nil
+}
+
+func buildHTTPError(method, path string, statusCode int, respBody []byte) *DecernError {
+	rawBody := string(respBody)
+	bodyStr := strings.TrimSpace(rawBody)
+	msg := fmt.Sprintf("%s %s -> %d %s", method, path, statusCode, http.StatusText(statusCode))
+	if bodyStr != "" {
+		trunc := bodyStr
+		if len(bodyStr) > 512 {
+			runes := []rune(bodyStr)
+			if len(runes) > 512 {
+				trunc = string(runes[:512]) + "..."
+			}
+		}
+		msg = fmt.Sprintf("%s %s -> %d %s: %s", method, path, statusCode, http.StatusText(statusCode), trunc)
+	}
+	return &DecernError{
+		Message:    msg,
+		StatusCode: statusCode,
+		Body:       rawBody,
+	}
 }
 
 // Evaluate performs an AuthZEN access evaluation.
