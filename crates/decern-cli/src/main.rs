@@ -51,6 +51,22 @@ enum Cmd {
         #[arg(long, default_value = "{\"now\":0}")]
         context: String,
     },
+    /// Explain a recorded decision by sequence number — show why a decision
+    /// came out as it did, reading only the record itself (no re-evaluation).
+    Explain {
+        /// Ledger file path (single file or segmented directory).
+        #[arg(long)]
+        ledger: PathBuf,
+        /// Sequence number of the record to explain (0-based).
+        #[arg(long)]
+        seq: u64,
+        /// Hex Ed25519 public key to verify the record's signature.
+        #[arg(long)]
+        pubkey: Option<String>,
+        /// Output as JSON (machine-readable) instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Verify a tamper-evident ledger (hash chain always; signatures when a key is
     /// given). `--ledger` is a single file or a segmented directory; `--sharded` is a
     /// flock head-store directory, where every shard is verified.
@@ -86,6 +102,138 @@ fn parse_ref(s: &str) -> Result<EntityRef> {
     })
 }
 
+/// Explain a recorded decision by sequence number. Reads the record from the
+/// ledger, verifies chain integrity, and outputs a faithful explanation of
+/// what was recorded — not a re-derivation of policy.
+fn explain(
+    ledger_path: &std::path::Path,
+    seq: u64,
+    pubkey_hex: Option<&str>,
+    json: bool,
+) -> Result<ExitCode> {
+    let key = pubkey_hex
+        .map(|h| -> Result<_> {
+            let bytes: [u8; 32] = hex::decode(h.trim())
+                .context("decoding --pubkey hex")?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("--pubkey must be 32 bytes"))?;
+            ed25519_dalek::VerifyingKey::from_bytes(&bytes).context("invalid Ed25519 key")
+        })
+        .transpose()?;
+
+    // Verify the whole chain: the offset includes seq, limit is 1 to materialize only that record.
+    let (report, records) =
+        decern_ledger::read_verified(ledger_path, key.as_ref(), seq as usize, 1)
+            .context("reading ledger")?;
+
+    if records.is_empty() {
+        anyhow::bail!(
+            "sequence {} is beyond the end of the ledger (contains {} records)",
+            seq,
+            report.entries
+        );
+    }
+
+    let record_json = &records[0];
+    let record: decern_ledger::Record =
+        serde_json::from_value(record_json.clone()).context("parsing ledger record")?;
+
+    if json {
+        // Output the entry as-is (faithfully what was recorded)
+        println!("{}", serde_json::to_string_pretty(&record.entry)?);
+    } else {
+        // Human-readable explanation
+        let decision_str = if record.entry.decision {
+            "ALLOW"
+        } else {
+            "DENY"
+        };
+        println!("seq:           {}", record.entry.seq);
+        println!("timestamp:     {} (ms since epoch)", record.entry.ts_ms);
+        println!(
+            "subject:       {}:{}",
+            record.entry.subject_type, record.entry.subject_id
+        );
+        println!("action:        {}", record.entry.action);
+        println!(
+            "resource:      {}:{}",
+            record.entry.resource_type, record.entry.resource_id
+        );
+        println!("decision:      {}", decision_str);
+
+        // Chain integrity
+        println!();
+        println!("chain:");
+        println!("  prev:       {}", record.prev);
+        println!("  hash:       {}", record.hash);
+        // "(verified)" belongs only to the branch that actually verified something:
+        // without a key the chain still checks out but no signature was examined, and
+        // saying otherwise would be the explanation claiming more than it did.
+        println!(
+            "  signature:  {}",
+            if key.is_some() {
+                "yes (verified)"
+            } else {
+                "not checked — pass --pubkey to verify it"
+            }
+        );
+        if let Some(kid) = &record.kid {
+            println!("  signed_by:  {}", kid);
+        }
+
+        // Decision metadata
+        if !record.entry.reasons.is_empty() {
+            println!();
+            println!("reasoning:");
+            for reason in &record.entry.reasons {
+                println!("  - {}", reason);
+            }
+        }
+
+        if let Some(digest) = &record.entry.parameter_digest {
+            println!();
+            println!(
+                "parameter_digest: {} (binds to decision input, prevents TOCTOU)",
+                digest
+            );
+        }
+
+        if let Some(sponsor) = &record.entry.sponsor {
+            println!();
+            println!("accountable_owner: {}:{}", sponsor.kind, sponsor.id);
+            if record.entry.sponsor_source == decern_ledger::SponsorSource::Explicit {
+                println!("  (admin-set, not derived)");
+            }
+        }
+
+        if let Some(mission) = &record.entry.mission {
+            println!();
+            println!("mission_justification:");
+            println!("  approver:  {}", mission.approver);
+            println!("  sha256:    {}", mission.s256);
+        }
+
+        if let Some(subject) = &record.entry.decision_subject {
+            println!();
+            println!("decision_affects:  {}:{}", subject.kind, subject.id);
+        }
+
+        println!();
+        println!("note: This explanation is a faithful reading of the recorded entry.");
+        println!("      It is NOT a re-derivation of policy, and NOT a claim about the present.");
+        println!(
+            "      The chain is verified intact; the signature is {}.",
+            if key.is_some() {
+                "verified"
+            } else {
+                "not checked"
+            }
+        );
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     match run().await {
@@ -99,6 +247,12 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<ExitCode> {
     match Cli::parse().cmd {
+        Cmd::Explain {
+            ledger,
+            seq,
+            pubkey,
+            json,
+        } => explain(&ledger, seq, pubkey.as_deref(), json),
         Cmd::Prove {
             model,
             cvc5,
