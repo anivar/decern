@@ -697,6 +697,46 @@ fn bind_mission(
     })
 }
 
+/// `GET /anchor/v1/tree-head` — a signed commitment to the log's current Merkle state.
+///
+/// The point of publishing this is what an operator cannot do afterwards. A hash chain
+/// proves a log is internally consistent, which its own author can always arrange by
+/// rewriting it. A tree head published somewhere the operator does not control, and later
+/// checked with a consistency proof, is what makes a dropped or back-dated record
+/// detectable rather than merely against the rules.
+///
+/// It commits, and discloses nothing: a root, a size, a timestamp and a signature. Anyone
+/// may fetch it, and it is worth exactly as much as the independence of wherever it is
+/// published — a commitment only the operator ever holds proves nothing about the operator.
+///
+/// Sharded deployments have one chain per tenant and so no single tree, and say so rather
+/// than returning a commitment to one of them.
+async fn tree_head(State(st): State<AppState>) -> Response {
+    match &*st.backend {
+        LedgerBackend::Single(m) => {
+            let ledger = m
+                .lock()
+                .expect("ledger mutex poisoned by a panicked append");
+            match ledger.tree_head(now_secs().saturating_mul(1000)) {
+                Ok(th) => (StatusCode::OK, Json(json!(th))).into_response(),
+                Err(e) => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({ "error": "tree head unavailable", "detail": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        LedgerBackend::Sharded(_) => (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(json!({
+                "error": "no single tree head",
+                "detail": "a sharded deployment keeps one chain per tenant; anchor each shard",
+            })),
+        )
+            .into_response(),
+    }
+}
+
 async fn pubkey(State(st): State<AppState>) -> Json<Value> {
     Json(json!({ "kid": hex::encode(st.pubkey.to_bytes()) }))
 }
@@ -997,6 +1037,8 @@ fn app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/pubkey", get(pubkey))
+        // The anchorable commitment an operator publishes where they have no control.
+        .route("/anchor/v1/tree-head", get(tree_head))
         // AuthZEN Authorization API 1.0 Access Evaluation endpoint; /decide is a friendly alias.
         .route("/access/v1/evaluation", post(decide))
         .route("/decide", post(decide))
@@ -1900,6 +1942,38 @@ mod tests {
             body["descendants"].is_array(),
             "descendants must be a list: {body}"
         );
+
+        // The anchor endpoint resolves too, and returns a commitment a reader can check.
+        let (status, th) = body_json(
+            router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri("/anchor/v1/tree-head")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "tree head routed: {th}");
+        assert!(
+            th["merkle_root"].as_str().is_some_and(|r| !r.is_empty()),
+            "a commitment must carry a root: {th}"
+        );
+        assert!(th["tree_size"].as_u64().is_some(), "and a size: {th}");
+        assert!(
+            th["sig_b64"].as_str().is_some_and(|s| !s.is_empty()),
+            "and a signature, or it commits nobody: {th}"
+        );
+        // It commits, and discloses nothing about what was decided.
+        assert!(
+            th.get("entries").is_none() && th.get("records").is_none(),
+            "a tree head must not carry entry content: {th}"
+        );
+
         let _ = std::fs::remove_dir_all(&base);
     }
 
