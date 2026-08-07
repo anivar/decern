@@ -15,14 +15,26 @@ Action = Union[str, Dict[str, Any]]
 
 _MAX_ERROR_BODY_LEN = 512
 
+# Caps how much of a non-2xx response body the client buffers. base_url can
+# point at an intermediary (see deployment guidance), so an error body's
+# size isn't bounded by decern-serve's own behavior.
+_MAX_ERROR_BODY_BYTES = 64 * 1024  # 64 KiB
+
 
 class DecernError(Exception):
     """Transport failure or non-2xx response from the PDP."""
 
-    def __init__(self, message: str, status_code: Optional[int] = None, body: str = ""):
+    def __init__(
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+        body: str = "",
+        truncated: bool = False,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.body = body
+        self.truncated = truncated
 
 
 @dataclass
@@ -58,22 +70,32 @@ class Client:
 
     @staticmethod
     def _build_http_error(method: str, path: str, e: urllib.error.HTTPError) -> DecernError:
+        truncated = False
         try:
-            raw_body = e.read().decode("utf-8", errors="replace")
+            # Read one byte past the cap so truncation can be detected
+            # without buffering more of an unbounded stream than needed.
+            raw_bytes = e.read(_MAX_ERROR_BODY_BYTES + 1)
+            if len(raw_bytes) > _MAX_ERROR_BODY_BYTES:
+                raw_bytes = raw_bytes[:_MAX_ERROR_BODY_BYTES]
+                truncated = True
+            raw_body = raw_bytes.decode("utf-8", errors="replace")
         except (OSError, ValueError):
             raw_body = ""
 
         body_str = raw_body.strip()
         if len(body_str) > _MAX_ERROR_BODY_LEN:
-            trunc = body_str[:_MAX_ERROR_BODY_LEN] + "..."
+            trunc = body_str[:_MAX_ERROR_BODY_LEN]
+            truncated = True
         else:
             trunc = body_str
+        if truncated and trunc:
+            trunc += "..."
 
         msg = f"{method} {path} -> {e.code} {e.reason}"
         if trunc:
             msg += f": {trunc}"
 
-        return DecernError(msg, status_code=e.code, body=raw_body)
+        return DecernError(msg, status_code=e.code, body=raw_body, truncated=truncated)
 
     # --- API ----------------------------------------------------------------
 

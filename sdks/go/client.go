@@ -46,11 +46,18 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// maxErrorBodyBytes caps how much of a non-2xx response body the client
+// buffers. base_url can point at an intermediary (see deployment guidance),
+// so an error body's size isn't bounded by decern-serve's own behavior.
+const maxErrorBodyBytes = 64 * 1024 // 64 KiB
+
 // DecernError represents a transport failure or non-2xx response from the PDP.
 type DecernError struct {
 	Message    string
 	StatusCode int
 	Body       string
+	// Truncated is true when Body was cut off at maxErrorBodyBytes.
+	Truncated bool
 }
 
 func (e *DecernError) Error() string {
@@ -110,29 +117,44 @@ func (c *Client) request(ctx context.Context, method, path string, body any) ([]
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, buildHTTPError(method, path, resp)
+	}
+
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, buildHTTPError(method, path, resp.StatusCode, respBody)
-	}
-
 	return respBody, nil
 }
 
-func buildHTTPError(method, path string, statusCode int, respBody []byte) *DecernError {
-	rawBody := string(respBody)
+func buildHTTPError(method, path string, resp *http.Response) *DecernError {
+	statusCode := resp.StatusCode
+
+	// Read one byte past the cap so we can tell whether the body was
+	// truncated without buffering more of an unbounded stream than needed.
+	limited, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes+1))
+	truncated := len(limited) > maxErrorBodyBytes
+	if truncated {
+		limited = limited[:maxErrorBodyBytes]
+	}
+
+	rawBody := string(limited)
 	bodyStr := strings.TrimSpace(rawBody)
 	msg := fmt.Sprintf("%s %s -> %d %s", method, path, statusCode, http.StatusText(statusCode))
 	if bodyStr != "" {
 		trunc := bodyStr
+		didEllipsize := false
 		if len(bodyStr) > 512 {
 			runes := []rune(bodyStr)
 			if len(runes) > 512 {
-				trunc = string(runes[:512]) + "..."
+				trunc = string(runes[:512])
+				didEllipsize = true
 			}
+		}
+		if didEllipsize || truncated {
+			trunc += "..."
 		}
 		msg = fmt.Sprintf("%s %s -> %d %s: %s", method, path, statusCode, http.StatusText(statusCode), trunc)
 	}
@@ -140,6 +162,7 @@ func buildHTTPError(method, path string, statusCode int, respBody []byte) *Decer
 		Message:    msg,
 		StatusCode: statusCode,
 		Body:       rawBody,
+		Truncated:  truncated,
 	}
 }
 

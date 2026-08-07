@@ -10,7 +10,11 @@ interface Call {
   init: RequestInit;
 }
 
-/** A fake fetch recording calls and returning a queued response. */
+/**
+ * A fake fetch recording calls and returning a queued response. Uses the
+ * real Response constructor so callers get a genuine streamable body,
+ * matching what the client sees against a real server.
+ */
 function fakeFetch(
   status: number,
   raw: string,
@@ -18,12 +22,10 @@ function fakeFetch(
 ): typeof fetch {
   return (async (url: string, init: RequestInit) => {
     calls.push({ url, init });
-    return {
-      ok: status >= 200 && status < 300,
+    return new Response(raw, {
       status,
       statusText: status === 200 ? "OK" : "Error",
-      text: async () => raw,
-    };
+    });
   }) as unknown as typeof fetch;
 }
 
@@ -123,6 +125,23 @@ test("non-2xx body truncation", async () => {
       assert.ok(err instanceof DecernError);
       assert.equal(err.status, 400);
       assert.equal(err.body, longBody);
+      assert.ok(err.message.endsWith("..."));
+      return true;
+    },
+  );
+});
+
+test("non-2xx body is capped at 64 KiB even when the server sends more", async () => {
+  // One byte over the cap so the fix must actually stop reading, not just
+  // display-truncate a fully-buffered string.
+  const hugeBody = "y".repeat(64 * 1024 + 1);
+  const { c } = clientWith(500, hugeBody);
+  await assert.rejects(
+    async () => c.evaluate({ subject: { id: "a" }, action: "Read", resource: { id: "b" } }),
+    (err: unknown) => {
+      assert.ok(err instanceof DecernError);
+      assert.equal(err.body?.length, 64 * 1024);
+      assert.equal(err.truncated, true);
       assert.ok(err.message.endsWith("..."));
       return true;
     },

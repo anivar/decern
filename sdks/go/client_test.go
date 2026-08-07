@@ -158,6 +158,48 @@ func TestClientHTTPErrorWithBody(t *testing.T) {
 	}
 }
 
+func TestClientHTTPErrorBodyCappedAt64KiB(t *testing.T) {
+	// One byte over the cap so the fix must actually stop reading, not just
+	// display-truncate a fully-buffered body.
+	hugeBody := strings.Repeat("y", 64*1024+1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(hugeBody))
+	}))
+	defer server.Close()
+
+	client := NewClient(&ClientOptions{
+		BaseURL: server.URL,
+	})
+
+	_, err := client.Evaluate(context.Background(), EvaluateArgs{
+		Subject:  Entity{"type": "Principal", "id": "corp"},
+		Action:   "Read",
+		Resource: Entity{"type": "Resource", "id": "claim1"},
+	})
+
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+
+	decErr, ok := err.(*DecernError)
+	if !ok {
+		t.Fatalf("expected *DecernError, got %T", err)
+	}
+
+	if len(decErr.Body) != 64*1024 {
+		t.Errorf("expected Body capped at %d bytes, got %d", 64*1024, len(decErr.Body))
+	}
+
+	if !decErr.Truncated {
+		t.Errorf("expected Truncated to be true")
+	}
+
+	if !strings.HasSuffix(decErr.Error(), "...") {
+		t.Errorf("expected error message to end with '...', got %q", decErr.Error())
+	}
+}
+
 func TestClientHTTPErrorBodyTruncation(t *testing.T) {
 	longBody := strings.Repeat("x", 600)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
