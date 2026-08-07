@@ -21,3 +21,10 @@ the regression (see the per-invariant controls in `decern-proof`).
 ## Decompose the large
 A change too big to hold in one diff is too big to review. Split it along the dependency graph:
 land the leaf pieces with their tests first, then the parts that build on them.
+
+## Shape the work before making it
+Whether a change is one loop or several parallel branches is a decision, and it is cheaper made
+before the first edit than after. [`graph-orchestration.md`](graph-orchestration.md) covers finding
+which dependencies are real, grounding parallel work once instead of per-branch, keeping concurrent
+edits from overwriting each other, and the difference between a gate that ran and a gate that
+checked anything. [`workflow-template.js`](workflow-template.js) is that shape, runnable.
