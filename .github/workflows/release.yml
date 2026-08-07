@@ -30,7 +30,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             ext: ".exe"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Rust toolchain
         run: |
@@ -52,7 +52,7 @@ jobs:
           cp "target/${{ matrix.target }}/release/decern-serve${{ matrix.ext }}" "dist/decern-serve-${{ matrix.target }}${{ matrix.ext }}"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: binaries-${{ matrix.target }}
           path: dist/*
@@ -62,10 +62,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: binaries-*
           merge-multiple: true
@@ -83,7 +83,7 @@ jobs:
           find . -name '*.cdx.json' -exec cp {} dist/ \;
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       - name: Sign artifacts (keyless)
         run: |
@@ -97,7 +97,7 @@ jobs:
           done
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
           files: dist/*
