@@ -737,6 +737,89 @@ async fn tree_head(State(st): State<AppState>) -> Response {
     }
 }
 
+/// `GET /audit/v1/subject/{handle}` — the decisions recorded about one party, each with a
+/// proof that it is in the log the anchor commits to.
+///
+/// A notice an operator is obliged to send is worth what their willingness to send it is
+/// worth. This is the other direction: a party who suspects a decision was made about them
+/// can ask, and can check the answer against a commitment the operator published earlier,
+/// without believing anything the operator says in this response.
+///
+/// So the response carries proofs and never keys. The reader verifies with a key obtained
+/// elsewhere; one handed over in the same response would prove only that the operator can
+/// sign their own account of events.
+///
+/// The handle is the capability. It matches exactly — no prefix, no listing — so the
+/// endpoint answers a party who already knows their own handle and tells everyone else
+/// nothing. That, and the pseudonymity of the handle itself, is the entire access control
+/// here: like every endpoint on this server it expects an authenticating proxy in front,
+/// and unlike most of them it returns records about a person if one is not there.
+///
+/// Scans the log per request, which is honest for a reference implementation and would need
+/// an index in a deployment large enough to feel it.
+async fn subject_audit(State(st): State<AppState>, UrlPath(handle): UrlPath<String>) -> Response {
+    let LedgerBackend::Single(m) = &*st.backend else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(json!({
+                "error": "no single log to project",
+                "detail": "a sharded deployment keeps one chain per tenant; query each shard",
+            })),
+        )
+            .into_response();
+    };
+    let ledger = m
+        .lock()
+        .expect("ledger mutex poisoned by a panicked append");
+
+    let now_ms = now_secs().saturating_mul(1000);
+    let head = match ledger.tree_head(now_ms) {
+        Ok(th) => th,
+        Err(e) => return audit_unavailable(&e),
+    };
+    let records = match ledger.read_records(0, head.tree_size as usize) {
+        Ok(r) => r,
+        Err(e) => return audit_unavailable(&e),
+    };
+
+    let mut decisions = Vec::new();
+    for (seq, rec) in records.iter().enumerate() {
+        let recorded = rec
+            .get("entry")
+            .and_then(|e| e.get("decision_subject"))
+            .and_then(|ds| ds.get("handle"))
+            .and_then(Value::as_str);
+        if recorded != Some(handle.as_str()) {
+            continue;
+        }
+        let proof = match ledger.inclusion_proof(seq as u64) {
+            Ok(p) => p,
+            Err(e) => return audit_unavailable(&e),
+        };
+        decisions.push(json!({ "seq": seq, "record": rec, "inclusion_proof": proof }));
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "decision_subject": handle,
+            "tree_head": head,
+            "decisions": decisions,
+        })),
+    )
+        .into_response()
+}
+
+/// A projection that cannot be read is unavailable, never an empty answer: "no decisions
+/// about you" and "the log would not open" must not look the same to the party asking.
+fn audit_unavailable(e: &LedgerError) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({ "error": "audit projection unavailable", "detail": e.to_string() })),
+    )
+        .into_response()
+}
+
 async fn pubkey(State(st): State<AppState>) -> Json<Value> {
     Json(json!({ "kid": hex::encode(st.pubkey.to_bytes()) }))
 }
@@ -1039,6 +1122,8 @@ fn app(state: AppState) -> Router {
         .route("/pubkey", get(pubkey))
         // The anchorable commitment an operator publishes where they have no control.
         .route("/anchor/v1/tree-head", get(tree_head))
+        // What was decided about one party, with proofs they can check themselves.
+        .route("/audit/v1/subject/{handle}", get(subject_audit))
         // AuthZEN Authorization API 1.0 Access Evaluation endpoint; /decide is a friendly alias.
         .route("/access/v1/evaluation", post(decide))
         .route("/decide", post(decide))
@@ -2052,6 +2137,118 @@ mod tests {
         assert!(
             last["entry"]["parameter_digest"].as_str().is_some(),
             "parameter_digest must be written: {last}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The projection answers with what was decided about one party, and with proofs the
+    /// party can check against the commitment themselves — the point being that none of it
+    /// requires believing this server's account of events.
+    #[tokio::test]
+    async fn the_subject_projection_returns_checkable_proofs() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+
+        // Two decisions about one party, and one about nobody in particular.
+        for (resource, subject) in [
+            ("claim1", Some("ppid:carol")),
+            ("claim1", None),
+            ("claim1", Some("ppid:carol")),
+        ] {
+            let ctx = match subject {
+                Some(h) => format!(r#"{{"decision_subject":"{h}"}}"#),
+                None => "{}".to_owned(),
+            };
+            let req: DecideReq = serde_json::from_str(&format!(
+                r#"{{"subject":{{"type":"Principal","id":"agent1"}},
+                    "action":{{"name":"Read"}},
+                    "resource":{{"type":"Resource","id":"{resource}"}},
+                    "context":{ctx}}}"#
+            ))
+            .unwrap();
+            let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+
+        let (status, body) =
+            body_json(subject_audit(State(st.clone()), UrlPath("ppid:carol".to_owned())).await)
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let decisions = body["decisions"].as_array().expect("decisions array");
+        assert_eq!(
+            decisions.len(),
+            2,
+            "only the decisions about this party: {body}"
+        );
+
+        // Every proof checks against the head returned alongside it. A projection whose
+        // proofs did not verify would be an assertion wearing a proof's clothes.
+        let root: [u8; 32] = hex::decode(body["tree_head"]["merkle_root"].as_str().unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let tree_size = body["tree_head"]["tree_size"].as_u64().unwrap();
+        for d in decisions {
+            let p = &d["inclusion_proof"];
+            // `leaf_data` is the record's chain hash; a verifier hashes it with the
+            // RFC 9162 leaf prefix before checking the path, which is what stops a
+            // record from being replayed as an interior node.
+            let leaf_data = hex::decode(p["leaf_data"].as_str().unwrap()).unwrap();
+            let leaf = decern_ledger::merkle::hash_leaf(&leaf_data);
+            let path: Vec<[u8; 32]> = p["audit_path"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|h| {
+                    hex::decode(h.as_str().unwrap())
+                        .unwrap()
+                        .try_into()
+                        .unwrap()
+                })
+                .collect();
+            assert!(
+                decern_ledger::merkle::verify_inclusion(
+                    p["leaf_index"].as_u64().unwrap(),
+                    tree_size,
+                    &leaf,
+                    &root,
+                    &path,
+                ),
+                "the proof for seq {} must verify against the returned head: {d}",
+                p["leaf_index"]
+            );
+        }
+
+        // Nothing the reader would have to trust this server about.
+        assert!(
+            body.get("pubkey").is_none() && body["tree_head"].get("privkey").is_none(),
+            "the projection must return proofs, never keys: {body}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A handle nobody has a record under gets an empty answer, not someone else's.
+    #[tokio::test]
+    async fn the_subject_projection_matches_a_handle_exactly() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let req: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"agent1"},
+                "action":{"name":"Read"},
+                "resource":{"type":"Resource","id":"claim1"},
+                "context":{"decision_subject":"ppid:carol"}}"#,
+        )
+        .unwrap();
+        let (status, _) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // A prefix of a real handle is not that handle.
+        let (status, body) =
+            body_json(subject_audit(State(st.clone()), UrlPath("ppid:car".to_owned())).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body["decisions"].as_array().unwrap().is_empty(),
+            "a prefix must not match, or the handle stops being the capability: {body}"
         );
         let _ = std::fs::remove_dir_all(&base);
     }
