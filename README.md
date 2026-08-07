@@ -98,6 +98,21 @@ record's `hash` — the chain link:
  "kid":    "d9396c76113e7aa7126b8358063331f9749ece673ddfdbe8b29661bf03714372"}
 ```
 
+### Anchoring
+
+A hash chain proves a log holds together, which the party that wrote it can always arrange. It
+does not prove nothing was quietly removed. For that the operator publishes a signed commitment
+somewhere they do not control — `GET /anchor/v1/tree-head` returns one, a Merkle root and a size
+that disclose nothing about what was decided — and anyone can later check the log still extends it:
+
+```sh
+decern verify --ledger /tmp/decern.jsonl --pubkey <kid> --anchor anchor.json
+```
+
+A log truncated below its anchored size fails that check while still passing an ordinary verify,
+which is the whole point: dropping a committed record stops being a rule someone broke and starts
+being arithmetic that does not work.
+
 `reasons:["policy9"]` is the deny-by-default catch-all; the missing `sponsor` is the "unknown caller
 has none" case above. `decern verify --ledger <file> --pubkey <kid>` re-checks the chain (always) and
 every signature (with the key).

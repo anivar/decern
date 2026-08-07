@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
 //! decern — prove your authorization holds over every input, decide, and verify the audit trail.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -80,7 +80,87 @@ enum Cmd {
         /// Hex Ed25519 public key to check every record's signature.
         #[arg(long)]
         pubkey: Option<String>,
+        /// A previously published tree head (JSON). Also prove the log still extends it:
+        /// nothing at or below the anchored size was rewritten, reordered, or dropped.
+        #[arg(long, conflicts_with = "sharded")]
+        anchor: Option<PathBuf>,
     },
+}
+
+/// Check that the ledger at `path` still extends `anchor` — an RFC 9162 consistency proof
+/// from the anchored tree to the current one.
+///
+/// This is the check an operator cannot pass by rewriting their own log. The chain proves a
+/// log is internally consistent, which the party that wrote it can always arrange; a
+/// consistency proof against a commitment published earlier, somewhere the operator does not
+/// control, proves they did not quietly drop a record that used to be there.
+///
+/// With `--pubkey` the anchor's own signature is checked first. Without one, the anchor is
+/// taken at face value, which is worth saying out loud: an unsigned anchor an attacker could
+/// have written proves nothing about the log.
+fn verify_against_anchor(
+    ledger: &Path,
+    anchor_path: &Path,
+    key: Option<&ed25519_dalek::VerifyingKey>,
+) -> Result<()> {
+    let raw = std::fs::read_to_string(anchor_path)
+        .with_context(|| format!("reading anchor {}", anchor_path.display()))?;
+    let anchor: decern_ledger::TreeHead =
+        serde_json::from_str(&raw).context("parsing anchor as a tree head")?;
+
+    match key {
+        Some(k) if !decern_ledger::verify_tree_head_sig(&anchor, k) => {
+            anyhow::bail!(
+                "ANCHOR SIGNATURE INVALID: {} is not signed by the given key",
+                anchor_path.display()
+            )
+        }
+        Some(_) => println!("    anchor:     signature verified"),
+        None => println!("    anchor:     signature NOT checked (no --pubkey given)"),
+    }
+
+    let leaves = decern_ledger::merkle_leaves_at(ledger, key)?;
+    let now_size = leaves.len() as u64;
+    if anchor.tree_size > now_size {
+        anyhow::bail!(
+            "TRUNCATED: anchor commits to {} records, the log now holds {}",
+            anchor.tree_size,
+            now_size
+        );
+    }
+
+    let path = decern_ledger::merkle::consistency_proof(&leaves, anchor.tree_size as usize)
+        .ok_or_else(|| anyhow::anyhow!("anchored size {} is out of range", anchor.tree_size))?;
+    let anchored_root = hash32(&anchor.merkle_root).context("anchor merkle_root")?;
+    let now_root = decern_ledger::merkle::tree_hash(&leaves);
+
+    if !decern_ledger::merkle::verify_consistency(
+        anchor.tree_size,
+        now_size,
+        &anchored_root,
+        &now_root,
+        &path,
+    ) {
+        anyhow::bail!(
+            "DIVERGED: the log does not extend the anchored tree of {} records — \
+             history at or below that point was rewritten",
+            anchor.tree_size
+        );
+    }
+
+    println!(
+        "    anchor:     log extends the anchored tree ({} -> {} records)",
+        anchor.tree_size, now_size
+    );
+    Ok(())
+}
+
+/// Hex to a 32-byte hash.
+fn hash32(hex_str: &str) -> Result<[u8; 32]> {
+    hex::decode(hex_str)
+        .context("decoding hex")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("expected 32 bytes"))
 }
 
 fn load_model(dir: Option<PathBuf>) -> Result<Model> {
@@ -312,6 +392,7 @@ async fn run() -> Result<ExitCode> {
             ledger,
             sharded,
             pubkey,
+            anchor,
         } => {
             let key = pubkey
                 .map(|h| -> Result<_> {
@@ -359,6 +440,9 @@ async fn run() -> Result<ExitCode> {
                     "not checked (no key given)"
                 }
             );
+            if let Some(anchor_path) = anchor {
+                verify_against_anchor(&ledger, &anchor_path, key.as_ref())?;
+            }
             Ok(ExitCode::SUCCESS)
         }
     }

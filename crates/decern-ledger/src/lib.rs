@@ -1053,23 +1053,7 @@ impl Ledger {
     /// closed on a record with a missing or non-hex `hash`.
     fn merkle_leaves(&self) -> Result<Vec<Vec<u8>>, LedgerError> {
         let count = self.next_seq as usize;
-        let recs = self.read_records(0, count)?;
-        let mut leaves = Vec::with_capacity(recs.len());
-        for (i, r) in recs.iter().enumerate() {
-            let hash_hex = r
-                .get("hash")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| LedgerError::Tamper {
-                    seq: i as u64,
-                    why: "record missing hash field".into(),
-                })?;
-            let bytes = hex::decode(hash_hex).map_err(|_| LedgerError::Tamper {
-                seq: i as u64,
-                why: "record hash is not valid hex".into(),
-            })?;
-            leaves.push(bytes);
-        }
-        Ok(leaves)
+        leaves_from_records(&self.read_records(0, count)?)
     }
 
     /// Sign the current MERKLE tree head — the RFC 9162 root over all record hashes,
@@ -1482,6 +1466,46 @@ pub(crate) fn verify_stored_records(
 
 /// Verify a checkpoint's own signature against a pinned key — does the ledger key
 /// that signs entries also vouch for this commitment? Does not read the ledger.
+/// The Merkle leaf data of each record, in order: the 32 raw bytes its `hash` hex encodes.
+/// One definition, shared by the signing side and the read-only verifying side — a leaf that
+/// meant two different things in two places would produce proofs that verify nowhere.
+fn leaves_from_records(recs: &[serde_json::Value]) -> Result<Vec<Vec<u8>>, LedgerError> {
+    let mut leaves = Vec::with_capacity(recs.len());
+    for (i, r) in recs.iter().enumerate() {
+        let hash_hex = r
+            .get("hash")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| LedgerError::Tamper {
+                seq: i as u64,
+                why: "record missing hash field".into(),
+            })?;
+        let bytes = hex::decode(hash_hex).map_err(|_| LedgerError::Tamper {
+            seq: i as u64,
+            why: "record hash is not valid hex".into(),
+        })?;
+        leaves.push(bytes);
+    }
+    Ok(leaves)
+}
+
+/// Merkle leaves of the ledger at `path`, read-only — no signing key required.
+///
+/// Producing a tree head needs the ledger key, because a commitment nobody signed commits
+/// nobody. CHECKING one does not: an auditor holds the log and a public key, never the key
+/// that wrote it. This is the path that makes an anchored commitment verifiable by someone
+/// other than its author, which is the only thing that makes anchoring worth doing.
+///
+/// Verifies the whole chain on the way through, so leaves are never derived from records
+/// that do not hold together.
+pub fn merkle_leaves_at(
+    path: &Path,
+    pubkey: Option<&VerifyingKey>,
+) -> Result<Vec<Vec<u8>>, LedgerError> {
+    let count = verify(path, pubkey)?.entries as usize;
+    let (_report, records) = read_verified(path, pubkey, 0, count)?;
+    leaves_from_records(&records)
+}
+
 pub fn verify_checkpoint_sig(cp: &Checkpoint, pubkey: &VerifyingKey) -> bool {
     let Ok(bytes) = B64.decode(&cp.sig_b64) else {
         return false;
