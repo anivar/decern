@@ -211,17 +211,72 @@ pub struct Entry {
     /// approval. `None` when no mission was bound (or on pre-mission records).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mission: Option<MissionRef>,
-    /// The party the decision *affects* (distinct from the acting `subject_id`
-    /// and from `sponsor`). Optional; absent when nothing established one.
+    /// The party the decision is *about* — the one it is taken upon, distinct
+    /// from the acting `subject_id` and from the accountable `sponsor`.
+    /// Descriptive, never an authorization input. Present only when that party
+    /// is a third party: a decision about the requester, or about the owner of
+    /// the resource named, carries none, because the record already says so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decision_subject: Option<Party>,
-    /// Whether `decision_subject` was derived from the directory or asserted by
-    /// the caller. An auditor reading "this decision was about Alice" needs to
-    /// know whether the server established that or was merely told it; the two
-    /// are not equally trustworthy and only one survives a hostile reading.
-    /// Default + skipped-when-default, so existing records are unchanged.
-    #[serde(default, skip_serializing_if = "is_derived_subject")]
-    pub decision_subject_source: SubjectSource,
+    pub decision_subject: Option<DecisionSubject>,
+}
+
+/// The party a decision is about, as a pseudonymous reference.
+///
+/// A handle, not an identity: it addresses a party without naming one, so a
+/// record can say who a decision concerned without becoming a place personal
+/// data accumulates. Resolving it back to a person is a separate authority's
+/// job, and deliberately not this one's.
+///
+/// Its integrity comes from the record that carries it — every entry here is
+/// signed and chained — so a handle read out of a verified record is as
+/// trustworthy as the record, and one read anywhere else is not trustworthy at
+/// all.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecisionSubject {
+    /// The pseudonymous reference itself.
+    pub handle: String,
+    /// The namespace the handle belongs to, and so how it could be resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheme: Option<String>,
+    /// What the handle was minted for. Pairwise per purpose, so the same party
+    /// is not linkable across two of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for DecisionSubject {
+    /// Accepts a bare handle or the full object, since a caller with nothing to
+    /// say about scheme or purpose should not have to write an object to say it.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Handle(String),
+            Full {
+                handle: String,
+                #[serde(default)]
+                scheme: Option<String>,
+                #[serde(default)]
+                purpose: Option<String>,
+            },
+        }
+        Ok(match Wire::deserialize(d)? {
+            Wire::Handle(handle) => DecisionSubject {
+                handle,
+                scheme: None,
+                purpose: None,
+            },
+            Wire::Full {
+                handle,
+                scheme,
+                purpose,
+            } => DecisionSubject {
+                handle,
+                scheme,
+                purpose,
+            },
+        })
+    }
 }
 
 /// A Mission reference recorded on a decision Entry.
@@ -275,23 +330,6 @@ pub enum SponsorSource {
 
 fn is_derived_sponsor(s: &SponsorSource) -> bool {
     matches!(s, SponsorSource::Derived)
-}
-
-/// How `Entry::decision_subject` was established (see [`Entry::decision_subject`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum SubjectSource {
-    /// Resolved from the directory — the resource's owner is the party the
-    /// decision is about, and the caller could not have chosen otherwise.
-    #[default]
-    Derived,
-    /// Named by the caller and checked against the directory. Only the caller
-    /// knows whose data an unowned resource concerns, so this remains possible;
-    /// it is recorded as the weaker claim it is.
-    Asserted,
-}
-
-fn is_derived_subject(s: &SubjectSource) -> bool {
-    matches!(s, SubjectSource::Derived)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

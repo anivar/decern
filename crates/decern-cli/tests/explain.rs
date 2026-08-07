@@ -27,9 +27,10 @@ fn entry(resource_id: &str, decision: bool, reason: &str) -> Entry {
             id: "root".into(),
         }),
         mission: None,
-        decision_subject: Some(decern_ledger::Party {
-            kind: "Resource".into(),
-            id: resource_id.into(),
+        decision_subject: Some(decern_ledger::DecisionSubject {
+            handle: format!("ppid:{resource_id}"),
+            scheme: Some("pairwise-sha256".into()),
+            purpose: None,
         }),
         ..Default::default()
     }
