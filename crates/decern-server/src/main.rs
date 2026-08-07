@@ -662,6 +662,29 @@ async fn pubkey(State(st): State<AppState>) -> Json<Value> {
     Json(json!({ "kid": hex::encode(st.pubkey.to_bytes()) }))
 }
 
+/// `GET /directory/v1/principals/{id}/descendants` — the blast radius of revoking
+/// `id`: every principal that would lose authority along with it.
+///
+/// Read-only and deliberately not recorded. The ledger is the record of decisions,
+/// and asking what a revocation would cost is not one; recording it would put
+/// operator curiosity in the same log as authorization outcomes.
+///
+/// Unauthenticated, like every endpoint here, and expecting the same authenticating
+/// proxy in front. Worth stating explicitly because it discloses more than a single
+/// decision does: the delegation shape of a tenant, and who acts for whom. On the
+/// loopback default that is the operator's own view of their own directory; exposed
+/// without a proxy it is an org chart. Same trust boundary as the rest of the server,
+/// costlier if that boundary is ignored.
+async fn descendants(State(st): State<AppState>, UrlPath(id): UrlPath<String>) -> Response {
+    let dir = st.kernel.directory();
+    let descendants = dir.descendants_of(&id);
+    (
+        StatusCode::OK,
+        Json(json!({ "principal": id, "descendants": descendants })),
+    )
+        .into_response()
+}
+
 // ============================== Mission lifecycle ==============================
 //
 // An approver grants an agent a scoped, provably-attenuated Mission (`decern-identity`).
@@ -938,6 +961,11 @@ fn app(state: AppState) -> Router {
         // AuthZEN Authorization API 1.0 Access Evaluation endpoint; /decide is a friendly alias.
         .route("/access/v1/evaluation", post(decide))
         .route("/decide", post(decide))
+        // Directory queries: read-only, not recorded to the ledger — see `descendants`.
+        .route(
+            "/directory/v1/principals/{id}/descendants",
+            get(descendants),
+        )
         // Mission lifecycle: approve a scoped Mission, read its state, terminate it.
         // Like the decision PDP above, the MUTATION endpoints (approve, terminate) are
         // UNAUTHENTICATED by design and trust their caller — `approver` is a request-body
@@ -1809,6 +1837,30 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["state"], "terminated", "{s256}/terminate routed");
+
+        // The blast-radius preview resolves through the same path layer. A route
+        // written in an older capture syntax compiles fine and panics only when the
+        // router is built, so it has to be driven, not merely called.
+        let (status, body) = body_json(
+            router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri("/directory/v1/principals/corp/descendants")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "descendants routed: {body}");
+        assert_eq!(body["principal"], "corp");
+        assert!(
+            body["descendants"].is_array(),
+            "descendants must be a list: {body}"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

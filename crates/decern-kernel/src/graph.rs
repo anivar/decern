@@ -9,7 +9,7 @@
 //! at load time means the policy layer can assume the graph is well-formed —
 //! and the proofs certify what the policies then guarantee.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -350,6 +350,67 @@ impl Directory {
                     cur = self.principals.get(d);
                 }
                 _ => break,
+            }
+        }
+        out
+    }
+
+    /// The transitive delegates of a principal — every principal delegating FROM it,
+    /// nearest first. This is the blast radius: revoke `id` and exactly these lose
+    /// authority with it, so an operator can see the cost of a revocation before
+    /// paying it. The mirror of [`ancestors_of`](Self::ancestors_of), which walks up.
+    ///
+    /// Breadth-first, so the result reads outward from `id` one delegation hop at a
+    /// time — the order an operator reasons in ("who did this principal grant to, and
+    /// who did they grant to"). Within a level, ordering follows the directory's own
+    /// (sorted) principal order, so the answer is deterministic.
+    ///
+    /// The delegation graph points upward (a principal names its delegator), so the
+    /// downward direction has to be inverted. That inversion is built once per call
+    /// rather than rescanning every principal per node: the naive form is quadratic
+    /// in directory size, and this is on an operator's interactive path.
+    ///
+    /// Never leaves the starting principal's tenant. Load-time validation already
+    /// forbids a cross-tenant delegation edge, so this filter is defence in depth
+    /// rather than the only thing standing between tenants — a traversal that
+    /// silently spanned tenants would leak one tenant's shape to another.
+    ///
+    /// Cycle-safe: `validate` rejects cycles at load, and the visited set means a
+    /// cycle that somehow reached here terminates instead of hanging. Every principal
+    /// is visited at most once, so the walk is bounded by the directory already in
+    /// memory and needs no separate depth or size cap.
+    pub fn descendants_of(&self, id: &str) -> Vec<String> {
+        let Some(root) = self.principals.get(id) else {
+            return Vec::new();
+        };
+        let root_tenant = &root.tenant;
+
+        // Invert the graph once: delegator -> everyone delegating from it.
+        let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (child_id, child) in &self.principals {
+            if child.tenant != *root_tenant {
+                continue;
+            }
+            if let Some(delegator) = child.delegator.as_deref() {
+                children
+                    .entry(delegator)
+                    .or_default()
+                    .push(child_id.as_str());
+            }
+        }
+
+        let mut out = Vec::new();
+        let mut seen = BTreeSet::new();
+        seen.insert(id);
+
+        let mut queue = VecDeque::new();
+        queue.push_back(id);
+        while let Some(cur) = queue.pop_front() {
+            for &child in children.get(cur).into_iter().flatten() {
+                if seen.insert(child) {
+                    out.push(child.to_owned());
+                    queue.push_back(child);
+                }
             }
         }
         out
@@ -1022,5 +1083,90 @@ mod tests {
                 prop_assert_eq!(as_set, reference_ancestor_set(&dir, &id));
             }
         });
+    }
+
+    #[test]
+    fn descendants_of_returns_transitive_closure_on_chain() {
+        // Chain: a <- b <- c <- d. Revoke a, who loses authority? b, c, d.
+        let ents = json!([
+            principal("a", "A", 1000, &["read"], None),
+            principal("b", "A", 900, &["read"], Some("a")),
+            principal("c", "A", 800, &["read"], Some("b")),
+            principal("d", "A", 700, &["read"], Some("c")),
+        ]);
+        let dir = Directory::parse(&ents).unwrap();
+
+        assert_eq!(dir.descendants_of("a"), vec!["b", "c", "d"]);
+        assert_eq!(dir.descendants_of("b"), vec!["c", "d"]);
+        assert_eq!(dir.descendants_of("c"), vec!["d"]);
+        assert!(dir.descendants_of("d").is_empty());
+    }
+
+    /// A chain cannot tell breadth-first from depth-first — every node has one
+    /// child, so both orders agree. This branching tree can: breadth-first returns
+    /// the near delegates before the far ones, depth-first dives down one leg first.
+    #[test]
+    fn descendants_of_is_breadth_first_on_a_branching_tree() {
+        // a delegates to b and c; b to d and e; c to f. Revoking a costs all five.
+        let ents = json!([
+            principal("a", "A", 1000, &["read"], None),
+            principal("b", "A", 900, &["read"], Some("a")),
+            principal("c", "A", 900, &["read"], Some("a")),
+            principal("d", "A", 800, &["read"], Some("b")),
+            principal("e", "A", 800, &["read"], Some("b")),
+            principal("f", "A", 800, &["read"], Some("c")),
+        ]);
+        let dir = Directory::parse(&ents).unwrap();
+
+        // Nearest first: both direct delegates, then the next hop out. A
+        // depth-first walk would put d and e before c.
+        assert_eq!(dir.descendants_of("a"), vec!["b", "c", "d", "e", "f"]);
+        assert_eq!(dir.descendants_of("b"), vec!["d", "e"]);
+        assert_eq!(dir.descendants_of("c"), vec!["f"]);
+    }
+
+    /// The blast radius stops at the tenant boundary. Load-time validation forbids
+    /// a cross-tenant delegation edge, so this is defence in depth — but a traversal
+    /// that spanned tenants would report one tenant's principals to another.
+    #[test]
+    fn descendants_of_never_leaves_the_tenant() {
+        let mut ents = json!([
+            principal("root_a", "A", 1000, &["read"], None),
+            principal("child_a", "A", 900, &["read"], Some("root_a")),
+            principal("root_b", "B", 1000, &["read"], None),
+            principal("child_b", "B", 900, &["read"], Some("root_b")),
+        ]);
+        // Forge the edge validation would reject: a tenant-B principal claiming a
+        // tenant-A delegator. The traversal must not follow it.
+        ents.as_array_mut().unwrap()[3]["attrs"]["delegator"] = json!({
+            "__entity": { "type": "Principal", "id": "root_a" }
+        });
+        let dir = Directory::parse(&ents).unwrap();
+
+        assert_eq!(dir.descendants_of("root_a"), vec!["child_a"]);
+        assert!(
+            !dir.descendants_of("root_a").contains(&"child_b".to_owned()),
+            "a forged cross-tenant edge must not widen the blast radius"
+        );
+        assert!(dir.descendants_of("unknown").is_empty());
+    }
+
+    /// A cycle reaching this far means load-time validation was bypassed; the walk
+    /// must still terminate rather than hang an operator's revocation preview.
+    #[test]
+    fn descendants_of_terminates_on_a_cycle() {
+        let mut ents = json!([
+            principal("a", "A", 1000, &["read"], None),
+            principal("b", "A", 900, &["read"], Some("a")),
+            principal("c", "A", 800, &["read"], Some("b")),
+        ]);
+        // Close the loop: a delegates from c, which validate() would reject.
+        ents.as_array_mut().unwrap()[0]["attrs"]["delegator"] = json!({
+            "__entity": { "type": "Principal", "id": "c" }
+        });
+        let dir = Directory::parse(&ents).unwrap();
+
+        let out = dir.descendants_of("a");
+        assert_eq!(out, vec!["b", "c"], "each principal is visited once");
     }
 }
