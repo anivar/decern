@@ -213,9 +213,16 @@ fn explain(
             println!("  sha256:    {}", mission.s256);
         }
 
-        if let Some(subject) = &record.entry.decision_subject {
+        if let Some(ds) = &record.entry.decision_subject {
             println!();
-            println!("decision_affects:  {}:{}", subject.kind, subject.id);
+            // A pseudonymous handle: printed as recorded, resolved by no one here.
+            println!("decision_affects:  {}", ds.handle);
+            if let Some(scheme) = &ds.scheme {
+                println!("  scheme:     {scheme}");
+            }
+            if let Some(purpose) = &ds.purpose {
+                println!("  purpose:    {purpose}");
+            }
         }
 
         println!();

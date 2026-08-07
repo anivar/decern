@@ -19,9 +19,9 @@ UX into `decern-serve`.
   recorded to the tamper-evident ledger (`/mission/v1/*`).
 - **Decision-under-mission** — `--require-mission` gates decide on a live Mission; server-derived
   approval flags; Mission ref + `parameter_digest` on the Entry.
-- **Decision-subject column** — the party a decision is *about*, distinct from who asked and from
-  the accountable owner. Derived from the directory where it knows who a resource belongs to,
-  asserted only where it cannot, and the record says which of the two it was.
+- **Decision-subject column** — the party a decision is taken *upon*, distinct from who asked and
+  from the accountable owner, carried as a pseudonymous handle and never reaching the decision.
+  Implements [draft-aravind-oauth-decision-subject-00](https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/).
 
 ## Next — the secure agent-action path
 

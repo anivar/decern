@@ -59,14 +59,28 @@ delegate's record names the principal ultimately answerable for it; a root princ
 itself; a caller the directory doesn't recognize has none. It is a recorded accountability column,
 not a decision gate — it never changes the allow/deny outcome.
 
-A record also names the **decision subject** — the party the decision is *about*, which is a
-different question from who asked for it and from who answers for it. Where the directory knows
-who a resource belongs to, that owner is the subject and the server establishes it; a caller that
-contradicts it is refused rather than believed or silently corrected. Where the directory cannot
-establish one, only the caller knows whose data a request concerns, so an assertion is accepted
-once it names a principal the directory knows — and the record marks it `Asserted`, because an
-auditor reading "this decision was about Alice" needs to know whether the server established that
-or was told it. Neither form is a decision gate either.
+A record can also name the **decision subject** — the party a decision is taken *upon*, which is a
+different question from who asked for it and from who answers for it. An agent screening an
+applicant, or posting about someone on another person's timeline, acts on a party that the subject,
+the resource and the accountable owner all fail to name; without a column for it, the party the
+record most concerns is the one the record leaves out.
+
+It is carried in the request context as a **pseudonymous handle**, optionally with the scheme it
+belongs to and the purpose it was minted for — a reference that addresses a party without naming
+one, so an audit trail does not become a place personal data accumulates. Resolving it back to a
+person is a separate authority's job, and deliberately not decern's.
+
+Three rules keep it honest. It never reaches the decision: it is taken out of the context before
+the kernel runs, so who a decision is about cannot change what the decision is. It is recorded only
+when it says something the record does not already say — a decision about the requester, or about
+the owner of the resource named, carries none. And a handle that identifies a person rather than
+standing in for one is refused, because the record is appended, signed and chained, and that
+request is the last moment such a value can be kept out of it.
+
+This implements [`draft-aravind-oauth-decision-subject-00`](https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/).
+The draft notes that an unsigned decision subject cannot be trusted to identify a party; here every
+record carrying one is Ed25519-signed and hash-chained, so the claim is exactly as trustworthy as
+the record it sits in.
 
 A recorded decision looks like this. Here an unrecognized caller — `agent-7`, not in the directory —
 is refused a `MoveMoney`, so the record carries `decision: false` and **no `sponsor`** (an

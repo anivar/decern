@@ -18,7 +18,7 @@ use clap::Parser;
 use decern_identity::{IdentityError, mission, mission::Mission};
 use decern_kernel::{Directory, EntityRef, Kernel, Model};
 use decern_ledger::{
-    Entry, Ledger, LedgerError, Party, ShardedLedger, SubjectSource, UNATTRIBUTED_SHARD,
+    DecisionSubject, Entry, Ledger, LedgerError, Party, ShardedLedger, UNATTRIBUTED_SHARD,
 };
 use decern_store::{FileLedgerHeadStore, FileMissionRegistry, MissionRegistry, StoreError};
 use ed25519_dalek::{SigningKey, VerifyingKey};
@@ -197,9 +197,6 @@ struct DecideReq {
     resource: Ref,
     #[serde(default)]
     context: Value,
-    /// Optional party the decision affects (≠ acting subject, ≠ sponsor).
-    #[serde(default)]
-    decision_subject: Option<Ref>,
 }
 
 fn load_signing_key(path: Option<&PathBuf>) -> Result<SigningKey> {
@@ -380,63 +377,53 @@ fn resolve_sponsor(dir: &Directory, subject_id: &str) -> Option<Party> {
     })
 }
 
-/// Resolve the party a decision is ABOUT, and say how it was established.
+/// Take the decision subject out of the context, and decide whether it belongs
+/// on the record.
 ///
-/// Where the directory knows who a resource belongs to, that owner IS the party
-/// the decision affects, and the server derives it rather than believing the
-/// caller. Where it does not — an unowned or unknown resource — only the caller
-/// can say whose data the request concerns, so an assertion is accepted, checked
-/// against the directory, and recorded as the weaker claim it is.
+/// It is removed from the context either way, before the kernel ever sees it: a
+/// claim about who a decision concerns is not an input to whether the decision is
+/// allowed, and the cheapest way to guarantee that is to make it unreachable.
 ///
-/// Both are refusals, never silent corrections:
-///   - an asserted subject the directory does not know is refused, because a
-///     phantom party in a signed record is worse than an absent one;
-///   - an assertion that CONTRADICTS the derived owner is refused rather than
-///     overwritten in either direction. Quietly preferring the derivation would
-///     record something the caller never claimed; quietly preferring the caller
-///     would let the request pick who a decision was about. A disagreement about
-///     whose data this is means the two sides disagree about the request itself.
-fn resolve_decision_subject(
-    dir: &Directory,
-    resource_id: &str,
-    asserted: Option<Ref>,
-) -> Result<(Option<Party>, SubjectSource), String> {
-    let derived = dir.resources.get(resource_id).map(|r| Party {
-        kind: "Principal".to_owned(),
-        id: r.owner.clone(),
-    });
-
-    match (derived, asserted) {
-        (Some(owner), None) => Ok((Some(owner), SubjectSource::Derived)),
-        (Some(owner), Some(claim)) => {
-            if claim.id != owner.id {
-                return Err(format!(
-                    "decision_subject {} contradicts the directory, which records {} as the party \
-                     resource {resource_id} belongs to",
-                    claim.id, owner.id
-                ));
-            }
-            // The caller agreed with the directory, so the directory is what was
-            // established; the assertion added nothing to trust.
-            Ok((Some(owner), SubjectSource::Derived))
-        }
-        (None, Some(claim)) => {
-            if !dir.contains(&claim.id) {
-                return Err(format!(
-                    "decision_subject {} is not a principal this directory knows",
-                    claim.id
-                ));
-            }
-            Ok((
-                Some(Party {
-                    kind: claim.ty,
-                    id: claim.id,
-                }),
-                SubjectSource::Asserted,
-            ))
-        }
-        (None, None) => Ok((None, SubjectSource::Derived)),
+/// It is recorded only when it says something the record does not already say.
+/// A decision about the requester is described by the subject; a decision about
+/// the owner of the resource named is described by the resource. Repeating either
+/// as a decision subject adds an identifier and no information, so both are
+/// dropped rather than stored.
+///
+/// A handle that is plainly a person — an address someone could be reached at —
+/// is refused instead. This is the last moment it can be: the record is appended,
+/// signed and chained, so anything written here is permanent, and a pseudonymous
+/// reference is the only form of this claim that stays safe to keep.
+fn take_decision_subject(
+    ctx: &mut Value,
+    subject_id: &str,
+    resource_owner: Option<&str>,
+) -> Result<Option<DecisionSubject>, String> {
+    let Some(raw) = ctx
+        .as_object_mut()
+        .and_then(|o| o.remove("decision_subject"))
+    else {
+        return Ok(None);
+    };
+    if raw.is_null() {
+        return Ok(None);
     }
+    let ds: DecisionSubject = serde_json::from_value(raw)
+        .map_err(|e| format!("decision_subject must be a handle or an object with one: {e}"))?;
+    if ds.handle.trim().is_empty() {
+        return Err("decision_subject handle must not be empty".to_owned());
+    }
+    if ds.handle.contains('@') {
+        return Err(
+            "decision_subject handle must be a pseudonymous reference, not an address a party \
+             could be identified or contacted by"
+                .to_owned(),
+        );
+    }
+    if ds.handle == subject_id || Some(ds.handle.as_str()) == resource_owner {
+        return Ok(None);
+    }
+    Ok(Some(ds))
 }
 
 async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Response {
@@ -499,6 +486,26 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
         obj.remove("mission");
     }
 
+    // Out of the context before the check too, and for a stronger reason: who a
+    // decision is about must not be able to change what the decision is.
+    let resource_owner = st
+        .kernel
+        .directory()
+        .resources
+        .get(&resource.id)
+        .map(|r| r.owner.clone());
+    let decision_subject =
+        match take_decision_subject(&mut ctx, &subject.id, resource_owner.as_deref()) {
+            Ok(ds) => ds,
+            Err(detail) => {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": "decision_subject", "detail": detail })),
+                )
+                    .into_response();
+            }
+        };
+
     let mut r = st.kernel.check(&subject, &action, &resource, &ctx);
     if !mission_errors.is_empty() {
         r.decision = false;
@@ -516,21 +523,6 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
     // are carried into the append closure so they fail closed as a 503.
     let shard = shard_for(&st.backend, st.kernel.directory(), &subject.id);
 
-    // The party a decision is ABOUT — distinct from who asked (`subject`) and from
-    // who answers for it (`sponsor`). Derived where the directory establishes it,
-    // asserted only where it cannot, and the record says which.
-    let (decision_subject, decision_subject_source) =
-        match resolve_decision_subject(st.kernel.directory(), &resource.id, req.decision_subject) {
-            Ok(pair) => pair,
-            Err(detail) => {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({ "error": "decision_subject", "detail": detail })),
-                )
-                    .into_response();
-            }
-        };
-
     if let Some(m) = &mission_for_context {
         ctx["mission"] = m.clone();
     }
@@ -542,8 +534,7 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
         "resource": {"type": resource.ty, "id": resource.id},
         "context": ctx,
         "mission": mission_ref.as_ref().map(|m| json!({"approver": m.approver, "s256": m.s256})),
-        "decision_subject": decision_subject.as_ref().map(|p| json!({"kind": p.kind, "id": p.id})),
-        "decision_subject_source": decision_subject.as_ref().map(|_| decision_subject_source),
+        "decision_subject": decision_subject,
     })));
 
     let entry = Entry {
@@ -560,7 +551,6 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
         parameter_digest,
         mission: mission_ref,
         decision_subject,
-        decision_subject_source,
         ..Default::default()
     };
 
@@ -1968,8 +1958,7 @@ mod tests {
             r#"{{"subject":{{"type":"Principal","id":"corp"}},
                 "action":{{"name":"MoveMoney"}},
                 "resource":{{"type":"Resource","id":"claim1"}},
-                "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}},
-                "decision_subject":{{"type":"Principal","id":"corp"}}}}"#
+                "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
         ))
         .unwrap();
         let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
@@ -1990,120 +1979,22 @@ mod tests {
             last["entry"]["parameter_digest"].as_str().is_some(),
             "parameter_digest must be written: {last}"
         );
-        assert_eq!(last["entry"]["decision_subject"]["id"], "corp");
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// Where the directory knows who a resource belongs to, that owner is the party
-    /// the decision is about — established by the server, not taken on the caller's
-    /// word, and recorded as derived.
+    /// A third party the record does not otherwise name is carried onto it.
     #[tokio::test]
-    async fn decision_subject_is_derived_from_the_resource_owner() {
+    async fn a_third_party_decision_subject_is_recorded() {
         let base = mission_base();
         let (st, pubkey) = mission_state_at(&base);
-        // claim1 belongs to corp, and the request says nothing about a subject.
-        let req: DecideReq = serde_json::from_str(
-            r#"{"subject":{"type":"Principal","id":"corp"},
-                "action":{"name":"Read"},
-                "resource":{"type":"Resource","id":"claim1"}}"#,
-        )
-        .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-
-        let ledger_path = base.join("decern-ledger.jsonl");
-        let (_r, records) =
-            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
-        let last = records.last().expect("decision recorded");
-        assert_eq!(
-            last["entry"]["decision_subject"]["id"], "corp",
-            "the resource owner is the party the decision is about: {last}"
-        );
-        // Derived is the default, so it is skipped on the wire — its ABSENCE is the
-        // claim, and an asserted subject is what shows up explicitly.
-        assert!(
-            last["entry"].get("decision_subject_source").is_none(),
-            "a derived subject records no source marker: {last}"
-        );
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    /// A caller that contradicts the directory about whose data this is does not get
-    /// to pick, and is not silently corrected either — the two sides disagree about
-    /// the request itself, so the request is refused.
-    #[tokio::test]
-    async fn decide_refuses_a_decision_subject_that_contradicts_the_owner() {
-        let base = mission_base();
-        let (st, _pk) = mission_state_at(&base);
-        // claim1 belongs to corp; the caller claims it is about agent1.
+        // corp reads a claim corp owns, but the decision is about someone else.
         let req: DecideReq = serde_json::from_str(
             r#"{"subject":{"type":"Principal","id":"corp"},
                 "action":{"name":"Read"},
                 "resource":{"type":"Resource","id":"claim1"},
-                "decision_subject":{"type":"Principal","id":"agent1"}}"#,
-        )
-        .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
-        assert_eq!(
-            status,
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "a contradicted decision_subject must be refused: {body}"
-        );
-
-        let ledger_path = base.join("decern-ledger.jsonl");
-        let recorded = std::fs::read_to_string(&ledger_path).unwrap_or_default();
-        assert!(
-            !recorded.contains("agent1"),
-            "a refused decision_subject must never reach the ledger: {recorded}"
-        );
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    /// A decision-subject the directory cannot vouch for is refused, not recorded.
-    /// A phantom party bound into a signed record is worse than an absent one.
-    #[tokio::test]
-    async fn decide_refuses_an_unknown_decision_subject() {
-        let base = mission_base();
-        let (st, _pk) = mission_state_at(&base);
-        // An unowned resource, so nothing can be derived and the assertion is
-        // considered on its own — and rejected, because the party is unknown.
-        let req: DecideReq = serde_json::from_str(
-            r#"{"subject":{"type":"Principal","id":"corp"},
-                "action":{"name":"Read"},
-                "resource":{"type":"Resource","id":"no-such-resource"},
-                "decision_subject":{"type":"Principal","id":"ghost-not-in-directory"}}"#,
-        )
-        .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
-        assert_eq!(
-            status,
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "unknown decision_subject must be refused: {body}"
-        );
-        assert_eq!(body["error"], "decision_subject");
-
-        let ledger_path = base.join("decern-ledger.jsonl");
-        let recorded = std::fs::read_to_string(&ledger_path).unwrap_or_default();
-        assert!(
-            !recorded.contains("ghost-not-in-directory"),
-            "a refused decision_subject must never reach the ledger: {recorded}"
-        );
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    /// Where the directory cannot establish an owner, only the caller can say whose
-    /// data the request concerns. That assertion is accepted once it names someone
-    /// the directory knows — and is marked as asserted, so an auditor reading the
-    /// record can weigh it for what it is.
-    #[tokio::test]
-    async fn an_asserted_decision_subject_is_recorded_as_asserted() {
-        let base = mission_base();
-        let (st, pubkey) = mission_state_at(&base);
-        let req: DecideReq = serde_json::from_str(
-            r#"{"subject":{"type":"Principal","id":"corp"},
-                "action":{"name":"Read"},
-                "resource":{"type":"Resource","id":"no-such-resource"},
-                "decision_subject":{"type":"Principal","id":"agent1"}}"#,
+                "context":{"decision_subject":{"handle":"ppid:9c1ea4",
+                                               "scheme":"pairwise-sha256",
+                                               "purpose":"eligibility-audit"}}}"#,
         )
         .unwrap();
         let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
@@ -2113,10 +2004,102 @@ mod tests {
         let (_r, records) =
             decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
         let last = records.last().expect("decision recorded");
-        assert_eq!(last["entry"]["decision_subject"]["id"], "agent1");
+        assert_eq!(last["entry"]["decision_subject"]["handle"], "ppid:9c1ea4");
         assert_eq!(
-            last["entry"]["decision_subject_source"], "Asserted",
-            "an assertion must be recorded as one, never as a derivation: {last}"
+            last["entry"]["decision_subject"]["purpose"],
+            "eligibility-audit"
+        );
+        // It reached the record, and nothing else: the context the kernel saw, and
+        // which the record preserves, must not carry it.
+        assert!(
+            last["entry"]["context"].get("decision_subject").is_none(),
+            "the decision subject must not survive into the evaluated context: {last}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A bare handle is the same claim with less typing.
+    #[tokio::test]
+    async fn a_bare_handle_is_accepted_as_the_decision_subject() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let req: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"corp"},
+                "action":{"name":"Read"},
+                "resource":{"type":"Resource","id":"claim1"},
+                "context":{"decision_subject":"ppid:bare"}}"#,
+        )
+        .unwrap();
+        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
+        let last = records.last().expect("decision recorded");
+        assert_eq!(last["entry"]["decision_subject"]["handle"], "ppid:bare");
+        assert!(last["entry"]["decision_subject"].get("scheme").is_none());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A decision about the requester is already described by the subject, and a
+    /// decision about the resource's owner by the resource. Repeating either adds
+    /// an identifier and no information, so neither is kept. agent1 acts on a claim
+    /// corp owns, so the two cases are distinct here and both are exercised.
+    #[tokio::test]
+    async fn a_decision_subject_the_record_already_names_is_not_kept() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        for handle in ["agent1", "corp"] {
+            let req: DecideReq = serde_json::from_str(&format!(
+                r#"{{"subject":{{"type":"Principal","id":"agent1"}},
+                    "action":{{"name":"Read"}},
+                    "resource":{{"type":"Resource","id":"claim1"}},
+                    "context":{{"decision_subject":"{handle}"}}}}"#
+            ))
+            .unwrap();
+            let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+            assert_eq!(status, StatusCode::OK, "{handle}: {body}");
+        }
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
+        assert_eq!(records.len(), 2, "both decisions recorded");
+        for rec in &records {
+            assert!(
+                rec["entry"].get("decision_subject").is_none(),
+                "a decision subject the record already names must not be kept: {rec}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The record is appended, signed and chained, so what lands in it stays. A
+    /// handle someone could be contacted at is refused at the only moment it can be.
+    #[tokio::test]
+    async fn decide_refuses_a_decision_subject_that_identifies_a_person() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let req: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"corp"},
+                "action":{"name":"Read"},
+                "resource":{"type":"Resource","id":"claim1"},
+                "context":{"decision_subject":"carol@example.com"}}"#,
+        )
+        .unwrap();
+        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "an identifying handle must be refused: {body}"
+        );
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let recorded = std::fs::read_to_string(&ledger_path).unwrap_or_default();
+        assert!(
+            !recorded.contains("carol@example.com"),
+            "a refused handle must never reach the ledger: {recorded}"
         );
         let _ = std::fs::remove_dir_all(&base);
     }
