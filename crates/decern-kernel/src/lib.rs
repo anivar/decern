@@ -20,7 +20,7 @@ use cedar_policy::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-pub use graph::Directory;
+pub use graph::{Directory, RESERVED_TENANT};
 
 /// The authority model: schema + policies + entity graph. Pure data —
 /// adding principals, tenants or resources never touches code.
@@ -568,14 +568,15 @@ mod tests {
     #[test]
     fn rebac_viewer_reads_but_stays_bounded_by_the_forbids() {
         // `viewer` is neither owner nor delegate of corp's resource, but is
-        // granted the viewer relation. It may Read — yet the grant cannot cross
-        // a tenant, expose PII without consent, or bypass the scope gate.
+        // granted the viewer relation. It may Read — yet the grant cannot
+        // expose PII without consent or bypass the scope gate. Cross-tenant
+        // viewer edges are refused at load (see `cross_tenant_viewer_rejected_at_load`).
         let ents = json!([
             {"uid":{"type":"Principal","id":"corp"},"attrs":{"kind":"Human","tenant":"T","expiry":1000000000,"scopes":["read"]},"parents":[]},
             {"uid":{"type":"Principal","id":"viewer"},"attrs":{"kind":"Agent","tenant":"T","expiry":1000000000,"scopes":["read"]},"parents":[]},
             {"uid":{"type":"Principal","id":"noscope"},"attrs":{"kind":"Agent","tenant":"T","expiry":1000000000,"scopes":[]},"parents":[]},
             {"uid":{"type":"Principal","id":"outsider"},"attrs":{"kind":"Agent","tenant":"OTHER","expiry":1000000000,"scopes":["read"]},"parents":[]},
-            {"uid":{"type":"Resource","id":"doc"},"attrs":{"owner":{"__entity":{"type":"Principal","id":"corp"}},"tenant":"T","viewers":[{"__entity":{"type":"Principal","id":"viewer"}},{"__entity":{"type":"Principal","id":"noscope"}},{"__entity":{"type":"Principal","id":"outsider"}}]},"parents":[]},
+            {"uid":{"type":"Resource","id":"doc"},"attrs":{"owner":{"__entity":{"type":"Principal","id":"corp"}},"tenant":"T","viewers":[{"__entity":{"type":"Principal","id":"viewer"}},{"__entity":{"type":"Principal","id":"noscope"}}]},"parents":[]},
             {"uid":{"type":"Resource","id":"secret"},"attrs":{"owner":{"__entity":{"type":"Principal","id":"corp"}},"tenant":"T","sensitivity":"pii","viewers":[{"__entity":{"type":"Principal","id":"viewer"}}]},"parents":[]}
         ]);
         let k = Kernel::new(&Model {
@@ -594,7 +595,7 @@ mod tests {
             !k.check(&sub("noscope"), "Read", &res("doc"), &now).decision,
             "scope gate still binds"
         );
-        // ...and a viewer in another tenant is denied (isolation forbid).
+        // ...and a principal in another tenant (no edge) is denied.
         assert!(
             !k.check(&sub("outsider"), "Read", &res("doc"), &now)
                 .decision,
@@ -780,6 +781,67 @@ mod tests {
                 .unwrap_or_default();
             assert_eq!(got, dir.ancestors_of(id), "{id}: injected ancestors set");
         }
+    }
+
+    /// proptest: random forests → `inject_derived` effective `revoked` and `ancestors`
+    /// match an independent re-derivation (the trusted base under revocation-gate /
+    /// attenuation-edge).
+    #[test]
+    fn prop_inject_derived_matches_independent_derivation() {
+        use proptest::prelude::*;
+        use std::collections::BTreeSet;
+
+        proptest!(|(n in 1usize..12, bits in proptest::collection::vec(any::<u8>(), 1usize..16))| {
+            let n = n.min(bits.len()).max(1);
+            let mut ents = Vec::new();
+            for (i, &b) in bits.iter().take(n).enumerate() {
+                let revoked = b & 1 != 0;
+                let mut attrs = serde_json::json!({
+                    "kind": "Agent",
+                    "tenant": "T",
+                    "expiry": 1000 - i as i64,
+                    "scopes": ["read"],
+                    "revoked": revoked,
+                });
+                if i > 0 && (b >> 1) & 3 != 0 {
+                    let parent = ((b >> 2) as usize) % i;
+                    attrs["delegator"] = serde_json::json!({
+                        "__entity": {"type": "Principal", "id": format!("p{parent}")}
+                    });
+                }
+                ents.push(serde_json::json!({
+                    "uid": {"type": "Principal", "id": format!("p{i}")},
+                    "attrs": attrs,
+                    "parents": []
+                }));
+            }
+            let entities = serde_json::Value::Array(ents);
+            let dir = Directory::parse(&entities).expect("parse forest");
+            let augmented = inject_derived(&entities, &dir);
+
+            let authored = |id: &str| dir.principals.get(id).map(|p| p.revoked).unwrap_or(false);
+            for e in augmented.as_array().expect("array") {
+                let id = e["uid"]["id"].as_str().unwrap();
+                let want_revoked =
+                    authored(id) || dir.ancestors_of(id).iter().any(|a| authored(a));
+                prop_assert_eq!(
+                    e["attrs"]["revoked"].as_bool().unwrap(),
+                    want_revoked,
+                    "{}: effective revoked",
+                    id
+                );
+                let got: BTreeSet<String> = e["attrs"]["ancestors"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|r| r["__entity"]["id"].as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let want: BTreeSet<String> = dir.ancestors_of(id).into_iter().collect();
+                prop_assert_eq!(got, want, "{}: injected ancestors", id);
+            }
+        });
     }
 
     #[test]
