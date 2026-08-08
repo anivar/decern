@@ -35,10 +35,8 @@ UX into `decern-serve`.
 
 ## After that — interoperability and operator tooling
 
-- **Authority-graph tooling** — downward traversal (revocation blast-radius) over the directory, and
-  a graph export (DOT / Mermaid) ([#2](https://github.com/anivar/decern/issues/2)).
-- **`decern explain`** — a "why" for any decision, reconstructed from the recorded entry
-  ([#1](https://github.com/anivar/decern/issues/1)).
+- **Authority-graph export** — DOT and Mermaid renderings of the directory
+  ([#2](https://github.com/anivar/decern/issues/2)).
 - **Richer AuthZEN conformance** — broaden request/response coverage; align Mission "not yet
   decidable → human approve" with AuthZEN's pending-approval patterns without forking the API.
 - **Identity admit** — accept token-exchange claims (`sub` + `act`) into subject and sponsor so an

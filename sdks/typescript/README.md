@@ -2,7 +2,7 @@
 
 Dependency-free TypeScript client for the decern PDP, speaking
 [AuthZEN 1.0](https://openid.net/specs/authorization-api-1_0.html) Access Evaluation.
-Uses the global `fetch` — no axios/node-fetch/undici. Node >= 18.
+Uses the global `fetch` — no axios/node-fetch/undici. Node >= 22.
 
 ## Install
 

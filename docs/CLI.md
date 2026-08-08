@@ -187,15 +187,16 @@ decern prove
 decern-serve --ledger /tmp/decern.jsonl --key /tmp/decern.key &
 KID=$(curl -s localhost:8080/pubkey | jq -r .kid)
 
-# 3. publish a commitment somewhere you do not control
-curl -s localhost:8080/anchor/v1/tree-head > anchor.json
-
-# 4. decide
+# 3. decide
 curl -s localhost:8080/access/v1/evaluation -H 'content-type: application/json' -d '{
   "subject":  {"type":"Principal","id":"corp"},
   "action":   {"name":"Read"},
   "resource": {"type":"Resource","id":"claim1"}
 }'
+
+# 4. publish a commitment somewhere you do not control. A tree head over an empty log
+#    commits to nothing, so take it once there is a decision to be held to.
+curl -s localhost:8080/anchor/v1/tree-head > anchor.json
 
 # 5. verify the chain, the signatures, and that the log still extends the commitment
 decern verify --ledger /tmp/decern.jsonl --pubkey "$KID" --anchor anchor.json
