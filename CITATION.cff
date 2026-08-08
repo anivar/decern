@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Drives GitHub's "Cite this repository" button. Zenodo takes its record metadata from
+# .zenodo.json, which carries the same author and licence — keep the two in step.
+#
+# No version or release date here on purpose: a citation minted per release takes the
+# version from the tag, and a field that has to be remembered is a field that goes stale.
+cff-version: 1.2.0
+title: decern
+message: If you refer to decern, please cite it as below.
+type: software
+abstract: >-
+  An authorization kernel whose decision function carries nine invariants discharged over the
+  whole input space by an SMT solver, and a tamper-evident ledger that records each decision so
+  a third party can verify what was decided and that the record was not altered afterwards.
+authors:
+  - family-names: Aravind
+    given-names: Anivar A
+    orcid: https://orcid.org/0009-0009-8995-0005
+repository-code: https://github.com/anivar/decern
+url: https://decern.anivar.net/
+license: Apache-2.0
+keywords:
+  - authorization
+  - policy decision point
+  - formal verification
+  - SMT
+  - transparency log
+  - accountability
+  - AI agents

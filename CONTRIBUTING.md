@@ -48,6 +48,9 @@ lines. Check yours renders before pushing:
 ./scripts/changelog.sh --preview
 ```
 
+End the entry with who did the work — `Authored by @you`, and `reported by @them` where someone
+else found the defect. Your name belongs in the release notes, not only in the commit log.
+
 A refactor, a test, a comment or a CI change needs no entry — say so and apply the `no-changelog`
 label.
 
