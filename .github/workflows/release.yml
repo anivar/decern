@@ -96,8 +96,27 @@ jobs:
               --output-certificate "$f.pem"
           done
 
+      # The release notes are the CHANGELOG section for this tag — the entries contributors
+      # wrote alongside their changes. A generated list of pull-request titles says what was
+      # merged; this says what the release does.
+      - name: Release notes from CHANGELOG
+        id: notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="${version}" '
+            $0 ~ "^## \\[" v "\\]" { inside = 1; next }
+            inside && /^## \[/     { exit }
+            inside                 { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no section for ${version}"
+            exit 1
+          fi
+          echo "Release notes for ${version}:"
+          cat notes.md
+
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          generate_release_notes: true
+          body_path: notes.md
           files: dist/*
