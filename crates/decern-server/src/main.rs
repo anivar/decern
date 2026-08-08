@@ -14,6 +14,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+mod challenge;
+
 use clap::Parser;
 use decern_identity::{IdentityError, mission, mission::Mission};
 use decern_kernel::{Directory, EntityRef, Kernel, Model};
@@ -57,6 +59,12 @@ struct Args {
     /// is Denied). Start opt-in; operators harden MoveMoney behind this flag.
     #[arg(long)]
     require_mission: bool,
+    /// Hex Ed25519 public key of an issuer whose standing tokens this deployment
+    /// accepts. Repeatable. Omit to accept no challenges. Keys are configured rather
+    /// than fetched: a decision must not depend on a third party being reachable, and
+    /// this binary carries no outbound TLS stack.
+    #[arg(long = "standing-issuer-key", value_name = "HEX")]
+    standing_issuer_keys: Vec<String>,
     #[arg(long, default_value = "127.0.0.1:8080")]
     addr: String,
 }
@@ -120,6 +128,9 @@ struct AppState {
     pubkey: VerifyingKey,
     /// When true, every decide must name a live `context.mission`.
     require_mission: bool,
+    /// Issuer keys a standing token may be signed by. Empty means this deployment
+    /// accepts no challenges, which is the default and is stated in its disclosure.
+    standing_issuers: Arc<Vec<VerifyingKey>>,
 }
 
 /// Resolve the ledger shard for a decision: the subject's directory tenant.
@@ -486,6 +497,11 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
         obj.remove("mission");
     }
 
+    // A challenge from the party a decision was about is removed here too, and
+    // unconditionally: a request carrying one is evaluated exactly as the same request
+    // without it. Answering it is a separate act, after the decision is made.
+    let raw_challenge = challenge::take_raw(&mut ctx);
+
     // Out of the context before the check too, and for a stronger reason: who a
     // decision is about must not be able to change what the decision is.
     let resource_owner = st
@@ -537,6 +553,51 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
         "decision_subject": decision_subject,
     })));
 
+    // Answer the challenge, if one came with the request — after the decision, never
+    // before it, so the answer is about a decision that has already been made rather than
+    // an influence on making it. A challenge that cannot be believed is refused outright:
+    // recording an answer to a claim whose standing was never proved would put a party's
+    // name on the record on nobody's authority.
+    let challenge_record = match raw_challenge {
+        None => None,
+        Some(raw) => match challenge::parse(&raw, &st.standing_issuers, now_s) {
+            Err(e) => {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": e.kind(), "detail": e.detail() })),
+                )
+                    .into_response();
+            }
+            Ok(c) => {
+                let subject_matches = decision_subject
+                    .as_ref()
+                    .is_some_and(|ds| ds.handle == c.standing.decision_subject);
+                let (outcome, outcome_basis) = match challenge::answer(&c, subject_matches) {
+                    challenge::Outcome::AffirmPriorDecision { affirm_basis } => {
+                        ("affirm_prior_decision", affirm_basis)
+                    }
+                    challenge::Outcome::ReevaluateWithSubjectContext { reevaluation_basis } => {
+                        ("reevaluate_with_subject_context", reevaluation_basis)
+                    }
+                };
+                Some(decern_ledger::ChallengeRecord {
+                    decision_ref: c.decision_ref,
+                    decision_subject: c.standing.decision_subject,
+                    basis: c.basis,
+                    requested_effect: c.requested_effect,
+                    outcome: outcome.to_owned(),
+                    outcome_basis,
+                    // The digest, never the evidence itself: what a party sends to argue
+                    // their case is likely to be about them, and this log cannot be edited.
+                    evidence_digest: c.evidence.as_ref().map(decern_ledger::parameter_digest),
+                })
+            }
+        },
+    };
+
+    // A decision that names an affected party is one an affected party should hear about.
+    let notice_required = decision_subject.is_some();
+
     let entry = Entry {
         ts_ms: now_s.saturating_mul(1000),
         subject_type: subject.ty,
@@ -551,6 +612,8 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
         parameter_digest,
         mission: mission_ref,
         decision_subject,
+        notice_required,
+        challenge: challenge_record.clone(),
         ..Default::default()
     };
 
@@ -830,6 +893,49 @@ fn audit_unavailable(e: &LedgerError) -> Response {
         Json(json!({ "error": "audit projection unavailable", "detail": e.to_string() })),
     )
         .into_response()
+}
+
+/// `GET /.well-known/decern-subject-side-disclosure` — what this deployment actually does
+/// about challenges, as opposed to what it could be assumed to.
+///
+/// Every value here is read from the running configuration rather than written down, so a
+/// deployment that accepts no issuers says so, and a claim cannot drift from the binary
+/// that makes it. The two things worth reading before relying on any of it: which issuers
+/// this deployment will believe, and which answers it can give.
+///
+/// It is honest about the answer it does not give. Handing a challenge to a human approver
+/// needs an approver service this server does not have; claiming that outcome while routing
+/// nowhere would be worse than declining it.
+async fn subject_side_disclosure(State(st): State<AppState>) -> Json<Value> {
+    Json(json!({
+        "standing_issuers": st
+            .standing_issuers
+            .iter()
+            .map(|k| hex::encode(k.to_bytes()))
+            .collect::<Vec<_>>(),
+        "standing_token_formats": ["compact-jws-eddsa"],
+        "standing_issuer_discovery": "configured",
+        "outcomes_supported": ["affirm_prior_decision", "reevaluate_with_subject_context"],
+        "outcomes_not_supported": {
+            "escalate_to_approver": "no approver service is configured for this deployment",
+        },
+        "challenge_bases_that_reopen_a_decision": [
+            "factual-error",
+            "category-mismatch",
+            "change-in-circumstances",
+        ],
+        "notice": {
+            "emitted_by_this_server": false,
+            "recorded_by_this_server": true,
+            "detail": "this server decides and records; emitting notice belongs to whoever \
+                       enforces the decision",
+        },
+        "audit": {
+            "substrate": "append-only hash-chained log, Ed25519-signed per record",
+            "anchor": "/anchor/v1/tree-head",
+            "subject_projection": "/audit/v1/subject/{handle}",
+        },
+    }))
 }
 
 async fn pubkey(State(st): State<AppState>) -> Json<Value> {
@@ -1134,6 +1240,11 @@ fn app(state: AppState) -> Router {
         .route("/pubkey", get(pubkey))
         // The anchorable commitment an operator publishes where they have no control.
         .route("/anchor/v1/tree-head", get(tree_head))
+        // What this deployment does about challenges, read from its own configuration.
+        .route(
+            "/.well-known/decern-subject-side-disclosure",
+            get(subject_side_disclosure),
+        )
         // What was decided about one party, with proofs they can check themselves.
         .route("/audit/v1/subject", get(subject_audit))
         // AuthZEN Authorization API 1.0 Access Evaluation endpoint; /decide is a friendly alias.
@@ -1233,6 +1344,18 @@ async fn main() -> Result<()> {
             .with_context(|| format!("opening mission registry at {}", missions_path.display()))?,
     );
 
+    // Parse configured standing issuers at boot: a key that cannot be read is a
+    // startup failure, never a challenge that quietly fails to verify later.
+    let mut standing_issuers = Vec::new();
+    for hex_key in &args.standing_issuer_keys {
+        let bytes: [u8; 32] = hex::decode(hex_key.trim())
+            .with_context(|| format!("decoding --standing-issuer-key {hex_key}"))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("--standing-issuer-key must be 32 bytes"))?;
+        standing_issuers
+            .push(VerifyingKey::from_bytes(&bytes).context("invalid Ed25519 standing issuer key")?);
+    }
+
     let state = AppState {
         kernel: Arc::new(kernel),
         model: Arc::new(model),
@@ -1240,6 +1363,7 @@ async fn main() -> Result<()> {
         missions,
         pubkey,
         require_mission: args.require_mission,
+        standing_issuers: Arc::new(standing_issuers),
     };
     if !addr_is_loopback(&args.addr) {
         eprintln!(
@@ -1530,6 +1654,7 @@ mod tests {
             missions: test_missions(),
             pubkey,
             require_mission: false,
+            standing_issuers: Arc::new(Vec::new()),
         };
 
         // corpB is a builtin principal in tenant "B".
@@ -1628,6 +1753,7 @@ mod tests {
             missions: Arc::new(FileMissionRegistry::open(&missions_path).unwrap()),
             pubkey,
             require_mission: false,
+            standing_issuers: Arc::new(Vec::new()),
         };
         (st, pubkey)
     }
@@ -2296,6 +2422,181 @@ mod tests {
             body["decisions"].as_array().unwrap().is_empty(),
             "a prefix must not match, or the handle stops being the capability: {body}"
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Sign a standing token the way an issuer would.
+    fn standing_token(
+        key: &decern_crypto::SigningKey,
+        decision_ref: &str,
+        handle: &str,
+        exp: u64,
+    ) -> String {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+        use ed25519_dalek::Signer as _;
+        let h = B64.encode(br#"{"alg":"EdDSA","typ":"JWT"}"#);
+        let p = B64.encode(
+            serde_json::to_vec(&json!({
+                "decision_ref": decision_ref,
+                "decision_subject": handle,
+                "exp": exp,
+            }))
+            .unwrap(),
+        );
+        let sig = B64.encode(key.sign(format!("{h}.{p}").as_bytes()).to_bytes());
+        format!("{h}.{p}.{sig}")
+    }
+
+    /// The guarantee the whole surface rests on: a challenge is answered, and answering it
+    /// changes nothing about what was permitted. The same request with and without one
+    /// must decide identically, and the challenge must not survive into what was evaluated.
+    #[tokio::test]
+    async fn a_challenge_is_answered_and_never_changes_the_decision() {
+        let base = mission_base();
+        let (mut st, pubkey) = mission_state_at(&base);
+        let issuer = decern_crypto::generate().unwrap();
+        st.standing_issuers = Arc::new(vec![issuer.verifying_key()]);
+
+        let plain: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"agent1"},
+                "action":{"name":"Read"},
+                "resource":{"type":"Resource","id":"claim1"},
+                "context":{"decision_subject":"ppid:carol"}}"#,
+        )
+        .unwrap();
+        let (status, without) = body_json(decide(State(st.clone()), Json(plain)).await).await;
+        assert_eq!(status, StatusCode::OK, "{without}");
+
+        let token = standing_token(&issuer, "dec-1", "ppid:carol", now_secs() + 3600);
+        let challenged: DecideReq = serde_json::from_str(&format!(
+            r#"{{"subject":{{"type":"Principal","id":"agent1"}},
+                "action":{{"name":"Read"}},
+                "resource":{{"type":"Resource","id":"claim1"}},
+                "context":{{"decision_subject":"ppid:carol",
+                            "subject_side_challenge":{{
+                                "standing_token":"{token}",
+                                "decision_ref":"dec-1",
+                                "challenge_basis":["factual-error"],
+                                "requested_effect":"reverse"}}}}}}"#
+        ))
+        .unwrap();
+        let (status, with) = body_json(decide(State(st.clone()), Json(challenged)).await).await;
+        assert_eq!(status, StatusCode::OK, "{with}");
+        assert_eq!(
+            without["decision"], with["decision"],
+            "a challenge must not change what was permitted: {without} vs {with}"
+        );
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
+        let last = records.last().expect("recorded");
+        assert_eq!(
+            last["entry"]["challenge"]["outcome"], "reevaluate_with_subject_context",
+            "a basis bearing on the facts reopens the decision: {last}"
+        );
+        assert_eq!(last["entry"]["challenge"]["decision_ref"], "dec-1");
+        assert!(
+            !last["entry"]["challenge"]["outcome_basis"]
+                .as_str()
+                .unwrap_or_default()
+                .is_empty(),
+            "an answer without a reason is a dismissal: {last}"
+        );
+        // The challenge must not have reached the evaluated context.
+        assert!(
+            last["entry"]["context"]
+                .get("subject_side_challenge")
+                .is_none(),
+            "the challenge must not survive into what was evaluated: {last}"
+        );
+        // A decision naming an affected party is one they should hear about.
+        assert_eq!(last["entry"]["notice_required"], true, "{last}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A challenge whose standing was never proved is refused rather than answered:
+    /// recording an answer would put a party's name on the record on nobody's authority.
+    #[tokio::test]
+    async fn a_challenge_without_proved_standing_is_refused_and_not_recorded() {
+        let base = mission_base();
+        let (mut st, pubkey) = mission_state_at(&base);
+        let issuer = decern_crypto::generate().unwrap();
+        let stranger = decern_crypto::generate().unwrap();
+        st.standing_issuers = Arc::new(vec![issuer.verifying_key()]);
+
+        let token = standing_token(&stranger, "dec-1", "ppid:carol", now_secs() + 3600);
+        let req: DecideReq = serde_json::from_str(&format!(
+            r#"{{"subject":{{"type":"Principal","id":"agent1"}},
+                "action":{{"name":"Read"}},
+                "resource":{{"type":"Resource","id":"claim1"}},
+                "context":{{"decision_subject":"ppid:carol",
+                            "subject_side_challenge":{{
+                                "standing_token":"{token}",
+                                "decision_ref":"dec-1",
+                                "challenge_basis":["factual-error"],
+                                "requested_effect":"reverse"}}}}}}"#
+        ))
+        .unwrap();
+        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"], "standing_not_proved");
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let recorded = std::fs::read_to_string(&ledger_path).unwrap_or_default();
+        assert!(
+            !recorded.contains("dec-1"),
+            "an unproved challenge must leave no answer behind: {recorded}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = pubkey;
+    }
+
+    /// The disclosure is read from the running configuration, so it cannot drift from what
+    /// the binary does — and it declines the outcome this deployment cannot route.
+    #[tokio::test]
+    async fn the_disclosure_reports_this_deployments_actual_configuration() {
+        let base = mission_base();
+        let (mut st, _pk) = mission_state_at(&base);
+        let issuer = decern_crypto::generate().unwrap();
+        st.standing_issuers = Arc::new(vec![issuer.verifying_key()]);
+
+        // Driven through the router: a handler that is written but never registered
+        // passes every direct call it is given and answers no request.
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (status, d) = body_json(
+            app(st.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri("/.well-known/decern-subject-side-disclosure")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the disclosure must be reachable: {d}"
+        );
+        assert_eq!(
+            d["standing_issuers"][0].as_str().unwrap(),
+            hex::encode(issuer.verifying_key().to_bytes()),
+            "the disclosure must name the issuers actually configured: {d}"
+        );
+        assert!(
+            d["outcomes_not_supported"]
+                .get("escalate_to_approver")
+                .is_some(),
+            "an outcome that routes nowhere must be declined, not claimed: {d}"
+        );
+        assert_eq!(d["notice"]["emitted_by_this_server"], false);
         let _ = std::fs::remove_dir_all(&base);
     }
 
