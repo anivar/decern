@@ -502,10 +502,11 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
     };
     // `mission` is not in the Cedar context schema — strip before check, re-attach
     // on the ledger Entry (Entry.mission + context.mission for auditors).
-    let mission_for_context = ctx.get("mission").cloned();
-    if let Some(obj) = ctx.as_object_mut() {
-        obj.remove("mission");
-    }
+    let mission_for_context = if let Some(obj) = ctx.as_object_mut() {
+        obj.remove("mission")
+    } else {
+        None
+    };
 
     // A challenge from the party a decision was about is removed here too, and
     // unconditionally: a request carrying one is evaluated exactly as the same request
@@ -549,8 +550,8 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
     // are carried into the append closure so they fail closed as a 503.
     let shard = shard_for(&st.backend, st.kernel.directory(), &subject.id);
 
-    if let Some(m) = &mission_for_context {
-        ctx["mission"] = m.clone();
+    if let Some(m) = mission_for_context {
+        ctx["mission"] = m;
     }
 
     // Bind the exact parameters evaluated: subject/action/resource + post-mission ctx.
@@ -796,9 +797,16 @@ fn bind_mission(
 async fn tree_head(State(st): State<AppState>) -> Response {
     match &*st.backend {
         LedgerBackend::Single(m) => {
-            let ledger = m
-                .lock()
-                .expect("ledger mutex poisoned by a panicked append");
+            let ledger = match m.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({ "error": "tree head unavailable", "detail": "ledger mutex poisoned" })),
+                    )
+                        .into_response();
+                }
+            };
             match ledger.tree_head(now_secs().saturating_mul(1000)) {
                 Ok(th) => (StatusCode::OK, Json(json!(th))).into_response(),
                 Err(e) => (
@@ -868,9 +876,16 @@ async fn subject_audit(State(st): State<AppState>, Query(q): Query<SubjectQuery>
         )
             .into_response();
     };
-    let ledger = m
-        .lock()
-        .expect("ledger mutex poisoned by a panicked append");
+    let ledger = match m.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "error": "audit projection unavailable", "detail": "ledger mutex poisoned" })),
+            )
+                .into_response();
+        }
+    };
 
     let now_ms = now_secs().saturating_mul(1000);
     let head = match ledger.tree_head(now_ms) {
@@ -882,10 +897,10 @@ async fn subject_audit(State(st): State<AppState>, Query(q): Query<SubjectQuery>
         Err(e) => return audit_unavailable(&e),
     };
 
-    let mut decisions = Vec::new();
+    let mut matched = Vec::new();
     let mut truncated = false;
     for (seq, rec) in records.iter().enumerate() {
-        if decisions.len() >= MAX_PROJECTED_DECISIONS {
+        if matched.len() >= MAX_PROJECTED_DECISIONS {
             truncated = true;
             break;
         }
@@ -897,12 +912,21 @@ async fn subject_audit(State(st): State<AppState>, Query(q): Query<SubjectQuery>
         if recorded != Some(handle.as_str()) {
             continue;
         }
-        let proof = match ledger.inclusion_proof(seq as u64) {
-            Ok(p) => p,
-            Err(e) => return audit_unavailable(&e),
-        };
-        decisions.push(json!({ "seq": seq, "record": rec, "inclusion_proof": proof }));
+        matched.push((seq as u64, rec));
     }
+
+    // Proved in one pass. Proving each match as it is found re-derives every leaf in the
+    // log per proof — quadratic in the page size, holding the lock an append needs.
+    let seqs: Vec<u64> = matched.iter().map(|(seq, _)| *seq).collect();
+    let proofs = match ledger.inclusion_proofs(&seqs) {
+        Ok(p) => p,
+        Err(e) => return audit_unavailable(&e),
+    };
+    let decisions: Vec<Value> = matched
+        .into_iter()
+        .zip(proofs)
+        .map(|((seq, rec), proof)| json!({ "seq": seq, "record": rec, "inclusion_proof": proof }))
+        .collect();
 
     (
         StatusCode::OK,

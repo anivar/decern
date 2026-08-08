@@ -444,6 +444,7 @@ struct RecordIn {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum LedgerError {
     #[error("ledger I/O error at {path}: {err}")]
     Io { path: String, err: String },
@@ -1162,6 +1163,37 @@ impl Ledger {
         })
     }
 
+    /// Inclusion proofs for several records, over one pass of the log.
+    ///
+    /// [`inclusion_proof`](Ledger::inclusion_proof) derives every leaf in the log to prove
+    /// one record is in it, which is the right shape for one proof and the wrong shape for
+    /// a page of them: asking for `m` proofs that way reads and parses the whole log `m`
+    /// times, and does it holding the lock an append needs. This derives the leaves once.
+    ///
+    /// Returns proofs in the order the sequences were given. A sequence past the end of the
+    /// log fails the whole call rather than being skipped — a page of proofs with a hole in
+    /// it, where the hole is silent, is worse than no page.
+    pub fn inclusion_proofs(&self, seqs: &[u64]) -> Result<Vec<InclusionProof>, LedgerError> {
+        let leaves = self.merkle_leaves()?;
+        let tree_size = leaves.len() as u64;
+        seqs.iter()
+            .map(|&seq| {
+                let idx = seq as usize;
+                let path =
+                    merkle::inclusion_proof(&leaves, idx).ok_or_else(|| LedgerError::Tamper {
+                        seq,
+                        why: "inclusion index past the end of the log".into(),
+                    })?;
+                Ok(InclusionProof {
+                    leaf_index: seq,
+                    tree_size,
+                    leaf_data: hex::encode(&leaves[idx]),
+                    audit_path: path.iter().map(hex::encode).collect(),
+                })
+            })
+            .collect()
+    }
+
     /// A compact RFC 9162 consistency proof that the log of the first `first_size` records
     /// is an exact prefix of the current log — the operator-independent equivocation /
     /// truncation check against an EARLIER anchored tree head. `1 <= first_size <= count`.
@@ -1178,6 +1210,51 @@ impl Ledger {
             second_size: leaves.len() as u64,
             proof: path.iter().map(hex::encode).collect(),
         })
+    }
+
+    /// A single-snapshot read for an evidence bundle: checkpoint, tree_head, and raw records
+    /// are ALL derived from the SAME in-memory (self.last_hash, self.next_seq) state captured
+    /// at one moment — unlike calling `checkpoint()`/`tree_head()`/`read_raw_records()` separately
+    /// (which lets an `append()` land between calls and make the three mutually inconsistent:
+    /// `checkpoint.count != tree_head.tree_size` or `checkpoint.root` computed over different
+    /// records than `tree_head`).
+    ///
+    /// This is the single-file analog of [`ShardedLedger::evidence_snapshot`](crate::sharded::ShardedLedger::evidence_snapshot).
+    /// The snapshot captures the log's state at call time; a concurrent `append()` does not
+    /// change the returned values. Returns `(count, raw_records, checkpoint, tree_head)`.
+    pub fn snapshot_for_bundle(&self, ts_ms: u64) -> Result<EvidenceSnapshot, LedgerError> {
+        // Capture the head state once — this is the "snapshot" that all derived values build from.
+        let count = self.next_seq;
+        let root = self.last_hash.clone();
+
+        // All three outputs are now derived from this same (root, count) pair, so they are
+        // mutually consistent even if an append happens after this point.
+        let raw_records = self.read_raw_records(0, count as usize)?;
+
+        let cp_sig = self.key.sign(&checkpoint_bytes(&root, count, ts_ms));
+        let checkpoint = Checkpoint {
+            root,
+            count,
+            ts_ms,
+            pubkey_hex: self.pubkey_hex(),
+            sig_b64: B64.encode(cp_sig.to_bytes()),
+        };
+
+        let leaves = leaves_from_records(&self.read_records(0, count as usize)?)?;
+        let merkle_root = hex::encode(merkle::tree_hash(&leaves));
+        let tree_size = leaves.len() as u64;
+        let th_sig = self
+            .key
+            .sign(&tree_head_bytes(&merkle_root, tree_size, ts_ms));
+        let tree_head = TreeHead {
+            merkle_root,
+            tree_size,
+            ts_ms,
+            pubkey_hex: self.pubkey_hex(),
+            sig_b64: B64.encode(th_sig.to_bytes()),
+        };
+
+        Ok((count, raw_records, checkpoint, tree_head))
     }
 
     /// Seal the current head into the persisted ANCHOR file — the last committed
@@ -1267,6 +1344,17 @@ pub struct TreeHead {
     pub sig_b64: String,
 }
 
+/// A single-snapshot evidence bundle: record count, raw bytes, and signed commitments
+/// (checkpoint and merkle tree head) all derived from the same log state at one moment.
+/// This is the return type of [`Ledger::snapshot_for_bundle`] and
+/// [`ShardedLedger::evidence_snapshot`](sharded::ShardedLedger::evidence_snapshot).
+pub type EvidenceSnapshot = (
+    u64,                                   // record count
+    Vec<Box<serde_json::value::RawValue>>, // raw record bytes
+    Checkpoint,                            // signed linear-chain commitment
+    TreeHead,                              // signed merkle-tree commitment
+);
+
 /// A compact RFC 9162 inclusion proof (hex-encoded): the record at `leaf_index` in a tree
 /// of `tree_size` leaves is committed by a [`TreeHead`]'s root. `leaf_data` is the record's
 /// chain hash (the Merkle leaf data — a verifier hashes it with the `0x00` leaf prefix);
@@ -1324,6 +1412,7 @@ fn key_fingerprint(vk: &VerifyingKey) -> String {
 /// Verify a ledger file: the hash chain always; every entry signature when a key is
 /// supplied. Single-key convenience over [`verify_with_keys`] — for a key-ROTATED
 /// log (entries under more than one key) use that with the full keyring.
+#[must_use = "ledger verification failure must be checked"]
 pub fn verify(path: &Path, pubkey: Option<&VerifyingKey>) -> Result<VerifyReport, LedgerError> {
     let loc = Location::detect(path);
     match pubkey {
@@ -1372,6 +1461,7 @@ struct ReadWindow {
 /// `kid` names a key NOT in the ring is tamper (fail-closed: an unknown signer is
 /// never trusted). An empty ring means "signatures not checked" (chain only), same
 /// as [`verify`] with `None`.
+#[must_use = "ledger verification failure must be checked"]
 pub fn verify_with_keys(path: &Path, keys: &[VerifyingKey]) -> Result<VerifyReport, LedgerError> {
     verify_inner(&Location::detect(path), keys, None)
 }
@@ -1572,11 +1662,11 @@ pub fn merkle_leaves_at(
     path: &Path,
     pubkey: Option<&VerifyingKey>,
 ) -> Result<Vec<Vec<u8>>, LedgerError> {
-    let count = verify(path, pubkey)?.entries as usize;
-    let (_report, records) = read_verified(path, pubkey, 0, count)?;
+    let (_report, records) = read_verified(path, pubkey, 0, usize::MAX)?;
     leaves_from_records(&records)
 }
 
+#[must_use = "signature verification result must be checked"]
 pub fn verify_checkpoint_sig(cp: &Checkpoint, pubkey: &VerifyingKey) -> bool {
     let Ok(bytes) = B64.decode(&cp.sig_b64) else {
         return false;
@@ -1593,6 +1683,7 @@ pub fn verify_checkpoint_sig(cp: &Checkpoint, pubkey: &VerifyingKey) -> bool {
 /// Verify a tree head's own signature against a pinned key — the Merkle counterpart of
 /// [`verify_checkpoint_sig`]. The domain-separated `decern-ledger-tree-head` tag means this
 /// never cross-verifies a checkpoint signature. Does not read the ledger.
+#[must_use = "signature verification result must be checked"]
 pub fn verify_tree_head_sig(th: &TreeHead, pubkey: &VerifyingKey) -> bool {
     let Ok(bytes) = B64.decode(&th.sig_b64) else {
         return false;

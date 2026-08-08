@@ -25,6 +25,7 @@ use zeroize::Zeroize;
 pub const MIN_TOKEN_BYTES: usize = 16;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum KeyError {
     #[error("entropy source failed: {0}")]
     Entropy(String),
@@ -46,6 +47,7 @@ pub enum KeyError {
 /// the SAME opaque "authentication failed" at the boundary — never let the caller
 /// distinguish which case occurred.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum OpenSecretError {
     /// No recognized `decern-sealed-v1:` prefix — most likely a secret stored before
     /// encryption-at-rest existed (a legacy pre-encryption plaintext secret), or
