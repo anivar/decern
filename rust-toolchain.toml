@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Pinned toolchain — the single source of truth for reproducible builds and proofs.
+# Pinned toolchain — one compiler version for CI, contributors and the proofs alike.
 
 [toolchain]
 channel = "1.97"

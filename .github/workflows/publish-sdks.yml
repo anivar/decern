@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Publishes the Python and TypeScript SDKs on a release tag, authenticating to PyPI and npm
+# by OIDC. No token is stored anywhere: each registry is configured to trust this repository
+# and THIS FILENAME, and mints a short-lived credential for the run.
+#
+# The filename is part of the trust configuration on both registries. Renaming this file
+# revokes its ability to publish until the publisher entries are updated to match.
+name: Publish SDKs
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to publish, without the leading v (e.g. 0.2.0)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # The tag is the only statement of what is being released. A package whose manifest
+  # disagrees with it would publish a version nobody asked for, under a tag that describes
+  # something else — so disagreement stops the run before either registry is touched.
+  version:
+    name: the tag and the manifests agree
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - id: v
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+          py=$(grep -m1 '^version' sdks/python/pyproject.toml | cut -d'"' -f2)
+          ts=$(node -p "require('./sdks/typescript/package.json').version")
+          echo "tag=${version}  python=${py}  typescript=${ts}"
+
+          fail=0
+          [ "${py}" = "${version}" ] || { echo "::error::pyproject.toml says ${py}, tag says ${version}"; fail=1; }
+          [ "${ts}" = "${version}" ] || { echo "::error::package.json says ${ts}, tag says ${version}"; fail=1; }
+          exit "${fail}"
+
+  pypi:
+    name: PyPI
+    needs: version
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # mint the OIDC token PyPI trusts; nothing else is needed
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Build sdist and wheel
+        working-directory: sdks/python
+        run: |
+          pipx run uv build --out-dir dist
+          ls -l dist
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdks/python/dist
+          # A re-run of a tag should be a no-op, not a failure.
+          skip-existing: true
+
+  npm:
+    name: npm
+    needs: version
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # Trusted publishing needs npm >= 11.5.1 on Node >= 22.14.0; the runner's bundled
+      # npm is older than that, so it is upgraded rather than assumed.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.20.0"
+          registry-url: https://registry.npmjs.org
+
+      - run: npm install -g npm@latest
+
+      - name: Build
+        working-directory: sdks/typescript
+        run: |
+          npm ci || npm install
+          npm run build
+
+      - name: Publish
+        working-directory: sdks/typescript
+        # No NODE_AUTH_TOKEN and no OTP: the CLI detects the OIDC environment and uses it.
+        # Provenance is attested automatically on a trusted-publishing run.
+        run: npm publish --access public
