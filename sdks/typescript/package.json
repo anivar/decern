@@ -3,6 +3,25 @@
   "version": "0.2.0",
   "description": "Dependency-free TypeScript client for the decern PDP (AuthZEN 1.0 Access Evaluation).",
   "license": "Apache-2.0",
+  "author": "Anivar A Aravind",
+  "homepage": "https://decern.anivar.net/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anivar/decern.git",
+    "directory": "sdks/typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/anivar/decern/issues"
+  },
+  "keywords": [
+    "authorization",
+    "authzen",
+    "pdp",
+    "policy-decision-point",
+    "access-control",
+    "ai-agents",
+    "audit"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
