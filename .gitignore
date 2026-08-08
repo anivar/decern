@@ -6,3 +6,9 @@ target/
 *.ledger
 # proptest failure corpus (local)
 **/proptest-regressions/
+
+# What a local run leaves in the working directory: `decern-serve` with no --ledger
+# writes these defaults into the current one, and `git add -A` then sweeps them in.
+# Named exactly, so a real fixture with the same extension is not silently ignored.
+/decern-ledger.jsonl
+/decern-missions.json
