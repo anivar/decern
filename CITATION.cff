@@ -17,6 +17,7 @@ authors:
   - family-names: Aravind
     given-names: Anivar A
     orcid: https://orcid.org/0009-0009-8995-0005
+doi: 10.5281/zenodo.21848620
 repository-code: https://github.com/anivar/decern
 url: https://decern.anivar.net/
 license: Apache-2.0
