@@ -36,7 +36,7 @@ use crate::routes::app;
 struct Args {
     /// Model directory; omit for the built-in model.
     #[arg(long, value_name = "DIR")]
-    pub(crate) model: Option<PathBuf>,
+    model: Option<PathBuf>,
     /// Single-file ledger path (default backend). Mutually exclusive with `--sharded`.
     #[arg(long, value_name = "PATH", conflicts_with = "sharded")]
     ledger: Option<PathBuf>,
@@ -52,13 +52,13 @@ struct Args {
     /// Mission registry file — the durable record of approved Missions the mint path
     /// checks (`decern-identity`). Default: `decern-missions.json` alongside the ledger.
     #[arg(long, value_name = "PATH")]
-    pub(crate) missions: Option<PathBuf>,
+    missions: Option<PathBuf>,
     /// Require every decision to name a live Mission in `context.mission`.
     /// When set, client-supplied `human_approved` / `consent` are ignored; those
     /// flags are derived server-side from the verified Mission (or the decision
     /// is Denied). Start opt-in; operators harden MoveMoney behind this flag.
     #[arg(long)]
-    pub(crate) require_mission: bool,
+    require_mission: bool,
     /// Hex Ed25519 public key of an issuer whose standing tokens this deployment
     /// accepts. Repeatable. Omit to accept no challenges. Keys are configured rather
     /// than fetched: a decision must not depend on a third party being reachable, and
@@ -155,14 +155,14 @@ pub(crate) struct AppState {
     /// The boot-pinned model. `mission::approve` reads the approver's authority from
     /// this SAME base model (not the live directory), so a Mission approval is bounded
     /// by exactly what a token minted under it would later be bounded by.
-    pub(crate) model: Arc<Model>,
+    model: Arc<Model>,
     pub(crate) backend: Arc<LedgerBackend>,
     /// The durable record of approved Missions. Held so a mission's termination
     /// outlives any single in-memory handle and is seen across processes.
-    pub(crate) missions: Arc<FileMissionRegistry>,
+    missions: Arc<FileMissionRegistry>,
     pub(crate) pubkey: VerifyingKey,
     /// When true, every decide must name a live `context.mission`.
-    pub(crate) require_mission: bool,
+    require_mission: bool,
     /// Issuer keys a standing token may be signed by. Empty means this deployment
     /// accepts no challenges, which is the default and is stated in its disclosure.
     standing_issuers: Arc<Vec<VerifyingKey>>,

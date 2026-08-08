@@ -60,7 +60,7 @@ pub(crate) async fn tree_head(State(st): State<AppState>) -> Response {
     }
 }
 
-/// `GET /audit/v1/subject/{handle}` — the decisions recorded about one party, each with a
+/// `GET /audit/v1/subject?handle=<h>` — the decisions recorded about one party, each with a
 /// proof that it is in the log the anchor commits to.
 ///
 /// A notice an operator is obliged to send is worth what their willingness to send it is
@@ -228,7 +228,7 @@ pub(crate) async fn subject_side_disclosure(State(st): State<AppState>) -> Json<
         "audit": {
             "substrate": "append-only hash-chained log, Ed25519-signed per record",
             "anchor": "/anchor/v1/tree-head",
-            "subject_projection": "/audit/v1/subject/{handle}",
+            "subject_projection": "/audit/v1/subject?handle=",
         },
     }))
 }
