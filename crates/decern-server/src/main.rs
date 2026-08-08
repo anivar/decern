@@ -16,6 +16,8 @@ use axum::{
 };
 mod challenge;
 
+use std::collections::BTreeMap;
+
 use clap::Parser;
 use decern_identity::{IdentityError, mission, mission::Mission};
 use decern_kernel::{Directory, EntityRef, Kernel, Model};
@@ -65,6 +67,8 @@ struct Args {
     /// this binary carries no outbound TLS stack.
     #[arg(long = "standing-issuer-key", value_name = "HEX")]
     standing_issuer_keys: Vec<String>,
+    /// Address to bind. Loopback by default: the endpoints are unauthenticated by
+    /// design, so a non-loopback bind logs a startup warning and expects a proxy.
     #[arg(long, default_value = "127.0.0.1:8080")]
     addr: String,
 }
@@ -131,6 +135,12 @@ struct AppState {
     /// Issuer keys a standing token may be signed by. Empty means this deployment
     /// accepts no challenges, which is the default and is stated in its disclosure.
     standing_issuers: Arc<Vec<VerifyingKey>>,
+    /// The authority every decision this process makes is taken against, digested once.
+    /// The kernel is pinned at boot and exposes no way to mutate it, so this is a
+    /// constant for the life of the process rather than something to recompute per
+    /// request — and recomputing it per request would serialize the whole entity graph
+    /// on the decision path.
+    authority_digest: Arc<str>,
 }
 
 /// Resolve the ledger shard for a decision: the subject's directory tenant.
@@ -492,10 +502,11 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
     };
     // `mission` is not in the Cedar context schema — strip before check, re-attach
     // on the ledger Entry (Entry.mission + context.mission for auditors).
-    let mission_for_context = ctx.get("mission").cloned();
-    if let Some(obj) = ctx.as_object_mut() {
-        obj.remove("mission");
-    }
+    let mission_for_context = if let Some(obj) = ctx.as_object_mut() {
+        obj.remove("mission")
+    } else {
+        None
+    };
 
     // A challenge from the party a decision was about is removed here too, and
     // unconditionally: a request carrying one is evaluated exactly as the same request
@@ -539,19 +550,19 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
     // are carried into the append closure so they fail closed as a 503.
     let shard = shard_for(&st.backend, st.kernel.directory(), &subject.id);
 
-    if let Some(m) = &mission_for_context {
-        ctx["mission"] = m.clone();
+    if let Some(m) = mission_for_context {
+        ctx["mission"] = m;
     }
 
     // Bind the exact parameters evaluated: subject/action/resource + post-mission ctx.
-    let parameter_digest = Some(decern_ledger::parameter_digest(&json!({
+    let parameters_digest = decern_ledger::digest(&json!({
         "subject": {"type": subject.ty, "id": subject.id},
         "action": action,
         "resource": {"type": resource.ty, "id": resource.id},
         "context": ctx,
         "mission": mission_ref.as_ref().map(|m| json!({"approver": m.approver, "s256": m.s256})),
         "decision_subject": decision_subject,
-    })));
+    }));
 
     // Answer the challenge, if one came with the request — after the decision, never
     // before it, so the answer is about a decision that has already been made rather than
@@ -589,7 +600,7 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
                     outcome_basis,
                     // The digest, never the evidence itself: what a party sends to argue
                     // their case is likely to be about them, and this log cannot be edited.
-                    evidence_digest: c.evidence.as_ref().map(decern_ledger::parameter_digest),
+                    evidence_digest: c.evidence.as_ref().map(decern_ledger::digest),
                 })
             }
         },
@@ -609,11 +620,20 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
         decision: r.decision,
         reasons: r.reasons.clone(),
         sponsor,
-        parameter_digest,
         mission: mission_ref,
         decision_subject,
         notice_required,
         challenge: challenge_record.clone(),
+        digests: BTreeMap::from([
+            (
+                decern_ledger::DIGEST_PARAMETERS.to_owned(),
+                parameters_digest,
+            ),
+            (
+                decern_ledger::DIGEST_AUTHORITY.to_owned(),
+                st.authority_digest.to_string(),
+            ),
+        ]),
         ..Default::default()
     };
 
@@ -777,9 +797,16 @@ fn bind_mission(
 async fn tree_head(State(st): State<AppState>) -> Response {
     match &*st.backend {
         LedgerBackend::Single(m) => {
-            let ledger = m
-                .lock()
-                .expect("ledger mutex poisoned by a panicked append");
+            let ledger = match m.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({ "error": "tree head unavailable", "detail": "ledger mutex poisoned" })),
+                    )
+                        .into_response();
+                }
+            };
             match ledger.tree_head(now_secs().saturating_mul(1000)) {
                 Ok(th) => (StatusCode::OK, Json(json!(th))).into_response(),
                 Err(e) => (
@@ -849,9 +876,16 @@ async fn subject_audit(State(st): State<AppState>, Query(q): Query<SubjectQuery>
         )
             .into_response();
     };
-    let ledger = m
-        .lock()
-        .expect("ledger mutex poisoned by a panicked append");
+    let ledger = match m.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "error": "audit projection unavailable", "detail": "ledger mutex poisoned" })),
+            )
+                .into_response();
+        }
+    };
 
     let now_ms = now_secs().saturating_mul(1000);
     let head = match ledger.tree_head(now_ms) {
@@ -863,10 +897,10 @@ async fn subject_audit(State(st): State<AppState>, Query(q): Query<SubjectQuery>
         Err(e) => return audit_unavailable(&e),
     };
 
-    let mut decisions = Vec::new();
+    let mut matched = Vec::new();
     let mut truncated = false;
     for (seq, rec) in records.iter().enumerate() {
-        if decisions.len() >= MAX_PROJECTED_DECISIONS {
+        if matched.len() >= MAX_PROJECTED_DECISIONS {
             truncated = true;
             break;
         }
@@ -878,12 +912,21 @@ async fn subject_audit(State(st): State<AppState>, Query(q): Query<SubjectQuery>
         if recorded != Some(handle.as_str()) {
             continue;
         }
-        let proof = match ledger.inclusion_proof(seq as u64) {
-            Ok(p) => p,
-            Err(e) => return audit_unavailable(&e),
-        };
-        decisions.push(json!({ "seq": seq, "record": rec, "inclusion_proof": proof }));
+        matched.push((seq as u64, rec));
     }
+
+    // Proved in one pass. Proving each match as it is found re-derives every leaf in the
+    // log per proof — quadratic in the page size, holding the lock an append needs.
+    let seqs: Vec<u64> = matched.iter().map(|(seq, _)| *seq).collect();
+    let proofs = match ledger.inclusion_proofs(&seqs) {
+        Ok(p) => p,
+        Err(e) => return audit_unavailable(&e),
+    };
+    let decisions: Vec<Value> = matched
+        .into_iter()
+        .zip(proofs)
+        .map(|((seq, rec), proof)| json!({ "seq": seq, "record": rec, "inclusion_proof": proof }))
+        .collect();
 
     (
         StatusCode::OK,
@@ -1015,12 +1058,12 @@ fn mission_entry(
     // (subject = approver), not the agent the mission authorizes: the approver is who
     // stands behind the grant. Resolved server-side, never read from the request.
     let sponsor = resolve_sponsor(dir, approver);
-    let parameter_digest = Some(decern_ledger::parameter_digest(&json!({
+    let parameters_digest = decern_ledger::digest(&json!({
         "action": action,
         "approver": approver,
         "s256": s256,
         "context": context,
-    })));
+    }));
     Entry {
         ts_ms: now_s.saturating_mul(1000),
         subject_type: "Principal".into(),
@@ -1031,11 +1074,14 @@ fn mission_entry(
         context,
         decision: true,
         sponsor,
-        parameter_digest,
         mission: Some(decern_ledger::MissionRef {
             approver: approver.to_owned(),
             s256: s256.to_owned(),
         }),
+        digests: BTreeMap::from([(
+            decern_ledger::DIGEST_PARAMETERS.to_owned(),
+            parameters_digest,
+        )]),
         ..Default::default()
     }
 }
@@ -1370,6 +1416,15 @@ async fn main() -> Result<()> {
             .push(VerifyingKey::from_bytes(&bytes).context("invalid Ed25519 standing issuer key")?);
     }
 
+    // Digest the authority once: a decision is a function of the principal, this graph,
+    // this policy and the time, and the first three do not change while the process runs.
+    let authority_digest: Arc<str> = Arc::from(
+        decern_ledger::digest(
+            &serde_json::to_value(&model).context("serializing the model to digest it")?,
+        )
+        .as_str(),
+    );
+
     let state = AppState {
         kernel: Arc::new(kernel),
         model: Arc::new(model),
@@ -1378,6 +1433,7 @@ async fn main() -> Result<()> {
         pubkey,
         require_mission: args.require_mission,
         standing_issuers: Arc::new(standing_issuers),
+        authority_digest,
     };
     if !addr_is_loopback(&args.addr) {
         eprintln!(
@@ -1669,6 +1725,7 @@ mod tests {
             pubkey,
             require_mission: false,
             standing_issuers: Arc::new(Vec::new()),
+            authority_digest: Arc::from("test-authority"),
         };
 
         // corpB is a builtin principal in tenant "B".
@@ -1768,6 +1825,7 @@ mod tests {
             pubkey,
             require_mission: false,
             standing_issuers: Arc::new(Vec::new()),
+            authority_digest: Arc::from("test-authority"),
         };
         (st, pubkey)
     }
@@ -2287,8 +2345,8 @@ mod tests {
         assert_eq!(last["entry"]["decision"], true);
         assert_eq!(last["entry"]["mission"]["s256"], s256);
         assert!(
-            last["entry"]["parameter_digest"].as_str().is_some(),
-            "parameter_digest must be written: {last}"
+            last["entry"]["digests"]["parameters"].as_str().is_some(),
+            "the parameters digest must be written: {last}"
         );
         let _ = std::fs::remove_dir_all(&base);
     }
