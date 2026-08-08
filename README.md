@@ -113,8 +113,11 @@ A log truncated below its anchored size fails that check while still passing an 
 which is the whole point: dropping a committed record stops being a rule someone broke and starts
 being arithmetic that does not work.
 
-The other direction is `GET /audit/v1/subject?handle=<handle>`: what was decided *about* one party, each
-record with a proof that it sits in the tree the anchor commits to. A party who suspects a decision
+The other direction is `GET /audit/v1/subject?handle=<handle>`: what was decided *about* one party,
+each record with a proof that it sits in the tree the response's own head commits to. That head is
+the operator's, so the proofs are only worth what it is worth — check it against an anchor obtained
+separately before believing any of them. Proofs and an unanchored head from the same source prove
+internal consistency, which an operator can always arrange. A party who suspects a decision
 was made about them can ask, and check the answer against a commitment published earlier — the
 response carries proofs and never keys, because a key handed over in the same response would prove
 only that an operator can sign their own account of events. The handle matches exactly and nothing
@@ -133,7 +136,10 @@ with a signed token proving standing, the grounds, and what the party is asking 
 
 It never touches the decision. The challenge is taken out of the context before the kernel
 runs, so a request carrying one is evaluated exactly as the same request without one — which
-is why a forged challenge cannot escalate anything, and why it also cannot deny service.
+is why a forged challenge cannot escalate anything. A challenge that cannot be believed is
+refused, like any malformed request, so the decision it named is left exactly as it was — but a
+caller who sends one gets an error instead of an answer, which is worth saying rather than
+claiming a challenge can never affect a response at all.
 Answering happens afterwards, and the answer and its reason go on the record beside the
 decision they concern. Evidence is recorded as a digest rather than copied in: what a party
 sends to argue their case is likely to be about them, and this log cannot be edited.
