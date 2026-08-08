@@ -41,5 +41,40 @@ jobs:
         run: cargo install cargo-deny --locked
 
       # One canonical loop — identical to what contributors run locally.
-      - name: Verify (build · test · cvc5 proofs · clippy · fmt · deny · no-lineage)
+      - name: Verify (build · test · cvc5 proofs · clippy · fmt · docs · deny · no-lineage)
         run: ./scripts/verify.sh
+
+  # A change a user would notice ships with its own changelog entry, written while the author
+  # still has the context. See changelog.d/README.md.
+  changelog:
+    name: changelog fragment
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Fragments are well-formed
+        run: ./scripts/changelog.sh --check
+
+      - name: A user-visible change carries an entry
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-changelog') }}
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed="$(git diff --name-only "${BASE}" "${HEAD}")"
+          # Only shipped code counts: docs, CI and the agent method are not user-visible releases.
+          if ! echo "${changed}" | grep -qE '^(crates|sdks)/'; then
+            echo "No shipped code touched — no fragment needed."
+            exit 0
+          fi
+          if echo "${changed}" | grep -q '^changelog\.d/.*\.md$'; then
+            echo "Fragment present."
+            exit 0
+          fi
+          echo "::error::This pull request changes crates/ or sdks/ but adds no changelog.d/ entry."
+          echo "Add one (see changelog.d/README.md), or apply the 'no-changelog' label if a user"
+          echo "would notice nothing — a refactor, a test, a comment."
+          exit 1
