@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
-use decern_crypto::{Signer, SigningKey, Verifier, VerifyingKey};
+use decern_crypto::{Signer, SigningKey, VerifyingKey};
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -477,6 +477,10 @@ pub enum LedgerError {
     },
 }
 
+/// A record's signature is over this 32-byte hash and nothing else. That is what keeps it
+/// out of [`commitment_bytes`]'s space without a tag of its own: every commitment is a
+/// tagged string far longer than 32 bytes, so no record signature can be replayed as one.
+/// Anything else signed by a ledger key must keep that property or take a tag.
 fn chain_hash(entry_bytes: &[u8], prev_hex: &str) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(entry_bytes);
@@ -1564,7 +1568,7 @@ fn verify_lines(
             // was signed by a single key that is in the ring).
             let verified = match &record.kid {
                 Some(kid) => match keys.iter().find(|k| key_fingerprint(k) == *kid) {
-                    Some(k) => k.verify(&hash, &sig).is_ok(),
+                    Some(k) => k.verify_strict(&hash, &sig).is_ok(),
                     None => {
                         return Err(LedgerError::Tamper {
                             seq: count,
@@ -1574,7 +1578,7 @@ fn verify_lines(
                         });
                     }
                 },
-                None => keys.iter().any(|k| k.verify(&hash, &sig).is_ok()),
+                None => keys.iter().any(|k| k.verify_strict(&hash, &sig).is_ok()),
             };
             if !verified {
                 return Err(LedgerError::Tamper {
@@ -1676,7 +1680,7 @@ pub fn verify_checkpoint_sig(cp: &Checkpoint, pubkey: &VerifyingKey) -> bool {
     };
     let sig = decern_crypto::Signature::from_bytes(&sig_arr);
     pubkey
-        .verify(&checkpoint_bytes(&cp.root, cp.count, cp.ts_ms), &sig)
+        .verify_strict(&checkpoint_bytes(&cp.root, cp.count, cp.ts_ms), &sig)
         .is_ok()
 }
 
@@ -1693,7 +1697,7 @@ pub fn verify_tree_head_sig(th: &TreeHead, pubkey: &VerifyingKey) -> bool {
     };
     let sig = decern_crypto::Signature::from_bytes(&sig_arr);
     pubkey
-        .verify(
+        .verify_strict(
             &tree_head_bytes(&th.merkle_root, th.tree_size, th.ts_ms),
             &sig,
         )
@@ -1755,7 +1759,7 @@ fn any_key_verifies(msg: &[u8], sig_b64: &str, keys: &[VerifyingKey]) -> bool {
         return false;
     };
     let sig = decern_crypto::Signature::from_bytes(&arr);
-    keys.iter().any(|k| k.verify(msg, &sig).is_ok())
+    keys.iter().any(|k| k.verify_strict(msg, &sig).is_ok())
 }
 
 /// Verify an exported `decern-evidence-bundle` OFFLINE against a PINNED keyring — the standalone
@@ -2092,6 +2096,7 @@ fn root_at_count(location: &Location, count: u64) -> Result<Option<String>, Ledg
 #[cfg(test)]
 mod tests {
     use super::*;
+    use decern_crypto::Verifier;
     use serde_json::json;
 
     fn entry(action: &str, decision: bool) -> Entry {
@@ -2763,6 +2768,64 @@ mod tests {
         let missing = tmp("anchor-missing.anchor");
         std::fs::remove_file(&missing).ok();
         assert!(l.verify_against_anchor(&missing).is_ok());
+    }
+
+    /// The Ed25519 identity point is a valid encoding of a key of order 1. Under the
+    /// cofactorless verification equation, the signature `R = identity, S = 0` satisfies
+    /// it for EVERY message — so an operator who hands an auditor this public key can
+    /// hand them any log at all and have every record "verify". RFC 8032 §5.1.7 permits
+    /// the cofactorless check; rejecting a small-order key is what makes verification
+    /// mean something to a party who did not write the log.
+    fn small_order_key_and_universal_forgery() -> (VerifyingKey, decern_crypto::Signature) {
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes[0] = 1; // R = identity, S = 0
+        (
+            VerifyingKey::from_bytes(&identity).expect("identity is a valid encoding"),
+            decern_crypto::Signature::from_bytes(&sig_bytes),
+        )
+    }
+
+    #[test]
+    fn a_small_order_key_cannot_verify_a_signature_it_never_made() {
+        let (key, forgery) = small_order_key_and_universal_forgery();
+        // The premise: this pair really does satisfy the permissive equation.
+        assert!(
+            key.verify(b"any message at all", &forgery).is_ok(),
+            "the forgery must pass the cofactorless check, or this test proves nothing"
+        );
+        for msg in [&b"any message at all"[..], b"a fabricated record"] {
+            assert!(
+                key.verify_strict(msg, &forgery).is_err(),
+                "a small-order key must not verify {}",
+                String::from_utf8_lossy(msg)
+            );
+        }
+    }
+
+    #[test]
+    fn a_fabricated_anchor_under_a_small_order_key_is_refused() {
+        let (key, forgery) = small_order_key_and_universal_forgery();
+        let cp = Checkpoint {
+            root: "00".repeat(32),
+            count: 9999,
+            ts_ms: 1,
+            pubkey_hex: hex::encode(key.to_bytes()),
+            sig_b64: B64.encode(forgery.to_bytes()),
+        };
+        assert!(
+            !verify_checkpoint_sig(&cp, &key),
+            "an anchor over a height that was never reached must not verify"
+        );
+        let th = TreeHead {
+            merkle_root: "00".repeat(32),
+            tree_size: 9999,
+            ts_ms: 1,
+            pubkey_hex: hex::encode(key.to_bytes()),
+            sig_b64: B64.encode(forgery.to_bytes()),
+        };
+        assert!(!verify_tree_head_sig(&th, &key));
     }
 
     #[test]
