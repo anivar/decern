@@ -20,6 +20,22 @@ standards:
       The policy, schema, and entities in model/ are Cedar; the engine is pinned
       to cedar-policy =4.11.2 in Cargo.toml.
 
+  - name: Cedar symbolic compiler (cedar-policy-symcc)
+    url: https://github.com/cedar-policy/cedar-spec
+    conformance: >-
+      decern-proof compiles the Cedar model to SMT with cedar-policy-symcc — the
+      Lean-verified symbolic compiler — and discharges the nine invariants as policy
+      subsumption. The "proven" claim rests on this crate, so it is exact-pinned
+      =0.5.3 in Cargo.toml, as tightly as the evaluator.
+
+  - name: cvc5 SMT solver
+    url: https://cvc5.github.io/
+    conformance: >-
+      The proof obligations from cedar-policy-symcc are discharged by the cvc5 binary
+      on PATH (or $CVC5); the proofs are developed and run against cvc5 1.3.1. An
+      external tool, so it is not a Cargo dependency; `decern prove` fails closed if it
+      is absent or a proof does not hold.
+
   - name: Ed25519 (RFC 8032)
     url: https://www.rfc-editor.org/rfc/rfc8032
     conformance: >-
