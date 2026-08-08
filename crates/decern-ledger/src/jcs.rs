@@ -31,10 +31,10 @@ pub fn canonicalize(v: &Value) -> String {
     out
 }
 
-/// SHA-256 (lowercase hex) over the canonical form of `params` — the value recorded
-/// in a decision [`crate::Entry`] to bind it to the exact arguments authorized.
-pub fn parameter_digest(params: &Value) -> String {
-    hex::encode(Sha256::digest(canonicalize(params).as_bytes()))
+/// SHA-256 (lowercase hex) over the canonical form of `v` — how every entry in
+/// [`crate::Entry::digests`] is computed, whatever is being pinned.
+pub fn digest(v: &Value) -> String {
+    hex::encode(Sha256::digest(canonicalize(v).as_bytes()))
 }
 
 fn write_canonical(v: &Value, out: &mut String) {
@@ -85,19 +85,19 @@ mod tests {
         let b = json!({"c": 3, "a": 2, "b": 1});
         assert_eq!(canonicalize(&a), r#"{"a":2,"b":1,"c":3}"#);
         assert_eq!(canonicalize(&a), canonicalize(&b));
-        assert_eq!(parameter_digest(&a), parameter_digest(&b));
+        assert_eq!(digest(&a), digest(&b));
     }
 
     #[test]
     fn different_values_yield_different_digests() {
         assert_ne!(
-            parameter_digest(&json!({"amount": 100})),
-            parameter_digest(&json!({"amount": 101})),
+            digest(&json!({"amount": 100})),
+            digest(&json!({"amount": 101})),
         );
         // Type-sensitive: the string "100" is not the number 100.
         assert_ne!(
-            parameter_digest(&json!({"amount": 100})),
-            parameter_digest(&json!({"amount": "100"})),
+            digest(&json!({"amount": 100})),
+            digest(&json!({"amount": "100"})),
         );
     }
 
@@ -106,10 +106,7 @@ mod tests {
         // Objects inside arrays get their keys sorted; the array itself keeps order.
         let v = json!([{"b": 1, "a": 2}, {"d": 4, "c": 3}]);
         assert_eq!(canonicalize(&v), r#"[{"a":2,"b":1},{"c":3,"d":4}]"#);
-        assert_ne!(
-            parameter_digest(&json!([1, 2, 3])),
-            parameter_digest(&json!([3, 2, 1])),
-        );
+        assert_ne!(digest(&json!([1, 2, 3])), digest(&json!([3, 2, 1])),);
     }
 
     #[test]

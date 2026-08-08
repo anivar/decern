@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use decern_crypto::{Signer, SigningKey, Verifier, VerifyingKey};
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -33,7 +35,7 @@ pub mod jcs;
 pub mod merkle;
 mod segment;
 pub mod sharded;
-pub use jcs::{canonicalize, parameter_digest};
+pub use jcs::{canonicalize, digest};
 pub use segment::RolloverPolicy;
 pub use sharded::{ShardVerification, ShardedLedger, UNATTRIBUTED_SHARD, verify_sharded_dir};
 
@@ -181,8 +183,7 @@ pub struct Entry {
     /// RFC 8785 SHA-256 digest of the parameters a decision was made over — binds a
     /// record to the EXACT arguments, closing the TOCTOU gap between "authorized"
     /// and "executed". Set by `decern-serve` on decide / mission transitions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parameter_digest: Option<String>,
+
     /// The authority-graph edge type: `Attenuate` (default, omitted) = offline
     /// narrowing WITHIN the delegator's namespace (a decern tenant); `Mint` = a
     /// trusted-issuer crossing that no offline delegate can produce. Reserved and
@@ -227,7 +228,37 @@ pub struct Entry {
     /// A challenge from the party this decision was about, and how it was answered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub challenge: Option<ChallengeRecord>,
+    /// Digests of the things this record was bound to, by name.
+    ///
+    /// [`Entry::parameter_digest`] binds the arguments a decision authorized. This binds
+    /// everything else worth pinning, without a new column each time something is: a
+    /// consumer of this crate records what its own decisions depend on under names it
+    /// chooses, and a reader who does not know a name can still see that something was
+    /// pinned and that it does not match.
+    ///
+    /// `decern-serve` writes [`DIGEST_AUTHORITY`]. The chain already proves a record was
+    /// not altered afterwards; it says nothing about what the record was decided
+    /// *against*, and that moves. Revoke a delegation tomorrow and an allow recorded today
+    /// still reads as an allow, with nothing to say what was true when — the trail is
+    /// immutable while the thing it refers to is not. A digest of the authority state
+    /// makes the decision addressable: a later reading can tell whether the authority it
+    /// was taken against is still the same one.
+    ///
+    /// Ordered, so the serialization is deterministic — this is inside the bytes the chain
+    /// hashes, and a map that serialized in a different order each time would break it.
+    /// Values are digests, not content: whatever is being pinned may be large, may be
+    /// about a person, and cannot be taken back out of an append-only log.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub digests: BTreeMap<String, String>,
 }
+
+/// The exact arguments a decision authorized — what it was asked, not what it knew.
+/// Binding them means a later reading can tell that the thing authorized is the thing
+/// that was requested, rather than something substituted after the check.
+pub const DIGEST_PARAMETERS: &str = "parameters";
+
+/// The authority a decision was taken against — policy, schema and entity graph.
+pub const DIGEST_AUTHORITY: &str = "authority";
 
 fn is_false(b: &bool) -> bool {
     !*b
