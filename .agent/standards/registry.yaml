@@ -28,5 +28,10 @@ standards:
   - name: JSON Canonicalization Scheme (RFC 8785)
     url: https://www.rfc-editor.org/rfc/rfc8785
     conformance: >-
-      Records are canonicalized with JCS before they are hashed and signed, so the
-      hash chain is reproducible by any verifier.
+      `decern_ledger::jcs` implements JCS, and every entry in `Entry::digests` is a
+      SHA-256 over a JCS canonical form — so a party holding the same value computes
+      the same digest with any conformant implementation. Numbers follow §3.2.2.3
+      (ECMAScript `Number::toString`), verified against V8 over 3.1M doubles. The
+      hash chain itself does not canonicalize: it hashes each entry's exact stored
+      bytes, and verification re-reads those same bytes. Verified against the spec
+      2026-08-08.

@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matches. `DIGEST_PARAMETERS` holds what `parameter_digest` held. Ordered, since the map is inside
   the bytes the hash chain covers. `jcs::parameter_digest` is now `jcs::digest`, which is what it
   always computed.
+- **Breaking: numbers canonicalize per RFC 8785 §3.2.2.3, so a digest is portable.** §3.2.2.3
+  requires a JSON number to be serialized as ECMAScript prints it, which a shortest-round-trip float
+  printer does not do: `3` is required where `3.0` was written, `100000000000000000000` where `1e20`
+  was, and `0.000001` where `1e-6` was. A digest over a value carrying such a number now agrees with
+  one computed by any other conformant implementation, and `3` and `3.0` — the same IEEE-754 double
+  — now digest alike. Verified against V8 over 3.1M doubles. An integer outside §3.2.2.3's
+  interoperable range of ±(2^53−1) keeps every digit rather than rounding to the nearest double, so
+  two distinct ids can never share a digest. Digests recorded before this change are not comparable
+  with digests computed after it. The hash chain is unaffected: it commits to each entry's exact
+  stored bytes and never canonicalizes.
 
 ### Added
 
