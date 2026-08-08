@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# A badge that renders "bad repo" is a false claim on the front page, and nothing else
+# notices: the image loads, the layout is intact, and only a reader who looks closely
+# sees that the build status is missing. That happened — a parameter was renamed on the
+# badge endpoint and the README kept asking the old way.
+#
+# Deliberately NOT part of scripts/verify.sh. This needs the network and depends on
+# services outside this repository, so as a merge gate it would fail builds for reasons
+# that have nothing to do with the change. Weekly, and on demand, is the right cadence
+# for something that breaks silently rather than suddenly.
+name: Badges
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, off the hour to avoid the stampede
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    name: every badge in the README renders a value
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Check
+        run: |
+          fail=0
+          # Image sources in the badge row, whatever host serves them.
+          urls=$(grep -oE 'src="https://[^"]+"' README.md | sed 's/src="//;s/"$//')
+          [ -n "${urls}" ] || { echo "::error::no badge URLs found in README.md"; exit 1; }
+
+          while read -r u; do
+            body=$(curl -sS --max-time 20 -L "$u" || true)
+            code=$(curl -sS --max-time 20 -L -o /dev/null -w '%{http_code}' "$u" || echo 000)
+            title=$(printf '%s' "$body" | tr -d '\n' | grep -oE '<title>[^<]*</title>' | head -1 | sed 's/<[^>]*>//g')
+
+            if [ "$code" != "200" ]; then
+              echo "::error::$u returned HTTP $code"; fail=1; continue
+            fi
+            case "$body" in *"<svg"*) ;; *) echo "::error::$u did not return an SVG"; fail=1; continue;; esac
+            # The endpoint answers 200 with a badge saying what went wrong, which is right
+            # for a reader and invisible to a naive check. Look at the value it rendered.
+            case "$title" in
+              *"bad "*|*unknown*|*"not found"*|*"required"*|*"too long"*)
+                echo "::error::$u renders \"$title\""; fail=1 ;;
+              *) echo "ok  $title  <- $u" ;;
+            esac
+          done <<< "${urls}"
+          exit "${fail}"
