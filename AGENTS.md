@@ -45,5 +45,15 @@ decern prove
 This shells out to the **cvc5** SMT solver, which must be installed. A red proof blocks the
 change; a proof statement must never claim more than the solver checks.
 
+## Changelog entry
+If a user would notice the change, add one file to [`changelog.d/`](changelog.d/README.md) in the
+same commit, named `<section>-<slug>.md` — the prefix picks the section, the body is the entry
+verbatim. CI fails a change under `crates/` or `sdks/` that has neither a fragment nor the
+`no-changelog` label. Check it renders with `./scripts/changelog.sh --preview`.
+
+Write it for whoever reads the release notes, not for the reviewer of the diff: what it does, and
+where the guarantee stops. Never describe it as breaking, and never write migration guidance —
+this project has no released users to migrate.
+
 ## Sign-off (DCO)
 Sign off every commit (`git commit -s`) — see [CONTRIBUTING.md](CONTRIBUTING.md).

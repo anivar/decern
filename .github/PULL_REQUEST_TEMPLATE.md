@@ -6,8 +6,9 @@
      discussed in an issue first (see CONTRIBUTING.md). -->
 
 ## Checklist
-- [ ] `./scripts/verify.sh` passes (build · test · cvc5 proofs · clippy `-D warnings` · fmt · cargo-deny · standards guard)
+- [ ] `./scripts/verify.sh` passes (build · test · cvc5 proofs · clippy `-D warnings` · fmt · docs · cargo-deny · standards guard)
 - [ ] If this touches authorization semantics (kernel decision, model, invariants), `decern prove` stays green — and a new guarantee ships with its negative control
+- [ ] A user-visible change carries an entry in [`changelog.d/`](../changelog.d/README.md) — or the `no-changelog` label, if a reader would notice nothing
 - [ ] Commits are DCO signed off (`git commit -s`)
 - [ ] Comments follow [`.agent/standards/comments.md`](../.agent/standards/comments.md)
 

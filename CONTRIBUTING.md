@@ -27,6 +27,30 @@ skipped and **exits non-zero even when everything else passes**, so a skipped ru
 mistaken for a green one. CI always runs the full loop, and the proofs still gate the merge —
 run the script with no flags before you open the PR.
 
+## Changelog entries
+
+A change a user would notice ships with its own entry, as a file in
+[`changelog.d/`](changelog.d/README.md), in the same pull request:
+
+```
+changelog.d/fixed-small-order-keys.md
+```
+
+The filename prefix picks the section (`added-`, `changed-`, `fixed-`, `security-`, `removed-`,
+`deprecated-`); the file holds the entry as it should appear. `scripts/changelog.sh --release`
+folds them into `CHANGELOG.md` at release time, and the release notes are that section.
+
+Writing it here rather than in `CHANGELOG.md` means it is written while you still have the context,
+it is reviewed alongside the code it describes, and two pull requests never collide on the same
+lines. Check yours renders before pushing:
+
+```
+./scripts/changelog.sh --preview
+```
+
+A refactor, a test, a comment or a CI change needs no entry — say so and apply the `no-changelog`
+label.
+
 ## Sign-off (DCO)
 
 Every commit must be signed off under the **Developer Certificate of Origin 1.1**
