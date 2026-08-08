@@ -15,6 +15,8 @@ decision ledger anyone can verify without trusting the operator.
 [Website](https://decern.anivar.net/) · [Commands](docs/CLI.md) · [Roadmap](ROADMAP.md) ·
 [Releases](https://github.com/anivar/decern/releases) · [Security](SECURITY.md)
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21848620.svg)](https://doi.org/10.5281/zenodo.21848620)
+
 The industry standardizes how authority is *represented* — tokens, delegation envelopes,
 decision-request formats — and defers the *guarantee* (that attenuation holds, that nothing
 was dropped from the log, that a decision stayed within its mandate) to implementer policy.
@@ -295,6 +297,13 @@ changes are reviewed and merged. Project-health evidence is kept explicit:
 [ADOPTERS.md](ADOPTERS.md) names deployments only with permission,
 [RELEASES.md](RELEASES.md) documents the release mechanics, and
 [DEPENDENCIES.md](DEPENDENCIES.md) documents dependency and license controls.
+
+## Citing
+
+Each release is archived and given a DOI. Cite the concept DOI —
+[10.5281/zenodo.21848620](https://doi.org/10.5281/zenodo.21848620) — which always resolves to the
+newest version, or a version DOI when a specific release matters for reproducibility.
+[CITATION.cff](CITATION.cff) carries the metadata, and GitHub's "Cite this repository" renders it.
 
 ## License
 
