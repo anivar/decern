@@ -113,6 +113,14 @@ A log truncated below its anchored size fails that check while still passing an 
 which is the whole point: dropping a committed record stops being a rule someone broke and starts
 being arithmetic that does not work.
 
+The other direction is `GET /audit/v1/subject?handle=<handle>`: what was decided *about* one party, each
+record with a proof that it sits in the tree the anchor commits to. A party who suspects a decision
+was made about them can ask, and check the answer against a commitment published earlier — the
+response carries proofs and never keys, because a key handed over in the same response would prove
+only that an operator can sign their own account of events. The handle matches exactly and nothing
+enumerates, so it answers someone who already knows their own handle and tells everyone else
+nothing.
+
 `reasons:["policy9"]` is the deny-by-default catch-all; the missing `sponsor` is the "unknown caller
 has none" case above. `decern verify --ledger <file> --pubkey <kid>` re-checks the chain (always) and
 every signature (with the key).
