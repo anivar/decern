@@ -53,7 +53,8 @@ verbatim. CI fails a change under `crates/` or `sdks/` that has neither a fragme
 
 Write it for whoever reads the release notes, not for the reviewer of the diff: what it does, and
 where the guarantee stops. Never describe it as breaking, and never write migration guidance —
-this project has no released users to migrate.
+this project has no released users to migrate. End it with `Authored by @handle`, naming the human
+whose work it is, and `reported by @handle` where someone else found the defect.
 
 ## Sign-off (DCO)
 Sign off every commit (`git commit -s`) — see [CONTRIBUTING.md](CONTRIBUTING.md).

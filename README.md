@@ -222,8 +222,9 @@ of `decern` and `decern-serve`.
 To call a running `decern-serve` from an application, thin AuthZEN 1.0 PDP clients are published:
 
 ```sh
-uv add decern           # Python
-npm install decern      # TypeScript / JavaScript
+uv add decern                              # Python
+npm install decern                         # TypeScript / JavaScript
+go get github.com/anivar/decern/sdks/go    # Go
 ```
 
 ### Hosted

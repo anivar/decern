@@ -33,7 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Revocation blast radius** — `Directory::descendants_of` and
   `GET /directory/v1/principals/{id}/descendants`.
 - **[docs/CLI.md](docs/CLI.md)** — a command reference for both binaries.
-- SDK clients cap the error-body read at 64 KiB and report truncation.
+- **A Go client SDK** — `go get github.com/anivar/decern/sdks/go`, alongside the Python and
+  TypeScript clients. Authored by @sivasanjeevs.
+- **A failed SDK call carries the HTTP status and response body** on `DecernError`, so a caller can
+  tell a denial from a misconfigured endpoint without reading the server's logs.
+  Authored by @sameer-kireap.
+- SDK clients cap the error-body read at 64 KiB and report truncation. Authored by @vjymisal0.
 
 ### Changed
 

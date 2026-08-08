@@ -35,6 +35,24 @@ Write it for someone deciding whether this release affects them, not for the rev
 Lead with what it does; say where the guarantee stops if that is not obvious. The prose standard in
 [`CONTRIBUTING.md`](../CONTRIBUTING.md) applies here too — no sentence beyond what carries meaning.
 
+## Credit
+
+End the entry with who did the work, by GitHub handle:
+
+```markdown
+- **A Go client SDK** — `go get github.com/anivar/decern/sdks/go`. Authored by @sivasanjeevs.
+```
+
+Credit a report separately from the fix, because finding the defect is its own contribution:
+
+```markdown
+  Authored by @someone, reported by @someone-else.
+```
+
+The release notes are where a contribution becomes visible to people who will never read a commit
+log. Leaving the name out is the ordinary way a project quietly absorbs other people's work, so the
+name goes in the entry, and the person who did the work writes it.
+
 ## Skipping one
 
 A change with nothing for a user to notice does not need a fragment: a refactor, a test, a comment,
