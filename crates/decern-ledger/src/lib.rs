@@ -230,7 +230,7 @@ pub struct Entry {
     pub challenge: Option<ChallengeRecord>,
     /// Digests of the things this record was bound to, by name.
     ///
-    /// [`Entry::parameter_digest`] binds the arguments a decision authorized. This binds
+    /// [`DIGEST_PARAMETERS`] binds the arguments a decision authorized. This binds
     /// everything else worth pinning, without a new column each time something is: a
     /// consumer of this crate records what its own decisions depend on under names it
     /// chooses, and a reader who does not know a name can still see that something was
@@ -716,7 +716,7 @@ impl Ledger {
     /// (re-)marked read-only (0444 on Unix) on open — self-healing after a
     /// crash that landed between committing the manifest and applying that
     /// permission, since the permission bit is defense-in-depth only, never
-    /// the source of truth (see [`segment`] module docs).
+    /// the source of truth (see the `segment` module).
     pub fn open_segmented(
         dir: &Path,
         key: SigningKey,
@@ -2598,8 +2598,9 @@ mod tests {
 
     #[test]
     fn decision_entry_serialization_is_stable() {
-        // Golden serialization + chain hash for a plain Decision entry; if either
-        // drifts, canonicalization broke and existing ledgers would stop verifying.
+        // Golden serialization + chain hash for a plain Decision entry. The chain
+        // commits to these exact bytes, so if field order or naming drifts, every
+        // existing ledger stops verifying.
         let js = serde_json::to_string(&entry("Read", true)).unwrap();
         assert_eq!(
             js,

@@ -6,6 +6,40 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-08
+
+### Changed
+
+- **Breaking: `Entry::parameter_digest` is now `Entry::digests`, a map keyed by name.** A decision
+  binds more than its arguments, and a column per thing bound does not scale: consumers of
+  `decern-ledger` now record what their own decisions depend on under names they choose, and a
+  reader that does not recognise a name can still see that something was pinned and whether it
+  matches. `DIGEST_PARAMETERS` holds what `parameter_digest` held. Ordered, since the map is inside
+  the bytes the hash chain covers. `jcs::parameter_digest` is now `jcs::digest`, which is what it
+  always computed.
+
+### Added
+
+- **The authority a decision was taken against, on the record.** Every decision recorded by the PDP
+  carries `DIGEST_AUTHORITY` — the policy, schema and entity graph as they stood. The chain shows a
+  record was not altered; this shows what it was decided against, so a later reading can tell
+  whether that authority is still in force. Computed once at load.
+- **Anchoring.** `decern-serve` publishes a signed RFC 9162 tree head at `GET /anchor/v1/tree-head`;
+  `decern verify --anchor <file>` proves the log still extends a commitment published earlier, so a
+  record dropped after it was committed is detectable by someone who is not the operator.
+- **`GET /audit/v1/subject?handle=<h>`** — the decisions recorded about one party, each with an
+  inclusion proof against the returned head. Bounded, and says when it truncates.
+- **A subject-side challenge surface.** The party a decision was about can register a signed
+  challenge; it is removed from the context before the kernel runs, answered afterwards, and the
+  answer and its reason are recorded. Standing tokens are verified against issuer keys configured
+  with `--standing-issuer-key`. What a deployment supports is at
+  `GET /.well-known/decern-subject-side-disclosure`.
+- **`decern explain`** — a faithful reading of one recorded decision, chain verified first.
+- **Revocation blast radius** — `Directory::descendants_of` and
+  `GET /directory/v1/principals/{id}/descendants`.
+- **[docs/CLI.md](docs/CLI.md)** — a command reference for both binaries.
+- SDK clients cap the error-body read at 64 KiB and report truncation.
+
 ## [0.1.1] - 2026-08-02
 
 ### Fixed
