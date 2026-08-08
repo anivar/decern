@@ -14,6 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+mod bearer;
 mod challenge;
 
 use std::collections::BTreeMap;
@@ -37,10 +38,10 @@ use serde_json::{Value, json};
 )]
 struct Args {
     /// Model directory; omit for the built-in model.
-    #[arg(long)]
+    #[arg(long, value_name = "DIR")]
     model: Option<PathBuf>,
     /// Single-file ledger path (default backend). Mutually exclusive with `--sharded`.
-    #[arg(long, conflicts_with = "sharded")]
+    #[arg(long, value_name = "PATH", conflicts_with = "sharded")]
     ledger: Option<PathBuf>,
     /// Hosted mode. Target is either a directory (per-shard `flock` head store —
     /// several `decern-serve` processes on ONE host share one tamper-evident
@@ -49,7 +50,7 @@ struct Args {
     #[arg(long, value_name = "DIR_OR_POSTGRES_URL")]
     sharded: Option<String>,
     /// 32-byte hex signing seed file; created if absent. Omit for an ephemeral key.
-    #[arg(long)]
+    #[arg(long, value_name = "PATH")]
     key: Option<PathBuf>,
     /// Mission registry file — the durable record of approved Missions the mint path
     /// checks (`decern-identity`). Default: `decern-missions.json` alongside the ledger.
@@ -67,9 +68,42 @@ struct Args {
     /// this binary carries no outbound TLS stack.
     #[arg(long = "standing-issuer-key", value_name = "HEX")]
     standing_issuer_keys: Vec<String>,
-    /// Address to bind. Loopback by default: the endpoints are unauthenticated by
-    /// design, so a non-loopback bind logs a startup warning and expects a proxy.
-    #[arg(long, default_value = "127.0.0.1:8080")]
+    /// The `iss` an access token must carry, matched exactly (RFC 9068 §4). Given with
+    /// `--bearer-audience` and at least one `--bearer-issuer-key`, this turns on bearer
+    /// validation for the decision and mission-mutation endpoints.
+    #[arg(long, value_name = "URL", requires_all = ["bearer_audience", "bearer_issuer_keys"])]
+    bearer_issuer: Option<String>,
+    /// This deployment's resource identifier, which a token's `aud` must contain
+    /// (RFC 8707 §2). Without it a token minted for any other service the same issuer
+    /// serves would be accepted here.
+    #[arg(long, value_name = "URI", requires = "bearer_issuer")]
+    bearer_audience: Option<String>,
+    /// Hex Ed25519 public key an access token may be signed by. Repeatable, so a key
+    /// rollover is two configured keys rather than a window with none. Configured and
+    /// not fetched, for the reason given on `--standing-issuer-key`.
+    #[arg(
+        long = "bearer-issuer-key",
+        value_name = "HEX",
+        requires = "bearer_issuer"
+    )]
+    bearer_issuer_keys: Vec<String>,
+    /// A scope every access token must carry in its `scope` claim. Repeatable; all are
+    /// required, and a verified token missing one is refused with 403
+    /// `insufficient_scope`. Omit to accept a valid token whatever it is scoped for.
+    #[arg(
+        long = "bearer-scope",
+        value_name = "SCOPE",
+        requires = "bearer_issuer"
+    )]
+    bearer_scopes: Vec<String>,
+    /// Accept every caller, because something in front has already authenticated them.
+    /// One of this or the bearer flags is required to start: "no token configured" and
+    /// "authentication deliberately delegated" are indistinguishable from inside this
+    /// process and mean very different things outside it.
+    #[arg(long, conflicts_with = "bearer_issuer")]
+    trust_proxy: bool,
+    /// Address to bind. Default loopback.
+    #[arg(long, value_name = "ADDR", default_value = "127.0.0.1:8080")]
     addr: String,
 }
 
@@ -141,6 +175,19 @@ struct AppState {
     /// request — and recomputing it per request would serialize the whole entity graph
     /// on the decision path.
     authority_digest: Arc<str>,
+    /// How this deployment establishes callers, as the disclosure endpoint reports it —
+    /// derived from the running configuration at boot, like everything else it says.
+    caller_disclosure: Arc<Value>,
+}
+
+/// The `caller` object the subject-side disclosure reports: which posture, and under
+/// `bearer` the audience a token must be bound to — public by construction, it is what
+/// every client must already know to mint a usable token.
+fn caller_disclosure(caller: &bearer::Caller) -> Value {
+    match caller {
+        bearer::Caller::Bearer(c) => json!({ "mode": "bearer", "audience": c.audience }),
+        bearer::Caller::TrustedProxy => json!({ "mode": "trusted-proxy" }),
+    }
 }
 
 /// Resolve the ledger shard for a decision: the subject's directory tenant.
@@ -268,17 +315,43 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Whether every socket address `addr` resolves to is loopback. The decision PDP and the
-/// mission-mutation endpoints are unauthenticated by design (they trust an authenticating
-/// proxy or a trusted network), so a non-loopback bind is flagged at startup. An address
-/// that does not resolve here is treated as loopback: the `bind` below will fail and
-/// report it, so there is no second warning to emit.
-fn addr_is_loopback(addr: &str) -> bool {
-    use std::net::ToSocketAddrs;
-    match addr.to_socket_addrs() {
-        Ok(mut it) => it.all(|s| s.ip().is_loopback()),
-        Err(_) => true,
+/// How the caller of the deciding routes is established, from the flags. Refusing to start
+/// with no answer is the point: a server that cannot say who is asking should say so in its
+/// configuration, not in an audit. There is no bind-address carve-out — loopback is not a
+/// trust boundary on a shared host or inside a container's network namespace, and nothing
+/// here checks peer credentials.
+fn caller_from(args: &Args) -> Result<bearer::Caller> {
+    let Some(issuer) = args.bearer_issuer.clone() else {
+        if args.trust_proxy {
+            return Ok(bearer::Caller::TrustedProxy);
+        }
+        anyhow::bail!(
+            "refusing to serve the decision and mission-mutation endpoints with no way to \
+             establish the caller: pass --bearer-issuer/--bearer-audience/--bearer-issuer-key \
+             to validate access tokens here, or --trust-proxy to state that something in front \
+             already authenticates them (see docs/CLI.md \"The trust boundary\")"
+        );
+    };
+    // A key that cannot be read is a startup failure, never a token that quietly fails to
+    // verify later.
+    let mut keys = Vec::new();
+    for hex_key in &args.bearer_issuer_keys {
+        keys.push(parse_issuer_key(hex_key, "--bearer-issuer-key")?);
     }
+    // clap's `requires_all` establishes these; the checks stay so a future edit to the
+    // clap attributes degrades to this error instead of an unconfigured guard.
+    let Some(audience) = args.bearer_audience.clone() else {
+        anyhow::bail!("--bearer-issuer requires --bearer-audience");
+    };
+    if keys.is_empty() {
+        anyhow::bail!("--bearer-issuer requires at least one --bearer-issuer-key");
+    }
+    Ok(bearer::Caller::Bearer(Box::new(bearer::Config {
+        issuer,
+        audience,
+        keys,
+        scopes: args.bearer_scopes.clone(),
+    })))
 }
 
 /// Write the audit record, or hand back the fail-closed 503 the whole service rests on.
@@ -483,11 +556,10 @@ async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Respo
     );
     let (mission_ref, mission_errors) = match mission_bind {
         // No Mission named and none required: `context` is left as the caller sent
-        // it, including any approval flags. That is this server's standing trust
-        // boundary — the endpoints are unauthenticated by design and the PEP in
-        // front supplies the context — not something Missions relax. It does mean
-        // approval is server-derived only under a Mission, so an operator who wants
-        // that guarantee for money must run `--require-mission`.
+        // it, including any approval flags. Establishing the caller (the bearer guard,
+        // or the trusted front) says who is asserting those flags, not that they are
+        // true — approval is server-derived only under a Mission, so an operator who
+        // wants that guarantee for money must run `--require-mission`.
         MissionBind::None => (None, Vec::new()),
         MissionBind::Ok(mref) => {
             apply_mission_context(&mut ctx, &action);
@@ -842,8 +914,9 @@ async fn tree_head(State(st): State<AppState>) -> Response {
 /// The handle is the capability. It matches exactly — no prefix, no listing — so the
 /// endpoint answers a party who already knows their own handle and tells everyone else
 /// nothing. That, and the pseudonymity of the handle itself, is the entire access control
-/// here: like every endpoint on this server it expects an authenticating proxy in front,
-/// and unlike most of them it returns records about a person if one is not there.
+/// here, deliberately: this route stays outside the bearer guard, because the party a
+/// decision was about will not hold a credential for the deployment that decided it.
+/// What that choice costs is stated in the CLI reference's trust-boundary section.
 ///
 /// The handle arrives as a query parameter rather than a path segment because a handle is an
 /// opaque string chosen by whoever mints it — the conventional forms carry a colon — and a
@@ -965,6 +1038,7 @@ fn audit_unavailable(e: &LedgerError) -> Response {
 /// nowhere would be worse than declining it.
 async fn subject_side_disclosure(State(st): State<AppState>) -> Json<Value> {
     Json(json!({
+        "caller": *st.caller_disclosure,
         "standing_issuers": st
             .standing_issuers
             .iter()
@@ -1006,12 +1080,10 @@ async fn pubkey(State(st): State<AppState>) -> Json<Value> {
 /// and asking what a revocation would cost is not one; recording it would put
 /// operator curiosity in the same log as authorization outcomes.
 ///
-/// Unauthenticated, like every endpoint here, and expecting the same authenticating
-/// proxy in front. Worth stating explicitly because it discloses more than a single
-/// decision does: the delegation shape of a tenant, and who acts for whom. On the
-/// loopback default that is the operator's own view of their own directory; exposed
-/// without a proxy it is an org chart. Same trust boundary as the rest of the server,
-/// costlier if that boundary is ignored.
+/// Guarded, though it is a read: it discloses more than a single decision does — the
+/// delegation shape of a tenant, and who acts for whom. Under `--trust-proxy` that
+/// disclosure is the fronting proxy's to control, as every route is; under bearer
+/// validation an org chart is not something an unverified caller gets to read.
 async fn descendants(State(st): State<AppState>, UrlPath(id): UrlPath<String>) -> Response {
     let dir = st.kernel.directory();
     let descendants = dir.descendants_of(&id);
@@ -1294,43 +1366,75 @@ async fn mission_terminate(State(st): State<AppState>, UrlPath(s256): UrlPath<St
         .into_response()
 }
 
-fn app(state: AppState) -> Router {
-    Router::new()
-        .route("/healthz", get(|| async { "ok" }))
-        .route("/pubkey", get(pubkey))
-        // The anchorable commitment an operator publishes where they have no control.
-        .route("/anchor/v1/tree-head", get(tree_head))
-        // What this deployment does about challenges, read from its own configuration.
-        .route(
-            "/.well-known/decern-subject-side-disclosure",
-            get(subject_side_disclosure),
-        )
-        // What was decided about one party, with proofs they can check themselves.
-        .route("/audit/v1/subject", get(subject_audit))
+/// A configured Ed25519 public key, read at boot. `flag` names the option in the error, because
+/// this is the operator's first encounter with a key they have just pasted and the useful thing
+/// to say is which one.
+fn parse_issuer_key(hex_key: &str, flag: &str) -> Result<VerifyingKey> {
+    let bytes: [u8; 32] = hex::decode(hex_key.trim())
+        .with_context(|| format!("decoding {flag} {hex_key}"))?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("{flag} must be 32 bytes"))?;
+    VerifyingKey::from_bytes(&bytes).with_context(|| format!("invalid Ed25519 key for {flag}"))
+}
+
+fn app(state: AppState, caller: Arc<bearer::Caller>) -> Router {
+    // Everything that decides, or that changes what a later decision will be. Split into
+    // its own router so the guard covers it by construction: a route added here is
+    // guarded, and a route that should be guarded cannot become open by someone
+    // forgetting to name it somewhere else.
+    //
+    // `approver` on the mission mutations is still a request-body field. Under
+    // `--trust-proxy` these endpoints trust their caller exactly as they always have; what
+    // bearer validation adds is that the caller is who they claim, not that the approver is.
+    //
+    // A route added to either half must also be added to the matching list in the router
+    // tests, which drive every path through this function and assert which side answered.
+    let guarded = Router::new()
         // AuthZEN Authorization API 1.0 Access Evaluation endpoint; /decide is a friendly alias.
         .route("/access/v1/evaluation", post(decide))
         .route("/decide", post(decide))
-        // Directory queries: read-only, not recorded to the ledger — see `descendants`.
+        // Mission lifecycle. The read is guarded with the mutations: mission state is what a
+        // PEP consults before honoring a grant, and the reference is a digest of fields an
+        // outsider may be able to guess — it is not a subject-side surface.
+        .route("/mission/v1/approve", post(mission_approve))
+        .route("/mission/v1/{s256}", get(mission_get))
+        .route("/mission/v1/{s256}/terminate", post(mission_terminate))
+        // Read-only and unrecorded, but it reads the authority graph.
         .route(
             "/directory/v1/principals/{id}/descendants",
             get(descendants),
         )
-        // Mission lifecycle: approve a scoped Mission, read its state, terminate it.
-        // Like the decision PDP above, the MUTATION endpoints (approve, terminate) are
-        // UNAUTHENTICATED by design and trust their caller — `approver` is a request-body
-        // field, not authenticated here. Deploy behind an authenticating proxy that
-        // derives/validates `approver`, and keep the bind loopback (`--addr`, default
-        // 127.0.0.1) unless such a proxy fronts them (see README "Trust boundary"; a
-        // non-loopback `--addr` logs a startup WARN).
-        .route("/mission/v1/approve", post(mission_approve))
-        .route("/mission/v1/{s256}", get(mission_get))
-        .route("/mission/v1/{s256}/terminate", post(mission_terminate))
+        .route_layer(axum::middleware::from_fn_with_state(caller, bearer::guard));
+
+    // Open by intent, each for its own reason. `/healthz` and `/pubkey` are operational;
+    // the tree head and the disclosure are what an operator publishes on purpose, so a
+    // third party can check this deployment without holding a credential for it; and
+    // `/audit/v1/subject` answers the party a decision was about — who will not hold a
+    // credential for the deployment that decided about them, which is the point of the
+    // subject-side surface. The pseudonymous handle is that route's whole access control.
+    Router::new()
+        .route("/healthz", get(|| async { "ok" }))
+        .route("/pubkey", get(pubkey))
+        .route("/anchor/v1/tree-head", get(tree_head))
+        .route(
+            "/.well-known/decern-subject-side-disclosure",
+            get(subject_side_disclosure),
+        )
+        .route("/audit/v1/subject", get(subject_audit))
+        .merge(guarded)
         .with_state(state)
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    // First, before anything touches disk: a server that cannot say how its callers are
+    // established refuses to start, and a refused boot should leave nothing behind.
+    let caller = Arc::new(caller_from(&args)?);
+    let caller_desc = match caller.as_ref() {
+        bearer::Caller::Bearer(c) => format!("bearer for {}", c.audience),
+        bearer::Caller::TrustedProxy => "caller trusted (--trust-proxy)".to_owned(),
+    };
     let model = match &args.model {
         Some(d) => {
             Model::from_dir(d).with_context(|| format!("loading model from {}", d.display()))?
@@ -1408,12 +1512,7 @@ async fn main() -> Result<()> {
     // startup failure, never a challenge that quietly fails to verify later.
     let mut standing_issuers = Vec::new();
     for hex_key in &args.standing_issuer_keys {
-        let bytes: [u8; 32] = hex::decode(hex_key.trim())
-            .with_context(|| format!("decoding --standing-issuer-key {hex_key}"))?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("--standing-issuer-key must be 32 bytes"))?;
-        standing_issuers
-            .push(VerifyingKey::from_bytes(&bytes).context("invalid Ed25519 standing issuer key")?);
+        standing_issuers.push(parse_issuer_key(hex_key, "--standing-issuer-key")?);
     }
 
     // Digest the authority once: a decision is a function of the principal, this graph,
@@ -1434,27 +1533,20 @@ async fn main() -> Result<()> {
         require_mission: args.require_mission,
         standing_issuers: Arc::new(standing_issuers),
         authority_digest,
+        caller_disclosure: Arc::new(caller_disclosure(&caller)),
     };
-    if !addr_is_loopback(&args.addr) {
-        eprintln!(
-            "WARN: binding {} exposes the UNAUTHENTICATED decision and mission-mutation \
-             endpoints on the network; front them with an authenticating proxy that \
-             derives/validates the caller (see README \"Trust boundary\") or bind a \
-             loopback --addr",
-            args.addr
-        );
-    }
     let listener = tokio::net::TcpListener::bind(&args.addr)
         .await
         .with_context(|| format!("binding {}", args.addr))?;
     println!(
-        "decern-serve on {} — {}, missions {}, kid {}",
+        "decern-serve on {} — {}, missions {}, {}, kid {}",
         args.addr,
         backend_desc,
         missions_path.display(),
+        caller_desc,
         hex::encode(pubkey.to_bytes())
     );
-    axum::serve(listener, app(state))
+    axum::serve(listener, app(state, caller))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
@@ -1493,6 +1585,12 @@ mod tests {
     use super::*;
     use axum::http::StatusCode;
 
+    /// The posture every pre-existing test runs under: the caller is taken on trust, which is
+    /// what those tests are about. The guard's own behaviour is tested separately, below.
+    fn open() -> Arc<bearer::Caller> {
+        Arc::new(bearer::Caller::TrustedProxy)
+    }
+
     #[test]
     fn unrecordable_decision_returns_503_never_the_allow() {
         // The thesis: a proven Allow whose audit record fails to write must NOT be served.
@@ -1508,24 +1606,62 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
+    /// The startup rule: a server that cannot say how its callers are established does not
+    /// start. There is no bind-address carve-out to test, because there is no carve-out.
     #[test]
-    fn non_loopback_bind_is_flagged_for_the_startup_warn() {
-        // The startup WARN keys off this predicate: loopback binds are silent, a bind
-        // reachable off-host is flagged (the endpoints are unauthenticated by design).
-        // Literal addresses only — no DNS, so the test is hermetic.
-        assert!(
-            addr_is_loopback("127.0.0.1:8080"),
-            "IPv4 loopback is silent"
-        );
-        assert!(addr_is_loopback("[::1]:8080"), "IPv6 loopback is silent");
-        assert!(
-            !addr_is_loopback("0.0.0.0:8080"),
-            "all-interfaces is flagged"
-        );
-        assert!(
-            !addr_is_loopback("[::]:8080"),
-            "IPv6 unspecified is flagged"
-        );
+    fn with_no_posture_named_the_server_refuses_to_start() {
+        let args = Args::parse_from(["decern-serve"]);
+        let Err(e) = caller_from(&args) else {
+            panic!("a server with no way to establish the caller must not start");
+        };
+        assert!(e.to_string().contains("--trust-proxy"), "{e}");
+    }
+
+    #[test]
+    fn trust_proxy_names_the_delegated_posture() {
+        let args = Args::parse_from(["decern-serve", "--trust-proxy"]);
+        assert!(matches!(
+            caller_from(&args).unwrap(),
+            bearer::Caller::TrustedProxy
+        ));
+    }
+
+    #[test]
+    fn the_bearer_flags_configure_the_guard() {
+        let key = SigningKey::from_bytes(&[5u8; 32]);
+        let hex_key = hex::encode(key.verifying_key().to_bytes());
+        let args = Args::parse_from([
+            "decern-serve",
+            "--bearer-issuer",
+            "https://issuer.example/",
+            "--bearer-audience",
+            "https://pdp.example/",
+            "--bearer-issuer-key",
+            &hex_key,
+            "--bearer-scope",
+            "decern.decide",
+        ]);
+        let bearer::Caller::Bearer(cfg) = caller_from(&args).unwrap() else {
+            panic!("bearer flags must configure the bearer guard");
+        };
+        assert_eq!(cfg.issuer, "https://issuer.example/");
+        assert_eq!(cfg.audience, "https://pdp.example/");
+        assert_eq!(cfg.keys.len(), 1);
+        assert_eq!(cfg.scopes, vec!["decern.decide".to_owned()]);
+    }
+
+    #[test]
+    fn a_malformed_bearer_issuer_key_is_a_startup_failure() {
+        let args = Args::parse_from([
+            "decern-serve",
+            "--bearer-issuer",
+            "https://issuer.example/",
+            "--bearer-audience",
+            "https://pdp.example/",
+            "--bearer-issuer-key",
+            "not-hex",
+        ]);
+        assert!(caller_from(&args).is_err());
     }
 
     #[test]
@@ -1726,6 +1862,7 @@ mod tests {
             require_mission: false,
             standing_issuers: Arc::new(Vec::new()),
             authority_digest: Arc::from("test-authority"),
+            caller_disclosure: Arc::new(caller_disclosure(&bearer::Caller::TrustedProxy)),
         };
 
         // corpB is a builtin principal in tenant "B".
@@ -1826,6 +1963,7 @@ mod tests {
             require_mission: false,
             standing_issuers: Arc::new(Vec::new()),
             authority_digest: Arc::from("test-authority"),
+            caller_disclosure: Arc::new(caller_disclosure(&bearer::Caller::TrustedProxy)),
         };
         (st, pubkey)
     }
@@ -2139,6 +2277,158 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// Which routes the guard covers, asserted through the router rather than read off the
+    /// source. A route added to the open half by mistake is exactly the failure this catches,
+    /// and it can only be caught from outside.
+    #[tokio::test]
+    async fn every_deciding_route_refuses_an_unauthenticated_caller() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let cfg = bearer::Config {
+            issuer: "https://issuer.example/".into(),
+            audience: "https://pdp.example/".into(),
+            keys: vec![SigningKey::from_bytes(&[3u8; 32]).verifying_key()],
+            scopes: vec![],
+        };
+        let router = app(st, Arc::new(bearer::Caller::Bearer(Box::new(cfg))));
+
+        // Every route in the guarded half of `app()`, plus one wrong-method probe: the
+        // guard is a route layer, so a mismatched method on a guarded path must still be
+        // refused as 401, never answered 405 by a handler-side default.
+        for (method, uri) in [
+            ("POST", "/access/v1/evaluation"),
+            ("POST", "/decide"),
+            ("GET", "/decide"),
+            ("POST", "/mission/v1/approve"),
+            ("GET", "/mission/v1/AAAA"),
+            ("POST", "/mission/v1/AAAA/terminate"),
+            ("GET", "/directory/v1/principals/corp/descendants"),
+        ] {
+            let resp = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {uri} answered without establishing the caller"
+            );
+            // RFC 6750 §3: a 401 that does not say how to authenticate leaves the client
+            // guessing, and OAuth 2.1 §5.3 requires the challenge.
+            assert!(
+                resp.headers()
+                    .get(axum::http::header::WWW_AUTHENTICATE)
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|v| v.starts_with("Bearer ")),
+                "{method} {uri} returned no bearer challenge"
+            );
+        }
+
+        // Every route in the open half stays reachable, pinned by expected status: an
+        // anchor nobody can fetch is not an anchor, and a subject who cannot ask what was
+        // decided about them has lost the surface this server exists to give them.
+        for (uri, expect) in [
+            ("/healthz", StatusCode::OK),
+            ("/pubkey", StatusCode::OK),
+            (
+                "/.well-known/decern-subject-side-disclosure",
+                StatusCode::OK,
+            ),
+            ("/anchor/v1/tree-head", StatusCode::OK),
+            ("/audit/v1/subject?handle=ppid:nobody", StatusCode::OK),
+        ] {
+            let resp = router
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), expect, "{uri} is open by intent");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The guard is a layer, so "does a valid token actually reach the handler" is a distinct
+    /// question from "is the token accepted" — a `route_layer` that rejected everything would
+    /// pass every test above.
+    #[tokio::test]
+    async fn a_valid_token_reaches_the_decision_handler() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use base64::Engine as _;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use ed25519_dalek::Signer;
+        use tower::ServiceExt;
+
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let issuer_key = SigningKey::from_bytes(&[4u8; 32]);
+        let router = app(
+            st,
+            Arc::new(bearer::Caller::Bearer(Box::new(bearer::Config {
+                issuer: "https://issuer.example/".into(),
+                audience: "https://pdp.example/".into(),
+                keys: vec![issuer_key.verifying_key()],
+                scopes: vec![],
+            }))),
+        );
+
+        let h = URL_SAFE_NO_PAD.encode(br#"{"typ":"at+jwt","alg":"EdDSA"}"#);
+        let claims = json!({
+            "iss": "https://issuer.example/",
+            "aud": "https://pdp.example/",
+            "sub": "gateway-1",
+            "client_id": "gw",
+            "iat": now_secs(),
+            "jti": "t1",
+            // Far enough out that the wall clock the guard reads cannot overtake it.
+            "exp": now_secs() + 3600,
+        });
+        let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+        let sig = issuer_key.sign(format!("{h}.{p}").as_bytes());
+        let token = format!("{h}.{p}.{}", URL_SAFE_NO_PAD.encode(sig.to_bytes()));
+
+        let body = serde_json::to_vec(&json!({
+            "subject": {"type": "Principal", "id": "corp"},
+            "action": {"name": "Read"},
+            "resource": {"type": "Resource", "id": "claimA"},
+        }))
+        .unwrap();
+        let (status, body) = body_json(
+            router
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/access/v1/evaluation")
+                        .header("content-type", "application/json")
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a verified caller was still refused"
+        );
+        assert!(body.get("decision").is_some(), "no decision was returned");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[tokio::test]
     async fn mission_routes_are_reachable_through_the_router() {
         // The handler tests call the functions directly; this drives real requests
@@ -2152,7 +2442,7 @@ mod tests {
 
         let base = mission_base();
         let (st, _pk) = mission_state_at(&base);
-        let router = app(st);
+        let router = app(st, open());
 
         let approve_body = serde_json::to_vec(&json!({
             "approver": "corp",
@@ -2386,7 +2676,7 @@ mod tests {
         use axum::http::Request;
         use tower::ServiceExt;
         let (status, body) = body_json(
-            app(st.clone())
+            app(st.clone(), open())
                 .oneshot(
                     Request::builder()
                         .method("GET")
@@ -2481,7 +2771,7 @@ mod tests {
         }
 
         let (status, body) = body_json(
-            app(st.clone())
+            app(st.clone(), open())
                 .oneshot(
                     Request::builder()
                         .method("GET")
@@ -2527,7 +2817,7 @@ mod tests {
 
         // A prefix of a real handle is not that handle.
         let (status, body) = body_json(
-            app(st.clone())
+            app(st.clone(), open())
                 .oneshot(
                     Request::builder()
                         .method("GET")
@@ -2690,7 +2980,7 @@ mod tests {
         use axum::http::Request;
         use tower::ServiceExt;
         let (status, d) = body_json(
-            app(st.clone())
+            app(st.clone(), open())
                 .oneshot(
                     Request::builder()
                         .method("GET")
@@ -2719,7 +3009,25 @@ mod tests {
             "an outcome that routes nowhere must be declined, not claimed: {d}"
         );
         assert_eq!(d["notice"]["emitted_by_this_server"], false);
+        assert_eq!(
+            d["caller"]["mode"], "trusted-proxy",
+            "the disclosure must state how this deployment establishes callers: {d}"
+        );
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The disclosure's caller object under bearer validation names the audience — which is
+    /// public by construction: every client must already know it to mint a usable token.
+    #[test]
+    fn the_caller_disclosure_names_the_bearer_audience() {
+        let d = caller_disclosure(&bearer::Caller::Bearer(Box::new(bearer::Config {
+            issuer: "https://issuer.example/".into(),
+            audience: "https://pdp.example/".into(),
+            keys: vec![SigningKey::from_bytes(&[6u8; 32]).verifying_key()],
+            scopes: vec![],
+        })));
+        assert_eq!(d["mode"], "bearer");
+        assert_eq!(d["audience"], "https://pdp.example/");
     }
 
     /// A third party the record does not otherwise name is carried onto it.
