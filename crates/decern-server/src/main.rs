@@ -831,6 +831,12 @@ struct SubjectQuery {
     handle: String,
 }
 
+/// How many decisions one projection will return. The read holds the same lock an append
+/// needs, and a decision that cannot be recorded is refused rather than served — so an
+/// unbounded read here is a way to stop the server deciding anything at all. A bounded page
+/// that says it was cut is worth more than a complete one that costs availability.
+const MAX_PROJECTED_DECISIONS: usize = 256;
+
 async fn subject_audit(State(st): State<AppState>, Query(q): Query<SubjectQuery>) -> Response {
     let handle = q.handle;
     let LedgerBackend::Single(m) = &*st.backend else {
@@ -858,7 +864,12 @@ async fn subject_audit(State(st): State<AppState>, Query(q): Query<SubjectQuery>
     };
 
     let mut decisions = Vec::new();
+    let mut truncated = false;
     for (seq, rec) in records.iter().enumerate() {
+        if decisions.len() >= MAX_PROJECTED_DECISIONS {
+            truncated = true;
+            break;
+        }
         let recorded = rec
             .get("entry")
             .and_then(|e| e.get("decision_subject"))
@@ -880,6 +891,9 @@ async fn subject_audit(State(st): State<AppState>, Query(q): Query<SubjectQuery>
             "decision_subject": handle,
             "tree_head": head,
             "decisions": decisions,
+            // Said out loud rather than left to be inferred from a count: a party
+            // reading a short list must not conclude that is all there was.
+            "truncated": truncated,
         })),
     )
         .into_response()
@@ -2380,6 +2394,56 @@ mod tests {
         assert!(
             body.get("pubkey").is_none() && body["tree_head"].get("privkey").is_none(),
             "the projection must return proofs, never keys: {body}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The projection is bounded, and says so. The read holds the lock an append needs and a
+    /// decision that cannot be recorded is refused, so an unbounded read is a way to stop the
+    /// server deciding at all. A party reading a short list must not conclude that is all
+    /// there was, so the cut is reported rather than left to be inferred from a count.
+    #[tokio::test]
+    async fn the_subject_projection_is_bounded_and_says_when_it_cut() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        for _ in 0..(MAX_PROJECTED_DECISIONS + 5) {
+            let req: DecideReq = serde_json::from_str(
+                r#"{"subject":{"type":"Principal","id":"agent1"},
+                    "action":{"name":"Read"},
+                    "resource":{"type":"Resource","id":"claim1"},
+                    "context":{"decision_subject":"ppid:many"}}"#,
+            )
+            .unwrap();
+            let (status, _) = body_json(decide(State(st.clone()), Json(req)).await).await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        let (status, body) = body_json(
+            app(st.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri("/audit/v1/subject?handle=ppid:many")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["decisions"].as_array().unwrap().len(),
+            MAX_PROJECTED_DECISIONS,
+            "the projection must stop at the bound"
+        );
+        assert_eq!(
+            body["truncated"], true,
+            "a cut list must say it was cut: {body}"
         );
         let _ = std::fs::remove_dir_all(&base);
     }
