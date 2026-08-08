@@ -6,3 +6,8 @@ target/
 *.ledger
 # proptest failure corpus (local)
 **/proptest-regressions/
+# Local agent tooling. Kept out of the tree deliberately: a contributor should not
+# inherit hooks that shell out to a binary they did not install, and a reviewer
+# auditing this repository should not have to reason about one.
+.claude/
+.entire/
