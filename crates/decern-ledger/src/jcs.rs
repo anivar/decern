@@ -106,9 +106,10 @@ fn ecmascript_number(x: f64) -> String {
     if x < 0.0 {
         return format!("-{}", ecmascript_number(-x));
     }
-    // Shortest round-trip digits `s` (`k` of them) and `n` with x = s × 10^(n−k),
-    // via Ryu — the implementation RFC 8785 §3.2.2.3 points at for these digits.
-    let mut buf = ryu::Buffer::new();
+    // Shortest round-trip digits `s` (`k` of them) and `n` with x = s × 10^(n−k), via
+    // ryu-js: Ryu adapted to ECMAScript's rules, which §3.2.2.3 defers to. The same
+    // generator the maintained JCS crates use.
+    let mut buf = ryu_js::Buffer::new();
     let printed = buf.format_finite(x);
     let (mantissa, exponent) = match printed.split_once('e') {
         Some((m, e)) => (m, e.parse::<i32>().expect("Ryu writes an integer exponent")),
