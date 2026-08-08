@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Ask a question
+    url: https://github.com/anivar/decern/discussions/categories/q-a
+    about: Not sure whether something is a bug, or how a piece fits together? Ask here rather than opening an issue.
   - name: How to contribute (start here)
     url: https://github.com/anivar/decern/blob/main/CONTRIBUTING.md
     about: The verify loop, DCO, and how PRs are reviewed — for people and agents.
