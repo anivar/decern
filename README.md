@@ -12,10 +12,17 @@ A deterministic authorization kernel whose safety properties are **machine-check
 every possible input**, not just tested on examples — with a hash-chained, tamper-evident
 decision ledger anyone can verify without trusting the operator.
 
+<p align="center">
+  <a href="https://github.com/anivar/decern/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/anivar/decern/ci.yml?branch=main&label=ci&color=0E7C6B"></a>
+  <a href="https://crates.io/crates/decern-cli"><img alt="crates.io" src="https://img.shields.io/crates/v/decern-cli?label=crates.io&color=0E7C6B"></a>
+  <a href="https://pypi.org/project/decern/"><img alt="PyPI" src="https://img.shields.io/pypi/v/decern?label=pypi&color=0E7C6B"></a>
+  <a href="https://www.npmjs.com/package/decern"><img alt="npm" src="https://img.shields.io/npm/v/decern?label=npm&color=0E7C6B"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-0E7C6B"></a>
+  <a href="https://doi.org/10.5281/zenodo.21848620"><img alt="DOI" src="https://zenodo.org/badge/1319971099.svg"></a>
+</p>
+
 [Website](https://decern.anivar.net/) · [Commands](docs/CLI.md) · [Roadmap](ROADMAP.md) ·
 [Releases](https://github.com/anivar/decern/releases) · [Security](SECURITY.md)
-
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21848620.svg)](https://doi.org/10.5281/zenodo.21848620)
 
 The industry standardizes how authority is *represented* — tokens, delegation envelopes,
 decision-request formats — and defers the *guarantee* (that attenuation holds, that nothing

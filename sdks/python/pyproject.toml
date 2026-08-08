@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 [project]
 name = "decern"
 version = "0.2.0"
-description = "Dependency-free Python client for the decern PDP (AuthZEN 1.0 Access Evaluation)."
+description = "Ask a decern server whether an action is allowed, and get a decision that is recorded to a tamper-evident log. Dependency-free AuthZEN 1.0 client."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
