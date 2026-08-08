@@ -44,9 +44,10 @@ cedar-policy-symcc = "=0.5.3"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# RFC 8785 §3.2.2.3 numbers: Ryu is the digit generator the spec points at.
-# Already in the tree via serde_json — declared here to be used directly.
-ryu = "1"
+# RFC 8785 §3.2.2.3 numbers: ryu-js is Ryu adapted to ECMAScript's own rules,
+# which is what §3.2.2.3 defers to. It is the generator the maintained JCS crates
+# and the Boa JavaScript engine use.
+ryu-js = "1"
 ed25519-dalek = "2"
 sha2 = "0.10"
 base64 = "0.22"
