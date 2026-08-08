@@ -133,18 +133,24 @@ so you can tell whether that authority is still the one in force.
 The PDP. Answers decisions, records each one before serving it, and serves the Mission lifecycle.
 
 ```sh
-decern-serve --ledger /tmp/decern.jsonl
+decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 ```
 
 | Option | Meaning |
 |---|---|
+| `--model <DIR>` | Model directory. Omit for the built-in model. |
 | `--ledger <PATH>` | Single-file ledger. The default backend. Mutually exclusive with `--sharded`. |
-| `--sharded <DIR_OR_URL>` | Hosted. A directory gives a per-shard `flock` head store (several processes, one host). A `postgres://` URL gives a multi-host head store and needs `--features postgres`. |
+| `--sharded <DIR_OR_POSTGRES_URL>` | Hosted. A directory gives a per-shard `flock` head store (several processes, one host). A `postgres://` URL gives a multi-host head store and needs `--features postgres`. |
 | `--key <PATH>` | 32-byte hex signing seed, created if absent. Omit for an ephemeral key — which means nothing you record today verifies tomorrow. |
 | `--missions <PATH>` | Mission registry. Default `decern-missions.json` beside the ledger. |
 | `--require-mission` | Refuse any decision that does not name a live Mission. Approval flags are then derived from the grant, never from the request body. |
 | `--standing-issuer-key <HEX>` | An issuer whose standing tokens this deployment accepts. Repeatable. Omit to accept no challenges. |
-| `--addr <ADDR>` | Default `127.0.0.1:8080`. A non-loopback bind logs a startup warning, for the reason below. |
+| `--bearer-issuer <URL>` | The `iss` an access token must carry, matched exactly. Turns on bearer validation for the guarded routes; requires `--bearer-audience` and at least one `--bearer-issuer-key`. |
+| `--bearer-audience <URI>` | This deployment's resource identifier, which a token's `aud` must contain (RFC 8707 §2). |
+| `--bearer-issuer-key <HEX>` | An Ed25519 key access tokens may be signed by. Repeatable, so a key rollover is two configured keys rather than a window with none. |
+| `--bearer-scope <SCOPE>` | A scope every token must carry. Repeatable; all are required, and a verified token missing one is refused `403 insufficient_scope`. Omit for no scope check. |
+| `--trust-proxy` | Accept every caller, because something in front already authenticates them. Conflicts with `--bearer-issuer`; one of the two is required to start. |
+| `--addr <ADDR>` | Default `127.0.0.1:8080`. |
 
 **A decision is served only if its record was written.** An append that cannot be committed returns
 503 — never a bare allow. That is the property the whole thing rests on, and it is why a slow or
@@ -152,28 +158,50 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 
 ### Endpoints
 
-| Method | Path | What |
-|---|---|---|
-| `POST` | `/access/v1/evaluation` | The decision. AuthZEN-shaped. `/decide` is an alias. |
-| `GET` | `/pubkey` | The key records are signed with, so a verifier can fetch it once and keep it. |
-| `GET` | `/anchor/v1/tree-head` | A signed commitment to the log's current state — publish it somewhere you do not control. |
-| `GET` | `/audit/v1/subject?handle=<h>` | What was decided *about* one party, with inclusion proofs. |
-| `GET` | `/directory/v1/principals/{id}/descendants` | Who else loses authority if this principal is revoked. |
-| `POST` | `/mission/v1/approve` | Grant a scoped, fail-closed-attenuated Mission. |
-| `GET` | `/mission/v1/{s256}` | Its state. |
-| `POST` | `/mission/v1/{s256}/terminate` | End it. A terminated Mission never revives. |
-| `GET` | `/.well-known/decern-subject-side-disclosure` | What this deployment does about challenges, read from its running configuration. |
-| `GET` | `/healthz` | `ok`. |
+| Method | Path | Caller | What |
+|---|---|---|---|
+| `POST` | `/access/v1/evaluation` | guarded | The decision. AuthZEN-shaped. `/decide` is an alias. |
+| `GET` | `/pubkey` | open | The key records are signed with, so a verifier can fetch it once and keep it. |
+| `GET` | `/anchor/v1/tree-head` | open | A signed commitment to the log's current state — publish it somewhere you do not control. |
+| `GET` | `/audit/v1/subject?handle=<h>` | open | What was decided *about* one party, with inclusion proofs. |
+| `GET` | `/directory/v1/principals/{id}/descendants` | guarded | Who else loses authority if this principal is revoked. |
+| `POST` | `/mission/v1/approve` | guarded | Grant a scoped, fail-closed-attenuated Mission. |
+| `GET` | `/mission/v1/{s256}` | guarded | Its state. |
+| `POST` | `/mission/v1/{s256}/terminate` | guarded | End it. A terminated Mission never revives. |
+| `GET` | `/.well-known/decern-subject-side-disclosure` | open | What this deployment does about challenges and callers, read from its running configuration. |
+| `GET` | `/healthz` | open | `ok`. |
+
+"Guarded" routes require the caller to be established; "open" routes are open by intent — they are
+operational, published on purpose, or answerable only to a party who already holds the handle they
+ask about.
 
 ### The trust boundary, stated plainly
 
-**Every endpoint is unauthenticated by design.** The decision endpoint and the mission mutations
-trust their caller — `approver` is a body field and is not authenticated. Run `decern-serve` behind
-a proxy that derives and validates the caller, and keep the bind on loopback until one is there.
+**A server that cannot say how its callers are established does not start.** Every deployment
+names one of two postures:
 
-`/audit/v1/subject` deserves its own sentence: it returns records *about a person*. The handle is
-pseudonymous and matched exactly, so it answers someone who already knows their own handle — but
-that is the whole of the access control, and it is not a substitute for the proxy.
+- **Bearer validation** (`--bearer-issuer`, `--bearer-audience`, `--bearer-issuer-key`, optionally
+  `--bearer-scope`): the guarded routes require an RFC 9068 `at+jwt` access token — EdDSA over a
+  configured key, issuer matched exactly, audience containing this server, expiry honored. Absent
+  or invalid gets `401` with an RFC 6750 challenge; a valid token missing a required scope gets
+  `403`. Verification is signature-checking against configured keys, never fetching, so this adds
+  no TLS stack and no reliance on a third party being reachable.
+- **`--trust-proxy`**: every caller is accepted, because the operator states that something in
+  front — an authenticating proxy, a service mesh, the OS boundary around a local walkthrough —
+  has already established who is calling. The flag is that statement. It is exactly the old
+  behaviour, now a named choice rather than a default.
+
+What bearer validation establishes is **the caller, not the content**. The mission `approver` is
+still a request-body field: a verified gateway asserts it, and `--require-mission` remains what
+makes approval server-derived for decisions. The AuthZEN subject is likewise deliberately not
+taken from the token's `sub` — an enforcement point legitimately asks about parties other than
+itself.
+
+`/audit/v1/subject` deserves its own sentence: it returns records *about a person*, and it stays
+**outside the guard on purpose** — the party a decision was about will not hold a credential for
+the deployment that decided it. The handle is pseudonymous and matched exactly, so it answers
+someone who already knows their own handle and tells everyone else nothing; treat handles as
+secrets, and rate-limit this route at whatever fronts the server.
 
 ---
 
@@ -183,8 +211,8 @@ that is the whole of the access control, and it is not a substitute for the prox
 # 1. prove the invariants hold over every input
 decern prove
 
-# 2. run the PDP
-decern-serve --ledger /tmp/decern.jsonl --key /tmp/decern.key &
+# 2. run the PDP; this walkthrough is its own caller, so say so
+decern-serve --ledger /tmp/decern.jsonl --key /tmp/decern.key --trust-proxy &
 KID=$(curl -s localhost:8080/pubkey | jq -r .kid)
 
 # 3. decide
