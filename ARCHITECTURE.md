@@ -27,9 +27,9 @@ Two binaries over seven library crates. The stock build is pure Rust; the one ex
 |---|---|---|
 | `decern-kernel` | lib | The deterministic decision function. Cedar authority graph, the `Directory`, `Kernel::check`. This is the security core. |
 | `decern-proof` | lib | The SMT proof harness. Compiles the Cedar model symbolically and discharges the nine invariants with cvc5, with per-invariant negative controls. |
-| `decern-ledger` | lib | The tamper-evident record. Append-only, Ed25519-signed, hash-chained ledger; Merkle, JCS canonicalization, anchors, single-file + sharded. |
+| `decern-ledger` | lib | The tamper-evident record. Append-only, Ed25519-signed, hash-chained over each entry's exact stored bytes; RFC 9162 Merkle tree heads and proofs, anchors, single-file + sharded. JCS canonicalization is used for the digests an entry binds, not for the chain. |
 | `decern-store` | lib | Persistence traits + reference impls. `LedgerHeadStore` (single-host `flock` head store) and the durable `MissionRegistry`. |
-| `decern-store-postgres` | lib *(optional)* | Multi-host `LedgerHeadStore` over Postgres advisory locks. The one compiled-C (TLS) dependency; behind `--features postgres`. |
+| `decern-store-postgres` | lib *(optional)* | Multi-host `LedgerHeadStore` over Postgres advisory locks. Adds the TLS stack (rustls/ring) to the compiled-native dependencies; behind `--features postgres`. |
 | `decern-identity` | lib | The Mission core: approval-backed, provably-attenuated authority (`approve`, `ApprovedMission`, `MissionRegistry`). |
 | `decern-crypto` | lib | Ed25519 + SHA-256 primitives shared by the ledger and identity. |
 | `decern-cli` | bin → `decern` | `prove` / `decide` / `verify`. |

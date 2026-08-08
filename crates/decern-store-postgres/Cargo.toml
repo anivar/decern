@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = true
-description = "Optional Postgres-backed, multi-host LedgerHeadStore for decern. Carries decern's one documented compiled-C-FFI (TLS) exception; the core libraries and binaries stay pure Rust."
+description = "Optional Postgres-backed, multi-host LedgerHeadStore for decern. Adds a TLS stack (rustls/ring) to the compiled-native dependencies; binaries built without it carry only cedar's stack-growth helper (psm)."
 
 [dependencies]
 decern-store.workspace = true

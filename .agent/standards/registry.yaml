@@ -14,6 +14,27 @@ standards:
       (boolean decision; any reasons under context). Metadata discovery
       (access_evaluation_endpoint) is a follow-up. Verified against the spec 2026-08-02.
 
+  - name: OAuth 2.0 Token Exchange (RFC 8693)
+    url: https://www.rfc-editor.org/rfc/rfc8693
+    conformance: >-
+      `decern_identity::exchange` mints an attenuated child credential from a delegator's,
+      following §1.1's delegation semantics: `clamp_delegation` narrows the requested scopes
+      to those the delegator actually holds and caps the requested expiry at the delegator's
+      own, so a child can never exceed its parent. The RFC's wire protocol is NOT implemented —
+      there is no `/token` endpoint and no `grant_type=urn:ietf:params:oauth:grant-type:
+      token-exchange` handler; what decern takes from RFC 8693 is the delegation model, not the
+      HTTP surface. Verified against the spec 2026-08-08.
+
+  - name: OAuth Decision Subject (draft-aravind-oauth-decision-subject-00)
+    url: https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/
+    conformance: >-
+      A decision records the party it was taken upon as a pseudonymous handle, with an optional
+      scheme and purpose, distinct from the requesting subject and from the accountable owner.
+      `decern-serve` strips it from the request context before the kernel runs, so it is recorded
+      and never decides, and refuses an email-shaped handle or one redundant with the subject or
+      resource owner. Resolving a handle to a person is out of scope here. Verified against the
+      draft 2026-08-08.
+
   - name: Cedar policy language
     url: https://docs.cedarpolicy.com/
     conformance: >-
