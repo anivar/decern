@@ -125,6 +125,29 @@ nothing.
 has none" case above. `decern verify --ledger <file> --pubkey <kid>` re-checks the chain (always) and
 every signature (with the key).
 
+### Challenging a decision
+
+Recording who a decision affected gives that party a name on the record. The other half is
+that they can say it was wrong and be answered. A challenge arrives in the decision context
+with a signed token proving standing, the grounds, and what the party is asking for.
+
+It never touches the decision. The challenge is taken out of the context before the kernel
+runs, so a request carrying one is evaluated exactly as the same request without one — which
+is why a forged challenge cannot escalate anything, and why it also cannot deny service.
+Answering happens afterwards, and the answer and its reason go on the record beside the
+decision they concern. Evidence is recorded as a digest rather than copied in: what a party
+sends to argue their case is likely to be about them, and this log cannot be edited.
+
+Standing tokens are verified against issuer keys the operator configures
+(`--standing-issuer-key`), not fetched at request time. A decision must not depend on a third
+party being reachable, and this binary carries no outbound TLS stack. A deployment that
+configures no issuers accepts no challenges, and says so.
+
+What a given deployment actually supports is at
+`GET /.well-known/decern-subject-side-disclosure`, read from its running configuration so it
+cannot drift from the binary — including the answer it declines to offer, since handing a
+challenge to a human approver needs an approver service this server does not have.
+
 ## Missions
 
 `decern-serve` also serves a **Mission lifecycle** over `decern-identity`: an approver grants an
