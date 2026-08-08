@@ -218,6 +218,46 @@ pub struct Entry {
     /// the resource named, carries none, because the record already says so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_subject: Option<DecisionSubject>,
+    /// Whether this decision is one an affected party should be told about. Recorded, not
+    /// acted on: telling them is the job of whoever enforces the decision, and this server
+    /// does not enforce. Recording it is what makes a notice that never went out a gap
+    /// someone can point at rather than a thing nobody can prove either way.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub notice_required: bool,
+    /// A challenge from the party this decision was about, and how it was answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub challenge: Option<ChallengeRecord>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// A challenge and its answer, on the record.
+///
+/// Written here rather than kept beside the log because a challenge nobody can find later
+/// is the same as one that was never made — and because the point of answering is that the
+/// answer, and its reason, are as durable as the decision they concern.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChallengeRecord {
+    /// The decision that was challenged.
+    pub decision_ref: String,
+    /// The handle the challenger proved standing as.
+    pub decision_subject: String,
+    /// The grounds given.
+    pub basis: Vec<String>,
+    /// What the challenger asked for, which is not what they necessarily got.
+    pub requested_effect: String,
+    /// What was done: the decision stood, or it was made again with the challenge in view.
+    pub outcome: String,
+    /// Why. An answer without a reason is a dismissal.
+    pub outcome_basis: String,
+    /// A digest of the evidence submitted, when any was — not the evidence itself.
+    /// Whatever a party sends to argue their case is likely to be about them, and this
+    /// log is append-only and signed: what lands here cannot be taken back. The digest
+    /// is enough to show later that what was weighed is what was sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_digest: Option<String>,
 }
 
 /// The party a decision is about, as a pseudonymous reference.
