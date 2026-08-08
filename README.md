@@ -13,11 +13,12 @@ every possible input**, not just tested on examples — with a hash-chained, tam
 decision ledger anyone can verify without trusting the operator.
 
 <p align="center">
-  <a href="https://github.com/anivar/decern/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/anivar/decern/ci.yml?branch=main&label=ci&color=0E7C6B"></a>
-  <a href="https://crates.io/crates/decern-cli"><img alt="crates.io" src="https://img.shields.io/crates/v/decern-cli?label=crates.io&color=0E7C6B"></a>
-  <a href="https://pypi.org/project/decern/"><img alt="PyPI" src="https://img.shields.io/pypi/v/decern?label=pypi&color=0E7C6B"></a>
-  <a href="https://www.npmjs.com/package/decern"><img alt="npm" src="https://img.shields.io/npm/v/decern?label=npm&color=0E7C6B"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-0E7C6B"></a>
+  <a href="https://github.com/anivar/decern/actions/workflows/ci.yml"><img alt="CI" src="https://anivar.net/badge?src=ci&name=decern"></a>
+  <a href="https://crates.io/crates/decern-cli"><img alt="crates.io" src="https://anivar.net/badge?src=crates&name=decern-cli"></a>
+  <a href="https://docs.rs/decern-ledger"><img alt="docs.rs" src="https://anivar.net/badge?src=docsrs&name=decern-ledger"></a>
+  <a href="https://pypi.org/project/decern/"><img alt="PyPI" src="https://anivar.net/badge?src=pypi&name=decern"></a>
+  <a href="https://www.npmjs.com/package/decern"><img alt="npm" src="https://anivar.net/badge?src=npm&name=decern"></a>
+  <a href="LICENSE"><img alt="License" src="https://anivar.net/badge?label=license&value=Apache-2.0"></a>
   <a href="https://doi.org/10.5281/zenodo.21848620"><img alt="DOI" src="https://zenodo.org/badge/1319971099.svg"></a>
 </p>
 
