@@ -92,7 +92,9 @@ than the machine verified:
 
 Every decision lands in an append-only, Ed25519-signed, hash-chained ledger, and is served
 **only if its record was written** — an unrecordable decision returns 503, never a bare
-allow. A crash-torn tail heals; truncating committed history is detected. Here an
+allow. A crash-torn tail heals; truncating committed history is detected.
+
+<p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: the caller is established, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p> Here an
 unrecognized caller is refused a `MoveMoney`; `prev` is the chain link:
 
 ```json

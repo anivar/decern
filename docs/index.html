@@ -428,7 +428,7 @@
           <div style="padding:24px 20px;border-right:1px solid #0C0F0E;background:#FFFFFF">
             <p style="font:400 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">01</p>
             <p style="font:600 15px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Ask</p>
-            <p style="font:400 13px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:8px 0 0">A request arrives at <span style="font-family:'IBM Plex Mono',monospace;font-size:12px">decern-serve</span>.</p>
+            <p style="font:400 13px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:8px 0 0">A request arrives at <span style="font-family:'IBM Plex Mono',monospace;font-size:12px">decern-serve</span>, and the caller is established first — a verified token, or the declared front.</p>
           </div>
           <div style="padding:24px 20px;border-right:1px solid #0C0F0E;background:#FFFFFF">
             <p style="font:400 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">02</p>
@@ -455,7 +455,7 @@
         <div style="display:grid;grid-template-columns:minmax(0,1fr) 296px;gap:44px;margin-top:28px;align-items:start">
           
             <figure style="margin:0;border:1px solid #0C0F0E;background:#FFFFFF;padding:24px">
-              <img src="img/decision-flow.png" alt="decern decision flow: a request is evaluated by the proven kernel, recorded to the tamper-evident ledger, and served with 200 only when the record was written, else 503" style="display:block;width:100%;height:auto">
+              <img src="img/decision-flow.png" alt="decern decision flow: the caller is established, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" style="display:block;width:100%;height:auto">
             </figure>
           
           <div>
