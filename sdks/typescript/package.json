@@ -1,7 +1,7 @@
 {
   "name": "decern",
   "version": "0.2.0",
-  "description": "Dependency-free TypeScript client for the decern PDP (AuthZEN 1.0 Access Evaluation).",
+  "description": "Ask a decern server whether an action is allowed, and get a decision that is recorded to a tamper-evident log. Dependency-free AuthZEN 1.0 client.",
   "license": "Apache-2.0",
   "author": "Anivar A Aravind",
   "homepage": "https://decern.anivar.net/",

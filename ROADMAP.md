@@ -24,14 +24,36 @@ UX into `decern-serve`.
 - **Decision-subject column** — the party a decision is taken *upon*, distinct from who asked and
   from the accountable owner, carried as a pseudonymous handle and never reaching the decision.
   Implements [draft-aravind-oauth-decision-subject-00](https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/).
+- **A subject-side challenge surface** — the party a decision was about can register a signed
+  challenge; it is stripped from the context before the kernel runs, answered afterwards, and the
+  answer and its reason recorded. What a deployment supports is published at
+  `/.well-known/decern-subject-side-disclosure`.
+- **What was decided about one party** — `GET /audit/v1/subject`, each decision with an inclusion
+  proof against the returned head. Bounded, and it says when it truncates.
+- **`decern explain`** — a faithful reading of one recorded decision, chain verified first.
+- **Revocation blast radius** — who else loses authority if this principal is revoked.
+- **Portable digests** — an entry binds named digests, and numbers canonicalize as RFC 8785
+  §3.2.2.3 requires, so a digest is reproducible by any conformant implementation rather than only
+  by decern.
+- **Strict signature verification** — small-order public keys are rejected on every path, so a key
+  supplied by the party being audited cannot make an arbitrary log verify.
+- **Releases anyone can check** — signed binaries with a CycloneDX SBOM, an archived DOI per
+  release, and SDKs published from CI with no stored credential.
 
 ## Next — the secure agent-action path
 
+- **Verify the caller** — `decern-serve` derives the subject from an authenticating proxy rather
+  than validating a token itself. Every position where decern acts as a decision point depends on
+  knowing who is asking, so this comes before the rest
+  ([#45](https://github.com/anivar/decern/issues/45)).
+- **A worked MCP integration** — an MCP server that consults decern before it runs a tool, with the
+  decision recorded and verifiable afterwards. MCP's own specification says the protocol cannot
+  enforce its security principles; this is what filling that gap looks like, as an example rather
+  than a product ([#46](https://github.com/anivar/decern/issues/46)).
+- **Enforcement adapter** — a generic forward-auth shim so any gateway can call the PDP and fail
+  closed ([#6](https://github.com/anivar/decern/issues/6)).
 - **Default money path behind Mission** — require a Mission for MoveMoney without the opt-in flag
   (read-only default, mutation gated).
-- **MCP evaluation mapping** — document a thin `tools/call` → AuthZEN evaluate mapping with a golden
-  test, so a gateway can call decern per tool invocation. A worked integration example, not an
-  enforcement product ([#6](https://github.com/anivar/decern/issues/6)).
 
 ## After that — interoperability and operator tooling
 
@@ -47,7 +69,8 @@ UX into `decern-serve`.
 
 ## Later — adoption and ecosystem hardening
 
-- **More client SDKs** — Mission APIs on the Go, Python and TypeScript clients.
+- **Mission APIs in the client SDKs** — the Go, Python and TypeScript clients cover the
+  evaluation endpoint; the Mission lifecycle is not exposed yet.
 - **Additional ledger head-store backends** — new implementations behind the same `LedgerHeadStore`
   trait.
 - **Portable delegation ceiling (watch)** — if a cross-vendor agent-credential chain stabilizes,
