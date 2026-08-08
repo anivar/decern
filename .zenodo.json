@@ -17,12 +17,5 @@
     "transparency log",
     "accountability",
     "AI agents"
-  ],
-  "related_identifiers": [
-    {
-      "identifier": "https://github.com/anivar/decern",
-      "relation": "isSupplementTo",
-      "scheme": "url"
-    }
   ]
 }
