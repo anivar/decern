@@ -13,13 +13,15 @@ every possible input**, not just tested on examples — with a hash-chained, tam
 decision ledger anyone can verify without trusting the operator.
 
 <p align="center">
-  <a href="https://github.com/anivar/decern/actions/workflows/ci.yml"><img alt="CI" src="https://anivar.net/badge?src=ci&name=decern"></a>
+  <a href="https://github.com/anivar/decern/actions/workflows/ci.yml"><img alt="CI" src="https://anivar.net/badge?src=ci&repo=anivar/decern"></a>
   <a href="https://crates.io/crates/decern-cli"><img alt="crates.io" src="https://anivar.net/badge?src=crates&name=decern-cli"></a>
   <a href="https://docs.rs/decern-ledger"><img alt="docs.rs" src="https://anivar.net/badge?src=docsrs&name=decern-ledger"></a>
   <a href="https://pypi.org/project/decern/"><img alt="PyPI" src="https://anivar.net/badge?src=pypi&name=decern"></a>
   <a href="https://www.npmjs.com/package/decern"><img alt="npm" src="https://anivar.net/badge?src=npm&name=decern"></a>
   <a href="LICENSE"><img alt="License" src="https://anivar.net/badge?label=license&value=Apache-2.0"></a>
   <a href="https://doi.org/10.5281/zenodo.21848620"><img alt="DOI" src="https://zenodo.org/badge/1319971099.svg"></a>
+  <a href="https://github.com/anivar/decern/graphs/traffic"><img alt="views" src="https://anivar.net/traffic?repo=decern&m=views"></a>
+  <a href="https://github.com/anivar/decern/graphs/traffic"><img alt="clones" src="https://anivar.net/traffic?repo=decern&m=clones"></a>
 </p>
 
 [Website](https://decern.anivar.net/) · [Commands](docs/CLI.md) · [Roadmap](ROADMAP.md) ·
