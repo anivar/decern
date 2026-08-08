@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "ext_authz_adapter"
+version = "0.2.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "A generic external authorization HTTP adapter for decern-serve"
+repository = "https://github.com/anivar/decern"
+publish = false
+
+[workspace]
+
+[lib]
+name = "ext_authz_adapter"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ext-authz-adapter"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1"] }
+http-body-util = "0.1"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
