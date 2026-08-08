@@ -7,8 +7,6 @@ Standard library only — no `requests`/`httpx`.
 ## Install
 
 ```sh
-pip install .
-# or
 uv pip install .
 ```
 

@@ -91,7 +91,7 @@ record's `hash` — the chain link:
 {"entry":{"seq":1,"ts_ms":1785682110000,
           "subject_type":"Principal","subject_id":"agent-7",
           "action":"MoveMoney","resource_type":"Resource","resource_id":"account9",
-          "context":{"now":1785682110},"decision":false,"reasons":["policy9"]},
+          "context":{"now":1785682110},"decision":false},
  "prev":   "8f658ccb5595b7e85a9f020f6a128985929865558c642505e206134337e40e41",
  "hash":   "590547867e1d4592d68d028f0d61745146ab986499dfadd073eacafcf58e63b8",
  "sig_b64":"vtUu4gP1CkgqKIYDpHuYHtbez/XROdcnpOq8Y3aZdbfeVHK2tT3mpp9yvmTlTF2QtYtZxg7TbP/f6SqfZ/eWDQ==",
