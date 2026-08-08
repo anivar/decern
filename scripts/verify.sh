@@ -76,6 +76,8 @@ else
 fi
 step "clippy"         cargo clippy --workspace --all-targets -- -D warnings
 step "fmt"            cargo fmt --all -- --check
+# A broken intra-doc link is a claim about the code that stopped being true.
+step "docs"           env RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps
 step "supply-chain"   cargo deny check
 step "no-lineage"     no_lineage
 

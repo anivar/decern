@@ -37,11 +37,13 @@ enum Cmd {
     },
     /// Make one decision against the model.
     Decide {
+        /// Model directory; omit for the built-in model.
         #[arg(long)]
         model: Option<PathBuf>,
         /// Subject as TYPE:ID (e.g. Principal:alice).
         #[arg(long)]
         subject: String,
+        /// Action name, as the model spells it (e.g. Read, MoveMoney).
         #[arg(long)]
         action: String,
         /// Resource as TYPE:ID (e.g. Resource:doc1).
@@ -270,12 +272,15 @@ fn explain(
             }
         }
 
-        if let Some(digest) = &record.entry.parameter_digest {
+        if !record.entry.digests.is_empty() {
             println!();
-            println!(
-                "parameter_digest: {} (binds to decision input, prevents TOCTOU)",
-                digest
-            );
+            println!("bound to:");
+            // Printed by name rather than by known field, so a digest this build has
+            // never heard of still appears: a reader must be able to see that something
+            // was pinned even when this binary cannot say what it was.
+            for (name, digest) in &record.entry.digests {
+                println!("  {name:<12} {digest}");
+            }
         }
 
         if let Some(sponsor) = &record.entry.sponsor {

@@ -25,7 +25,9 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
-use decern_crypto::{Signer, SigningKey, Verifier, VerifyingKey};
+use decern_crypto::{Signer, SigningKey, VerifyingKey};
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -33,7 +35,7 @@ pub mod jcs;
 pub mod merkle;
 mod segment;
 pub mod sharded;
-pub use jcs::{canonicalize, parameter_digest};
+pub use jcs::{canonicalize, digest};
 pub use segment::RolloverPolicy;
 pub use sharded::{ShardVerification, ShardedLedger, UNATTRIBUTED_SHARD, verify_sharded_dir};
 
@@ -181,8 +183,7 @@ pub struct Entry {
     /// RFC 8785 SHA-256 digest of the parameters a decision was made over — binds a
     /// record to the EXACT arguments, closing the TOCTOU gap between "authorized"
     /// and "executed". Set by `decern-serve` on decide / mission transitions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parameter_digest: Option<String>,
+
     /// The authority-graph edge type: `Attenuate` (default, omitted) = offline
     /// narrowing WITHIN the delegator's namespace (a decern tenant); `Mint` = a
     /// trusted-issuer crossing that no offline delegate can produce. Reserved and
@@ -227,7 +228,37 @@ pub struct Entry {
     /// A challenge from the party this decision was about, and how it was answered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub challenge: Option<ChallengeRecord>,
+    /// Digests of the things this record was bound to, by name.
+    ///
+    /// [`DIGEST_PARAMETERS`] binds the arguments a decision authorized. This binds
+    /// everything else worth pinning, without a new column each time something is: a
+    /// consumer of this crate records what its own decisions depend on under names it
+    /// chooses, and a reader who does not know a name can still see that something was
+    /// pinned and that it does not match.
+    ///
+    /// `decern-serve` writes [`DIGEST_AUTHORITY`]. The chain already proves a record was
+    /// not altered afterwards; it says nothing about what the record was decided
+    /// *against*, and that moves. Revoke a delegation tomorrow and an allow recorded today
+    /// still reads as an allow, with nothing to say what was true when — the trail is
+    /// immutable while the thing it refers to is not. A digest of the authority state
+    /// makes the decision addressable: a later reading can tell whether the authority it
+    /// was taken against is still the same one.
+    ///
+    /// Ordered, so the serialization is deterministic — this is inside the bytes the chain
+    /// hashes, and a map that serialized in a different order each time would break it.
+    /// Values are digests, not content: whatever is being pinned may be large, may be
+    /// about a person, and cannot be taken back out of an append-only log.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub digests: BTreeMap<String, String>,
 }
+
+/// The exact arguments a decision authorized — what it was asked, not what it knew.
+/// Binding them means a later reading can tell that the thing authorized is the thing
+/// that was requested, rather than something substituted after the check.
+pub const DIGEST_PARAMETERS: &str = "parameters";
+
+/// The authority a decision was taken against — policy, schema and entity graph.
+pub const DIGEST_AUTHORITY: &str = "authority";
 
 fn is_false(b: &bool) -> bool {
     !*b
@@ -413,6 +444,7 @@ struct RecordIn {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum LedgerError {
     #[error("ledger I/O error at {path}: {err}")]
     Io { path: String, err: String },
@@ -445,6 +477,10 @@ pub enum LedgerError {
     },
 }
 
+/// A record's signature is over this 32-byte hash and nothing else. That is what keeps it
+/// out of [`commitment_bytes`]'s space without a tag of its own: every commitment is a
+/// tagged string far longer than 32 bytes, so no record signature can be replayed as one.
+/// Anything else signed by a ledger key must keep that property or take a tag.
 fn chain_hash(entry_bytes: &[u8], prev_hex: &str) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(entry_bytes);
@@ -684,7 +720,7 @@ impl Ledger {
     /// (re-)marked read-only (0444 on Unix) on open — self-healing after a
     /// crash that landed between committing the manifest and applying that
     /// permission, since the permission bit is defense-in-depth only, never
-    /// the source of truth (see [`segment`] module docs).
+    /// the source of truth (see the `segment` module).
     pub fn open_segmented(
         dir: &Path,
         key: SigningKey,
@@ -1131,6 +1167,37 @@ impl Ledger {
         })
     }
 
+    /// Inclusion proofs for several records, over one pass of the log.
+    ///
+    /// [`inclusion_proof`](Ledger::inclusion_proof) derives every leaf in the log to prove
+    /// one record is in it, which is the right shape for one proof and the wrong shape for
+    /// a page of them: asking for `m` proofs that way reads and parses the whole log `m`
+    /// times, and does it holding the lock an append needs. This derives the leaves once.
+    ///
+    /// Returns proofs in the order the sequences were given. A sequence past the end of the
+    /// log fails the whole call rather than being skipped — a page of proofs with a hole in
+    /// it, where the hole is silent, is worse than no page.
+    pub fn inclusion_proofs(&self, seqs: &[u64]) -> Result<Vec<InclusionProof>, LedgerError> {
+        let leaves = self.merkle_leaves()?;
+        let tree_size = leaves.len() as u64;
+        seqs.iter()
+            .map(|&seq| {
+                let idx = seq as usize;
+                let path =
+                    merkle::inclusion_proof(&leaves, idx).ok_or_else(|| LedgerError::Tamper {
+                        seq,
+                        why: "inclusion index past the end of the log".into(),
+                    })?;
+                Ok(InclusionProof {
+                    leaf_index: seq,
+                    tree_size,
+                    leaf_data: hex::encode(&leaves[idx]),
+                    audit_path: path.iter().map(hex::encode).collect(),
+                })
+            })
+            .collect()
+    }
+
     /// A compact RFC 9162 consistency proof that the log of the first `first_size` records
     /// is an exact prefix of the current log — the operator-independent equivocation /
     /// truncation check against an EARLIER anchored tree head. `1 <= first_size <= count`.
@@ -1147,6 +1214,51 @@ impl Ledger {
             second_size: leaves.len() as u64,
             proof: path.iter().map(hex::encode).collect(),
         })
+    }
+
+    /// A single-snapshot read for an evidence bundle: checkpoint, tree_head, and raw records
+    /// are ALL derived from the SAME in-memory (self.last_hash, self.next_seq) state captured
+    /// at one moment — unlike calling `checkpoint()`/`tree_head()`/`read_raw_records()` separately
+    /// (which lets an `append()` land between calls and make the three mutually inconsistent:
+    /// `checkpoint.count != tree_head.tree_size` or `checkpoint.root` computed over different
+    /// records than `tree_head`).
+    ///
+    /// This is the single-file analog of [`ShardedLedger::evidence_snapshot`](crate::sharded::ShardedLedger::evidence_snapshot).
+    /// The snapshot captures the log's state at call time; a concurrent `append()` does not
+    /// change the returned values. Returns `(count, raw_records, checkpoint, tree_head)`.
+    pub fn snapshot_for_bundle(&self, ts_ms: u64) -> Result<EvidenceSnapshot, LedgerError> {
+        // Capture the head state once — this is the "snapshot" that all derived values build from.
+        let count = self.next_seq;
+        let root = self.last_hash.clone();
+
+        // All three outputs are now derived from this same (root, count) pair, so they are
+        // mutually consistent even if an append happens after this point.
+        let raw_records = self.read_raw_records(0, count as usize)?;
+
+        let cp_sig = self.key.sign(&checkpoint_bytes(&root, count, ts_ms));
+        let checkpoint = Checkpoint {
+            root,
+            count,
+            ts_ms,
+            pubkey_hex: self.pubkey_hex(),
+            sig_b64: B64.encode(cp_sig.to_bytes()),
+        };
+
+        let leaves = leaves_from_records(&self.read_records(0, count as usize)?)?;
+        let merkle_root = hex::encode(merkle::tree_hash(&leaves));
+        let tree_size = leaves.len() as u64;
+        let th_sig = self
+            .key
+            .sign(&tree_head_bytes(&merkle_root, tree_size, ts_ms));
+        let tree_head = TreeHead {
+            merkle_root,
+            tree_size,
+            ts_ms,
+            pubkey_hex: self.pubkey_hex(),
+            sig_b64: B64.encode(th_sig.to_bytes()),
+        };
+
+        Ok((count, raw_records, checkpoint, tree_head))
     }
 
     /// Seal the current head into the persisted ANCHOR file — the last committed
@@ -1236,6 +1348,17 @@ pub struct TreeHead {
     pub sig_b64: String,
 }
 
+/// A single-snapshot evidence bundle: record count, raw bytes, and signed commitments
+/// (checkpoint and merkle tree head) all derived from the same log state at one moment.
+/// This is the return type of [`Ledger::snapshot_for_bundle`] and
+/// [`ShardedLedger::evidence_snapshot`](sharded::ShardedLedger::evidence_snapshot).
+pub type EvidenceSnapshot = (
+    u64,                                   // record count
+    Vec<Box<serde_json::value::RawValue>>, // raw record bytes
+    Checkpoint,                            // signed linear-chain commitment
+    TreeHead,                              // signed merkle-tree commitment
+);
+
 /// A compact RFC 9162 inclusion proof (hex-encoded): the record at `leaf_index` in a tree
 /// of `tree_size` leaves is committed by a [`TreeHead`]'s root. `leaf_data` is the record's
 /// chain hash (the Merkle leaf data — a verifier hashes it with the `0x00` leaf prefix);
@@ -1293,6 +1416,7 @@ fn key_fingerprint(vk: &VerifyingKey) -> String {
 /// Verify a ledger file: the hash chain always; every entry signature when a key is
 /// supplied. Single-key convenience over [`verify_with_keys`] — for a key-ROTATED
 /// log (entries under more than one key) use that with the full keyring.
+#[must_use = "ledger verification failure must be checked"]
 pub fn verify(path: &Path, pubkey: Option<&VerifyingKey>) -> Result<VerifyReport, LedgerError> {
     let loc = Location::detect(path);
     match pubkey {
@@ -1341,6 +1465,7 @@ struct ReadWindow {
 /// `kid` names a key NOT in the ring is tamper (fail-closed: an unknown signer is
 /// never trusted). An empty ring means "signatures not checked" (chain only), same
 /// as [`verify`] with `None`.
+#[must_use = "ledger verification failure must be checked"]
 pub fn verify_with_keys(path: &Path, keys: &[VerifyingKey]) -> Result<VerifyReport, LedgerError> {
     verify_inner(&Location::detect(path), keys, None)
 }
@@ -1443,7 +1568,7 @@ fn verify_lines(
             // was signed by a single key that is in the ring).
             let verified = match &record.kid {
                 Some(kid) => match keys.iter().find(|k| key_fingerprint(k) == *kid) {
-                    Some(k) => k.verify(&hash, &sig).is_ok(),
+                    Some(k) => k.verify_strict(&hash, &sig).is_ok(),
                     None => {
                         return Err(LedgerError::Tamper {
                             seq: count,
@@ -1453,7 +1578,7 @@ fn verify_lines(
                         });
                     }
                 },
-                None => keys.iter().any(|k| k.verify(&hash, &sig).is_ok()),
+                None => keys.iter().any(|k| k.verify_strict(&hash, &sig).is_ok()),
             };
             if !verified {
                 return Err(LedgerError::Tamper {
@@ -1541,11 +1666,11 @@ pub fn merkle_leaves_at(
     path: &Path,
     pubkey: Option<&VerifyingKey>,
 ) -> Result<Vec<Vec<u8>>, LedgerError> {
-    let count = verify(path, pubkey)?.entries as usize;
-    let (_report, records) = read_verified(path, pubkey, 0, count)?;
+    let (_report, records) = read_verified(path, pubkey, 0, usize::MAX)?;
     leaves_from_records(&records)
 }
 
+#[must_use = "signature verification result must be checked"]
 pub fn verify_checkpoint_sig(cp: &Checkpoint, pubkey: &VerifyingKey) -> bool {
     let Ok(bytes) = B64.decode(&cp.sig_b64) else {
         return false;
@@ -1555,13 +1680,14 @@ pub fn verify_checkpoint_sig(cp: &Checkpoint, pubkey: &VerifyingKey) -> bool {
     };
     let sig = decern_crypto::Signature::from_bytes(&sig_arr);
     pubkey
-        .verify(&checkpoint_bytes(&cp.root, cp.count, cp.ts_ms), &sig)
+        .verify_strict(&checkpoint_bytes(&cp.root, cp.count, cp.ts_ms), &sig)
         .is_ok()
 }
 
 /// Verify a tree head's own signature against a pinned key — the Merkle counterpart of
 /// [`verify_checkpoint_sig`]. The domain-separated `decern-ledger-tree-head` tag means this
 /// never cross-verifies a checkpoint signature. Does not read the ledger.
+#[must_use = "signature verification result must be checked"]
 pub fn verify_tree_head_sig(th: &TreeHead, pubkey: &VerifyingKey) -> bool {
     let Ok(bytes) = B64.decode(&th.sig_b64) else {
         return false;
@@ -1571,7 +1697,7 @@ pub fn verify_tree_head_sig(th: &TreeHead, pubkey: &VerifyingKey) -> bool {
     };
     let sig = decern_crypto::Signature::from_bytes(&sig_arr);
     pubkey
-        .verify(
+        .verify_strict(
             &tree_head_bytes(&th.merkle_root, th.tree_size, th.ts_ms),
             &sig,
         )
@@ -1633,7 +1759,7 @@ fn any_key_verifies(msg: &[u8], sig_b64: &str, keys: &[VerifyingKey]) -> bool {
         return false;
     };
     let sig = decern_crypto::Signature::from_bytes(&arr);
-    keys.iter().any(|k| k.verify(msg, &sig).is_ok())
+    keys.iter().any(|k| k.verify_strict(msg, &sig).is_ok())
 }
 
 /// Verify an exported `decern-evidence-bundle` OFFLINE against a PINNED keyring — the standalone
@@ -1970,6 +2096,7 @@ fn root_at_count(location: &Location, count: u64) -> Result<Option<String>, Ledg
 #[cfg(test)]
 mod tests {
     use super::*;
+    use decern_crypto::Verifier;
     use serde_json::json;
 
     fn entry(action: &str, decision: bool) -> Entry {
@@ -2476,8 +2603,9 @@ mod tests {
 
     #[test]
     fn decision_entry_serialization_is_stable() {
-        // Golden serialization + chain hash for a plain Decision entry; if either
-        // drifts, canonicalization broke and existing ledgers would stop verifying.
+        // Golden serialization + chain hash for a plain Decision entry. The chain
+        // commits to these exact bytes, so if field order or naming drifts, every
+        // existing ledger stops verifying.
         let js = serde_json::to_string(&entry("Read", true)).unwrap();
         assert_eq!(
             js,
@@ -2640,6 +2768,64 @@ mod tests {
         let missing = tmp("anchor-missing.anchor");
         std::fs::remove_file(&missing).ok();
         assert!(l.verify_against_anchor(&missing).is_ok());
+    }
+
+    /// The Ed25519 identity point is a valid encoding of a key of order 1. Under the
+    /// cofactorless verification equation, the signature `R = identity, S = 0` satisfies
+    /// it for EVERY message — so an operator who hands an auditor this public key can
+    /// hand them any log at all and have every record "verify". RFC 8032 §5.1.7 permits
+    /// the cofactorless check; rejecting a small-order key is what makes verification
+    /// mean something to a party who did not write the log.
+    fn small_order_key_and_universal_forgery() -> (VerifyingKey, decern_crypto::Signature) {
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes[0] = 1; // R = identity, S = 0
+        (
+            VerifyingKey::from_bytes(&identity).expect("identity is a valid encoding"),
+            decern_crypto::Signature::from_bytes(&sig_bytes),
+        )
+    }
+
+    #[test]
+    fn a_small_order_key_cannot_verify_a_signature_it_never_made() {
+        let (key, forgery) = small_order_key_and_universal_forgery();
+        // The premise: this pair really does satisfy the permissive equation.
+        assert!(
+            key.verify(b"any message at all", &forgery).is_ok(),
+            "the forgery must pass the cofactorless check, or this test proves nothing"
+        );
+        for msg in [&b"any message at all"[..], b"a fabricated record"] {
+            assert!(
+                key.verify_strict(msg, &forgery).is_err(),
+                "a small-order key must not verify {}",
+                String::from_utf8_lossy(msg)
+            );
+        }
+    }
+
+    #[test]
+    fn a_fabricated_anchor_under_a_small_order_key_is_refused() {
+        let (key, forgery) = small_order_key_and_universal_forgery();
+        let cp = Checkpoint {
+            root: "00".repeat(32),
+            count: 9999,
+            ts_ms: 1,
+            pubkey_hex: hex::encode(key.to_bytes()),
+            sig_b64: B64.encode(forgery.to_bytes()),
+        };
+        assert!(
+            !verify_checkpoint_sig(&cp, &key),
+            "an anchor over a height that was never reached must not verify"
+        );
+        let th = TreeHead {
+            merkle_root: "00".repeat(32),
+            tree_size: 9999,
+            ts_ms: 1,
+            pubkey_hex: hex::encode(key.to_bytes()),
+            sig_b64: B64.encode(forgery.to_bytes()),
+        };
+        assert!(!verify_tree_head_sig(&th, &key));
     }
 
     #[test]

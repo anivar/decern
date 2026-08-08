@@ -18,7 +18,7 @@ UX into `decern-serve`.
 - **Mission-lifecycle service** — approve / look up / terminate over HTTP, every transition
   recorded to the tamper-evident ledger (`/mission/v1/*`).
 - **Decision-under-mission** — `--require-mission` gates decide on a live Mission; server-derived
-  approval flags; Mission ref + `parameter_digest` on the Entry.
+  approval flags; Mission ref and the digests it was bound to on the Entry.
 - **Anchoring** — a signed tree head over HTTP, and `decern verify --anchor`, so a record dropped
   after it was committed is detectable by someone who is not the operator.
 - **Decision-subject column** — the party a decision is taken *upon*, distinct from who asked and

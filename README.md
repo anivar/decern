@@ -12,7 +12,7 @@ A deterministic authorization kernel whose safety properties are **machine-check
 every possible input**, not just tested on examples — with a hash-chained, tamper-evident
 decision ledger anyone can verify without trusting the operator.
 
-[Website](https://decern.anivar.net/) · [Roadmap](ROADMAP.md) ·
+[Website](https://decern.anivar.net/) · [Commands](docs/CLI.md) · [Roadmap](ROADMAP.md) ·
 [Releases](https://github.com/anivar/decern/releases) · [Security](SECURITY.md)
 
 The industry standardizes how authority is *represented* — tokens, delegation envelopes,

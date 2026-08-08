@@ -4,11 +4,11 @@
 //! authority-domain ("shard"), safely extendable by any number of concurrent
 //! `decern-server` replicas via a [`decern_store::LedgerHeadStore`].
 //!
-//! This reuses the EXACT chain-hash/sign logic [`Ledger::append`] uses —
+//! This reuses the EXACT chain-hash/sign logic [`crate::Ledger::append`] uses —
 //! `chain_hash`, `key_fingerprint`, the `RecordOut` wire
 //! shape — only the storage/coordination layer differs (a `decern_store`-backed
 //! per-shard critical section instead of one `std::fs::File` + in-process
-//! fields). The sovereign single-file [`Ledger`] is completely untouched and
+//! fields). The sovereign single-file [`crate::Ledger`] is completely untouched and
 //! remains the default; `ShardedLedger` is constructed only for the hosted
 //! `decern-serve --sharded <dir>` mode (a per-shard `flock` head store shared
 //! by several processes on one host), never otherwise.
@@ -319,7 +319,7 @@ impl ShardedLedger {
 
     /// Re-read and verify `shard`'s own stored records against this ledger's whole
     /// keyring (current + retired), so a rotated log verifies end-to-end — the
-    /// [`sharded::ShardedLedger`] analog of `Ledger::self_verify`. A never-written
+    /// [`ShardedLedger`] analog of `Ledger::self_verify`. A never-written
     /// shard verifies as the degenerate empty case (`entries: 0, root: None`), not
     /// an error — mirrors `checkpoint`'s genesis state for the same shard. O(shard's
     /// entries); audit path, never the decision hot path.
@@ -480,7 +480,7 @@ pub type ShardVerification = (String, Result<crate::VerifyReport, LedgerError>);
 /// the head store read-only, enumerates its committed shards
 /// ([`decern_store::LedgerHeadStore::list_shards`]), and runs over each shard's
 /// byte-stable stored records the SAME hash-chain + signature check
-/// [`ShardedLedger::self_verify`] runs (via the shared [`crate::verify_stored_records`]
+/// [`ShardedLedger::self_verify`] runs (via the shared `verify_stored_records`
 /// core). With `pubkey` every record's signature is checked; without it, only the
 /// hash chain (still fail-closed) — exactly matching [`crate::verify`]'s single-key
 /// behavior.

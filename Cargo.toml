@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 publish = true
@@ -21,13 +21,13 @@ repository = "https://github.com/anivar/decern"
 homepage = "https://decern.anivar.net/"
 
 [workspace.dependencies]
-decern-crypto = { path = "crates/decern-crypto", version = "0.1.1" }
-decern-kernel = { path = "crates/decern-kernel", version = "0.1.1" }
-decern-ledger = { path = "crates/decern-ledger", version = "0.1.1" }
-decern-store = { path = "crates/decern-store", version = "0.1.1" }
-decern-identity = { path = "crates/decern-identity", version = "0.1.1" }
-decern-proof = { path = "crates/decern-proof", version = "0.1.1" }
-decern-store-postgres = { path = "crates/decern-store-postgres", version = "0.1.1" }
+decern-crypto = { path = "crates/decern-crypto", version = "0.2.0" }
+decern-kernel = { path = "crates/decern-kernel", version = "0.2.0" }
+decern-ledger = { path = "crates/decern-ledger", version = "0.2.0" }
+decern-store = { path = "crates/decern-store", version = "0.2.0" }
+decern-identity = { path = "crates/decern-identity", version = "0.2.0" }
+decern-proof = { path = "crates/decern-proof", version = "0.2.0" }
+decern-store-postgres = { path = "crates/decern-store-postgres", version = "0.2.0" }
 
 # Postgres backend deps — used ONLY by the optional `decern-store-postgres` crate,
 # never by the core libs or the `decern`/`decern-serve` binaries. rustls is pinned
@@ -44,6 +44,9 @@ cedar-policy-symcc = "0.5"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# RFC 8785 §3.2.2.3 numbers: Ryu is the digit generator the spec points at.
+# Already in the tree via serde_json — declared here to be used directly.
+ryu = "1"
 ed25519-dalek = "2"
 sha2 = "0.10"
 base64 = "0.22"

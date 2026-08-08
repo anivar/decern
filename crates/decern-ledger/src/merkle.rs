@@ -56,9 +56,12 @@ fn split(n: usize) -> usize {
 }
 
 /// RFC 9162 Merkle Tree Hash (MTH) over the leaf-data list `d`:
-///   MTH({})      = HASH()                 (SHA-256 of the empty string)
-///   MTH({d0})    = HASH(0x00 || d0)
-///   MTH(D[0:n])  = HASH(0x01 || MTH(D[0:k]) || MTH(D[k:n])),  k = largest 2^x < n
+///
+/// ```text
+/// MTH({})      = HASH()                 (SHA-256 of the empty string)
+/// MTH({d0})    = HASH(0x00 || d0)
+/// MTH(D[0:n])  = HASH(0x01 || MTH(D[0:k]) || MTH(D[k:n])),  k = largest 2^x < n
+/// ```
 pub fn tree_hash(d: &[Vec<u8>]) -> [u8; 32] {
     match d.len() {
         0 => Sha256::new().finalize().into(),
@@ -70,11 +73,14 @@ pub fn tree_hash(d: &[Vec<u8>]) -> [u8; 32] {
     }
 }
 
-/// RFC 9162 inclusion proof PATH(m, D[0:n]): the audit path for the leaf at index `m` in a
-/// tree of `d.len()` leaves — the sibling hashes needed to recompute the root from the leaf.
-///   PATH(0, {d0}) = {}
-///   PATH(m, D_n)  = PATH(m, D[0:k]) : MTH(D[k:n])     for m < k
-///                 = PATH(m-k, D[k:n]) : MTH(D[0:k])   for m >= k
+/// RFC 9162 inclusion proof: the audit path for the leaf at index `m` in a tree of `d.len()`
+/// leaves — the sibling hashes needed to recompute the root from the leaf.
+///
+/// ```text
+/// PATH(0, {d0}) = {}
+/// PATH(m, D_n)  = PATH(m, D[0:k]) : MTH(D[k:n])     for m < k
+///               = PATH(m-k, D[k:n]) : MTH(D[0:k])   for m >= k
+/// ```
 pub fn inclusion_proof(d: &[Vec<u8>], m: usize) -> Option<Vec<[u8; 32]>> {
     if m >= d.len() {
         return None;
@@ -98,7 +104,7 @@ pub fn inclusion_proof(d: &[Vec<u8>], m: usize) -> Option<Vec<[u8; 32]>> {
     Some(path(d, m))
 }
 
-/// RFC 9162 consistency proof PROOF(m, D[0:n]) = SUBPROOF(m, D_n, true): the hashes that
+/// RFC 9162 consistency proof `PROOF(m, D[0:n]) = SUBPROOF(m, D_n, true)`: the hashes that
 /// prove the tree of the first `m` leaves is a prefix of the tree of all `d.len()` leaves.
 /// `m` must satisfy `1 <= m <= d.len()`.
 pub fn consistency_proof(d: &[Vec<u8>], m: usize) -> Option<Vec<[u8; 32]>> {

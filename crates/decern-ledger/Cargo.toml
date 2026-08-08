@@ -15,6 +15,7 @@ decern-crypto = { workspace = true }
 decern-store = { workspace = true }
 base64 = { workspace = true }
 hex = { workspace = true }
+ryu = { workspace = true }
 serde = { workspace = true }
 # raw_value: entries are hashed as their exact stored bytes (RawValue), so
 # verification never re-serializes. Declared here (not inherited from a sibling's

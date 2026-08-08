@@ -306,7 +306,7 @@ impl MissionRegistry for MemoryMissionRegistry {
 }
 
 /// The default, database-free backend: mission records persisted with cross-process
-/// coherence (see [`CoherentMap`]) — so a mission approved or TERMINATED by another
+/// coherence (see `CoherentMap`) — so a mission approved or TERMINATED by another
 /// process (an operator CLI, a second replica) is seen at this node's mint path, and
 /// survives a restart.
 pub struct FileMissionRegistry {
@@ -781,13 +781,13 @@ struct ShardState {
 /// shard) behind this SAME trait — not shipped in v0.1. Unix only (`flock`).
 ///
 /// **On-disk layout** (all inside `root`, shard ids hex-encoded — see
-/// [`shard_to_hex`] — so an untrusted tenant id can never traverse out):
+/// `shard_to_hex` — so an untrusted tenant id can never traverse out):
 /// - `<root>/<hex-shard>.shard` — the shard's `{cursor, records}` as one JSON
-///   object, rewritten wholesale on each append via [`atomic_write_json`]
+///   object, rewritten wholesale on each append via `atomic_write_json`
 ///   (temp-file + fsync + atomic rename + parent-dir fsync).
 /// - `<root>/<hex-shard>.lock` — the stable per-shard advisory-lock sidecar
 ///   (never renamed, so the lock stays on one inode); its content is unused.
-/// - `<root>/<hex-shard>.tmp` — [`atomic_write_json`]'s transient sibling.
+/// - `<root>/<hex-shard>.tmp` — `atomic_write_json`'s transient sibling.
 ///
 /// **Whole-file rewrite is a deliberate choice for a terse reference backend,
 /// not an oversight.** An append re-serializes the shard's whole record vector,

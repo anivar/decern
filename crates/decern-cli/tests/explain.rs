@@ -21,7 +21,10 @@ fn entry(resource_id: &str, decision: bool, reason: &str) -> Entry {
         context: serde_json::json!({ "now": 1 }),
         decision,
         reasons: vec![reason.into()],
-        parameter_digest: Some("abc123def456".into()),
+        digests: std::collections::BTreeMap::from([(
+            "parameters".to_owned(),
+            "abc123def456".to_owned(),
+        )]),
         sponsor: Some(decern_ledger::Party {
             kind: "Principal".into(),
             id: "root".into(),
