@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
-    extract::{Path as UrlPath, State},
+    extract::{Path as UrlPath, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -755,9 +755,21 @@ async fn tree_head(State(st): State<AppState>) -> Response {
 /// here: like every endpoint on this server it expects an authenticating proxy in front,
 /// and unlike most of them it returns records about a person if one is not there.
 ///
+/// The handle arrives as a query parameter rather than a path segment because a handle is an
+/// opaque string chosen by whoever mints it — the conventional forms carry a colon — and a
+/// path segment is the wrong carrier for one: it has to be percent-encoded to survive, and a
+/// caller who forgets gets a routing miss rather than an answer, which reads as "no records
+/// about you". A query parameter carries it as given.
+///
 /// Scans the log per request, which is honest for a reference implementation and would need
 /// an index in a deployment large enough to feel it.
-async fn subject_audit(State(st): State<AppState>, UrlPath(handle): UrlPath<String>) -> Response {
+#[derive(Deserialize)]
+struct SubjectQuery {
+    handle: String,
+}
+
+async fn subject_audit(State(st): State<AppState>, Query(q): Query<SubjectQuery>) -> Response {
+    let handle = q.handle;
     let LedgerBackend::Single(m) = &*st.backend else {
         return (
             StatusCode::NOT_IMPLEMENTED,
@@ -1123,7 +1135,7 @@ fn app(state: AppState) -> Router {
         // The anchorable commitment an operator publishes where they have no control.
         .route("/anchor/v1/tree-head", get(tree_head))
         // What was decided about one party, with proofs they can check themselves.
-        .route("/audit/v1/subject/{handle}", get(subject_audit))
+        .route("/audit/v1/subject", get(subject_audit))
         // AuthZEN Authorization API 1.0 Access Evaluation endpoint; /decide is a friendly alias.
         .route("/access/v1/evaluation", post(decide))
         .route("/decide", post(decide))
@@ -2170,10 +2182,29 @@ mod tests {
             assert_eq!(status, StatusCode::OK, "{body}");
         }
 
-        let (status, body) =
-            body_json(subject_audit(State(st.clone()), UrlPath("ppid:carol".to_owned())).await)
-                .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        // Driven through the router rather than called: a handler that is written but
+        // never registered passes every direct call it is given and answers no request.
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (status, body) = body_json(
+            app(st.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri("/audit/v1/subject?handle=ppid:carol")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the projection must be reachable: {body}"
+        );
         let decisions = body["decisions"].as_array().expect("decisions array");
         assert_eq!(
             decisions.len(),
@@ -2230,6 +2261,10 @@ mod tests {
     /// A handle nobody has a record under gets an empty answer, not someone else's.
     #[tokio::test]
     async fn the_subject_projection_matches_a_handle_exactly() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
         let base = mission_base();
         let (st, _pk) = mission_state_at(&base);
         let req: DecideReq = serde_json::from_str(
@@ -2243,8 +2278,19 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
 
         // A prefix of a real handle is not that handle.
-        let (status, body) =
-            body_json(subject_audit(State(st.clone()), UrlPath("ppid:car".to_owned())).await).await;
+        let (status, body) = body_json(
+            app(st.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri("/audit/v1/subject?handle=ppid:car")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert!(
             body["decisions"].as_array().unwrap().is_empty(),

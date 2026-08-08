@@ -113,7 +113,7 @@ A log truncated below its anchored size fails that check while still passing an 
 which is the whole point: dropping a committed record stops being a rule someone broke and starts
 being arithmetic that does not work.
 
-The other direction is `GET /audit/v1/subject/{handle}`: what was decided *about* one party, each
+The other direction is `GET /audit/v1/subject?handle=<handle>`: what was decided *about* one party, each
 record with a proof that it sits in the tree the anchor commits to. A party who suspects a decision
 was made about them can ask, and check the answer against a commitment published earlier — the
 response carries proofs and never keys, because a key handed over in the same response would prove
