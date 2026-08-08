@@ -209,6 +209,16 @@ fn verify_standing(
             ));
         }
     }
+    // An access token is not proof of standing. Where one issuer key signs both, a bearer
+    // token replayed here would otherwise verify — same algorithm, same key — and turn
+    // "may call this server" into "is the party this decision was about".
+    if let Some(typ) = header.get("typ").and_then(Value::as_str)
+        && (typ.eq_ignore_ascii_case("at+jwt") || typ.eq_ignore_ascii_case("application/at+jwt"))
+    {
+        return Err(ChallengeError::StandingNotProved(
+            "an access token is not a standing token".into(),
+        ));
+    }
 
     let sig_bytes = URL_SAFE_NO_PAD
         .decode(sig_b64)
@@ -335,6 +345,28 @@ mod tests {
             "challenge_basis": [basis],
             "requested_effect": "mark-for-human-review",
         })
+    }
+
+    /// Same key, same algorithm, different contract: a bearer access token replayed as a
+    /// standing token must fail on its `typ`, not verify on its signature.
+    #[test]
+    fn an_access_token_does_not_prove_standing() {
+        use ed25519_dalek::Signer as _;
+        let key = generate().unwrap();
+        let h = URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA","typ":"at+jwt"}"#);
+        let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims("dec-1", 2_000)).unwrap());
+        let s = URL_SAFE_NO_PAD.encode(key.sign(format!("{h}.{p}").as_bytes()).to_bytes());
+        let e = parse(
+            &challenge_json(&format!("{h}.{p}.{s}"), "dec-1", "factual-error"),
+            &[key.verifying_key()],
+            1_000,
+        )
+        .unwrap_err();
+        assert!(
+            e.detail().contains("access token"),
+            "refusal must name the confusion: {}",
+            e.detail()
+        );
     }
 
     #[test]

@@ -96,3 +96,45 @@ standards:
       hash chain itself does not canonicalize: it hashes each entry's exact stored
       bytes, and verification re-reads those same bytes. Verified against the spec
       2026-08-08.
+
+  - name: JWT Profile for OAuth 2.0 Access Tokens (RFC 9068)
+    url: https://www.rfc-editor.org/rfc/rfc9068
+    conformance: >-
+      `decern-server::bearer` validates access tokens in the §4 order: `typ` is
+      `at+jwt`/`application/at+jwt` (case-insensitive per RFC 9110 §8.3.1), `alg`
+      settled before any key is consulted, `iss` matched exactly, `aud` containing
+      the configured resource identifier, then the signature, then `exp`/`nbf`.
+      All §2.2 required claims (`iss`, `exp`, `aud`, `sub`, `client_id`, `iat`,
+      `jti`) must be present; `jti` uniqueness and lifetime bounds remain the
+      issuer's responsibility. Verification only — decern issues nothing.
+      Verified against the spec 2026-08-08.
+
+  - name: OAuth 2.0 Bearer Token Usage (RFC 6750)
+    url: https://www.rfc-editor.org/rfc/rfc6750
+    conformance: >-
+      The `Authorization: Bearer` header field (§2.1) is the only accepted
+      presentation; the form-encoded and query-parameter carriers are deliberately
+      not implemented. Every refusal carries a §3 `WWW-Authenticate: Bearer`
+      challenge: no error code when no credentials were presented, `invalid_token`
+      for a token that fails validation, `insufficient_scope` with a `scope`
+      attribute for a verified token missing a required scope. Challenge values are
+      restricted to quoted-string-safe characters and bounded. Verified against the
+      spec 2026-08-08.
+
+  - name: Resource Indicators for OAuth 2.0 (RFC 8707)
+    url: https://www.rfc-editor.org/rfc/rfc8707
+    conformance: >-
+      `--bearer-audience` names this deployment's resource identifier and a token's
+      `aud` must contain it (§2), exactly — no prefix matching, string and array
+      forms both accepted — so a token minted for any other resource the same
+      issuer serves is refused. Verified against the spec 2026-08-08.
+
+  - name: OAuth 2.1 (draft-ietf-oauth-v2-1-15)
+    url: https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/
+    conformance: >-
+      The protected-resource half only: bearer presentation per §5.1.1 (header
+      field, scheme case-insensitive) and §5.3 error responses (401 for absent or
+      invalid credentials, 403 for insufficient scope, each with its challenge).
+      decern is not an authorization server and implements none of the grant
+      machinery. Draft revision -15 read 2026-08-08; the draft moves, so re-read it
+      before touching this surface.

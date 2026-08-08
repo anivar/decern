@@ -12,7 +12,10 @@ cargo run -q -p decern-cli -- prove
 
 echo
 echo "== 2. Start the PDP (ephemeral key, temp ledger) =="
-cargo run -q -p decern-server -- --ledger "$LEDGER" --addr "127.0.0.1:$PORT" &
+# --trust-proxy: this walkthrough is its own caller. A real deployment validates
+# bearer tokens (--bearer-issuer ...) or fronts the server with something that
+# authenticates; decern-serve refuses to start with neither stated.
+cargo run -q -p decern-server -- --ledger "$LEDGER" --addr "127.0.0.1:$PORT" --trust-proxy &
 SRV=$!
 trap 'kill "$SRV" 2>/dev/null || true; rm -f "$LEDGER"' EXIT
 until curl -sf "localhost:$PORT/healthz" >/dev/null 2>&1; do sleep 0.3; done
