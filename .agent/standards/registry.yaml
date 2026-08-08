@@ -138,3 +138,19 @@ standards:
       decern is not an authorization server and implements none of the grant
       machinery. Draft revision -15 read 2026-08-08; the draft moves, so re-read it
       before touching this surface.
+
+  - name: Model Context Protocol (revision 2026-07-28)
+    url: https://modelcontextprotocol.io/specification/2026-07-28
+    conformance: >-
+      Implemented ONLY in examples/mcp/server.py — decern's crates carry no MCP
+      surface, deliberately. The example is a Streamable HTTP server for the
+      stateless revision: single POST endpoint (GET/DELETE 405), no sessions, no
+      SSE, server/discover, tools/list, tools/call; required
+      MCP-Protocol-Version/Mcp-Method/Mcp-Name headers validated against body
+      _meta with -32020/-32022/-32602 as the transport spec assigns them;
+      RFC 9728 Protected Resource Metadata with authorization_servers; audience
+      validation; the client token never forwarded upstream. Authorization
+      failure layering per the spec's own tables: 401 invalid token, 403
+      insufficient_scope for a satisfiable deny, isError tool results for
+      business-logic denials. Sampling, elicitation, resources, prompts and
+      subscriptions are not implemented. Verified against the spec 2026-08-09.
