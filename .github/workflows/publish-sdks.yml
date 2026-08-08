@@ -84,14 +84,16 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      # Trusted publishing needs npm >= 11.5.1 on Node >= 22.14.0; the runner's bundled
-      # npm is older than that, so it is upgraded rather than assumed.
+      # Trusted publishing needs npm >= 11.5.1, which the runner does not ship, so npm is
+      # upgraded. Current npm requires a Node newer than a pinned patch would hold: npm 12
+      # wants ^22.22.2, and a pinned 22.20.0 failed against it. Following the LTS line
+      # keeps the two from drifting apart.
+      # No registry-url: it writes an .npmrc expecting a token, and there is no token.
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "22.20.0"
-          registry-url: https://registry.npmjs.org
+          node-version: "24"
 
-      - run: npm install -g npm@latest
+      - run: npm install -g npm@latest && node --version && npm --version
 
       - name: Build
         working-directory: sdks/typescript

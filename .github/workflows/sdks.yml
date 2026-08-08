@@ -81,10 +81,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # Both maintained LTS lines, absorbed from the retired sdk-typescript
-        # workflow. npm ci stays strict: a lockfile that no longer installs is
-        # a failure to report, not something to fall back from.
-        node-version: [22, 24]
+        # The active LTS line, which is what the package declares support for.
+        # npm ci stays strict: a lockfile that no longer installs is a failure to
+        # report, not something to fall back from.
+        node-version: [24]
     defaults:
       run:
         working-directory: sdks/typescript
