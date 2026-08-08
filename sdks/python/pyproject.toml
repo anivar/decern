@@ -11,6 +11,20 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = []
+authors = [{ name = "Anivar A Aravind" }]
+keywords = ["authorization", "authzen", "pdp", "access-control", "ai-agents", "audit"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://decern.anivar.net/"
+Source = "https://github.com/anivar/decern"
+Issues = "https://github.com/anivar/decern/issues"
+Changelog = "https://github.com/anivar/decern/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["decern"]
