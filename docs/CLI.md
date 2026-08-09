@@ -118,6 +118,30 @@ decern explain --ledger /tmp/decern.jsonl --seq 0 --json
 | `--pubkey <HEX>` | Check the signature too. Without it the line says `not checked`. |
 | `--json` | Machine-readable instead of prose. |
 
+A denial, read back (from a live run; `asserted_by:` appears when the deployment validates
+bearer tokens and the record carries the verified caller):
+
+```
+seq:           1
+subject:       Principal:agent-7
+action:        MoveMoney
+resource:      Resource:account9
+decision:      DENY
+
+chain:
+  prev:       78d312d1b88a75d8441e19920408e3a8438ec2d547e7b5496636ba37a4bed8a6
+  hash:       7bd414059c27b912b87ba359d362830d81a63163c06c7d9ca0c7f5d0ac335205
+  signature:  yes (verified)
+  signed_by:  46a941e7d9536df4922254a6a3cf983bd90ea3d2264c44390257adca00468fff
+
+reasoning:
+  - F-money
+
+bound to:
+  authority    cb03c58cb1f689cc270f99791138dbd913d25bd50c6ee2f70a41206ad795f9be
+  parameters   5b86c3bfd81d4092515553da5c4063222554e8e7b5a053271699e78b4628f04b
+```
+
 It verifies the chain **before** explaining, so a record whose chain does not hold fails loudly
 rather than getting a tidy explanation of a forgery.
 

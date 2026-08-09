@@ -6,7 +6,9 @@ security principles and implementors SHOULD "implement appropriate access contro
 data protections". MCP's authorization layer establishes *who is calling*, down to the
 scope. It says nothing about which tool that caller may run, over which resource, with
 which arguments — and nothing that records what was decided. That is the seam this
-example fills.
+example fills. (The gateway-side counterpart is
+[`../ext_authz_adapter/`](../ext_authz_adapter/README.md) — same decision point, consulted
+from in front of the tools instead of inside their server.)
 
 ```
 MCP client ──bearer token──▶ server.py ──per tool call──▶ decern-serve ──▶ ledger
@@ -34,8 +36,9 @@ examples/mcp/run.sh
 ```
 
 Needs `cargo`, `cvc5` on `PATH`, `uv`, `jq`. Eleven asserted beats: the model-drift guard,
-the nine invariants proved over this example's model, the earlier-revision handshake,
-Allow, the satisfiable 403, the step-up, the unfixable Deny, two 401s, and the ledger check ending with the arguments
+the nine invariants proved over this example's model, discover and list, the
+earlier-revision handshake, Allow, the satisfiable 403, the step-up, the unfixable Deny,
+two 401s, and the ledger check ending with the arguments
 digest recomputed from the arguments themselves and found on the record.
 
 ## What is different from the builtin model, and why

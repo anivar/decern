@@ -11,8 +11,11 @@ standards:
     conformance: >-
       decern-serve exposes POST /access/v1/evaluation (and /decide as an alias): AuthZEN 1.0
       request (subject/resource {type,id}, action {name}, optional context) and response
-      (boolean decision; any reasons under context). Metadata discovery
-      (access_evaluation_endpoint) is a follow-up. Verified against the spec 2026-08-02.
+      (boolean decision; any reasons under context). Reasons carry named policy ids on the
+      builtin model, and the endpoint sits behind the caller posture (bearer
+      validation or a declared front), which AuthZEN leaves to the deployment.
+      Metadata discovery (access_evaluation_endpoint) is tracked as an open
+      issue. Verified against the spec 2026-08-09.
 
   - name: OAuth 2.0 Token Exchange (RFC 8693)
     url: https://www.rfc-editor.org/rfc/rfc8693
@@ -152,5 +155,22 @@ standards:
       validation; the client token never forwarded upstream. Authorization
       failure layering per the spec's own tables: 401 invalid token, 403
       insufficient_scope for a satisfiable deny, isError tool results for
-      business-logic denials. Sampling, elicitation, resources, prompts and
-      subscriptions are not implemented. Verified against the spec 2026-08-09.
+      business-logic denials. Earlier-revision clients (the
+      2025-06-18 lifecycle: initialize, no per-request _meta) are served through
+      the transport spec's backward-compatibility clause via a clearly-marked
+      legacy path, verified end to end with Claude Code as the client. Sampling,
+      elicitation, resources, prompts and subscriptions are not implemented.
+      Verified against the spec 2026-08-09, including the backward-compatibility
+      clause.
+
+  - name: Forward-auth gateway contracts (NGINX auth_request / Traefik forwardAuth / Envoy ext_authz HTTP)
+    url: https://nginx.org/en/docs/http/ngx_http_auth_request_module.html
+    conformance: >-
+      Implemented ONLY in examples/ext_authz_adapter — decern's crates carry no
+      gateway surface. The adapter answers the shared subrequest contract: 200
+      allows, 403 denies, 503 refuses when no decision could be obtained.
+      Identity, method and URI arrive as forwarded headers the gateway must set
+      and strip from clients, and an incomplete forward is refused rather than
+      defaulted. Traefik and Envoy consume the same status-code contract through
+      their own configuration. Verified against the module documentation
+      2026-08-09.

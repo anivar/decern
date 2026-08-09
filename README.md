@@ -173,8 +173,11 @@ RFC 9068 bearer tokens itself (`--bearer-issuer`, `--bearer-audience`,
 something in front already authenticates them. Which routes are guarded, which stay open
 on purpose, and why is in [docs/CLI.md](docs/CLI.md)'s trust-boundary section.
 
-[`examples/mcp/`](examples/mcp/) is the worked integration: an MCP server that validates
-its caller and consults decern before every tool call.
+Two worked integrations ship, as a pair: [`examples/mcp/`](examples/mcp/) — an MCP server
+that validates its caller and consults decern before every tool call — and
+[`examples/ext_authz_adapter/`](examples/ext_authz_adapter/) — a forward-auth shim that puts
+decern behind NGINX, Traefik or Envoy, failing closed. Both live deliberately outside the
+workspace: runnable and CI-tested, never published as crates.
 
 `--sharded <dir>` replaces the single file with a per-tenant sharded ledger several
 processes on one host extend safely (`flock` head store); `--sharded postgres://…` does the
