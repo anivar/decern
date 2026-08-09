@@ -427,6 +427,43 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
 
+    /// docs/CLI.md's `decern-serve` option table is a claim about this binary — one that
+    /// has drifted before: flags shipped that the table never gained, and rows outlived
+    /// the flags they described. Diffed by name, so drift is a red build.
+    #[test]
+    fn the_serve_table_matches_the_binary() {
+        use clap::CommandFactory;
+        let doc = include_str!("../../../docs/CLI.md");
+        let heading = "## `decern-serve`";
+        let start = doc
+            .find(heading)
+            .expect("decern-serve section in docs/CLI.md");
+        let section = &doc[start + heading.len()..];
+        let section = &section[..section.find("\n## ").unwrap_or(section.len())];
+        let mut documented: Vec<String> = section
+            .lines()
+            .filter_map(|l| l.strip_prefix("| `--"))
+            .map(|rest| {
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| *c != ' ' && *c != '`')
+                    .collect();
+                format!("--{name}")
+            })
+            .collect();
+        let mut real: Vec<String> = Args::command()
+            .get_arguments()
+            .filter(|a| !matches!(a.get_id().as_str(), "help" | "version"))
+            .filter_map(|a| a.get_long().map(|l| format!("--{l}")))
+            .collect();
+        documented.sort();
+        real.sort();
+        assert_eq!(
+            documented, real,
+            "the decern-serve table and the binary disagree — fix whichever is wrong"
+        );
+    }
+
     /// The startup rule: a server that cannot say how its callers are established does not
     /// start. There is no bind-address carve-out to test, because there is no carve-out.
     #[test]
