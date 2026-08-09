@@ -488,23 +488,30 @@ mod tests {
         assert!(matches!(err, KernelError::Graph(_)), "{err}");
     }
 
-    /// An `@id` annotation names the policy, so a decision's reasons say `F-money`
-    /// rather than a position that shifts when a policy is added. A model without
-    /// annotations keeps the positional ids it always had — the builtin does, and
-    /// every test above that asserts `policyN` is that guarantee's negative control.
+    /// An `@id` annotation names the policy, so a decision's reasons say what decided
+    /// it rather than a position that shifts when a policy is added. The builtin model
+    /// annotates every policy; a model without annotations keeps positional ids.
     #[test]
-    fn an_id_annotation_names_the_policy_in_reasons() {
-        let mut model = Model::builtin();
-        model.policies = format!("@id(\"demo-forbid\")\n{}", model.policies);
-        let k = Kernel::new(&model).expect("annotated model must load");
-        // The first builtin policy (P-read) now carries the annotation; an allowed
-        // read must name it.
-        let r = k.check(&sub("corp"), "Read", &res("claim1"), &json!({"now": 100}));
-        assert!(r.decision);
+    fn the_builtin_model_names_its_policies_in_reasons() {
+        let k = kernel();
+        let allow = k.check(&sub("corp"), "Read", &res("claim1"), &json!({"now": 100}));
+        assert!(allow.decision);
         assert!(
-            r.reasons.contains(&"demo-forbid".to_owned()),
+            allow.reasons.contains(&"P-read".to_owned()),
             "{:?}",
-            r.reasons
+            allow.reasons
+        );
+        let deny = k.check(
+            &sub("corp"),
+            "MoveMoney",
+            &res("claim1"),
+            &json!({"now": 100}),
+        );
+        assert!(!deny.decision);
+        assert!(
+            deny.reasons.contains(&"F-money".to_owned()),
+            "{:?}",
+            deny.reasons
         );
     }
 

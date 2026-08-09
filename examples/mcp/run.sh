@@ -15,9 +15,9 @@ MODEL=examples/mcp/model
 MCP=http://127.0.0.1:$MCP_PORT/mcp
 AUD=$MCP
 
-echo "== 1. The example model diverges from the builtin in exactly three declared ways =="
-# Strip @id annotations -> the policies must be the builtin's, verbatim.
-diff <(grep -v '^@id(' "$MODEL/authority.cedar") crates/decern-kernel/model/authority.cedar
+echo "== 1. The example model diverges from the builtin in exactly two declared ways =="
+# The policies are the builtin's, verbatim — the builtin carries the @id names itself.
+diff "$MODEL/authority.cedar" crates/decern-kernel/model/authority.cedar
 # Remove the args_sha256 attribute -> the schema must be the builtin's, verbatim.
 diff <(sed 's/, args_sha256?: String//' "$MODEL/authority.cedarschema") crates/decern-kernel/model/authority.cedarschema
 # Remove the two demo entities -> the graph must be the builtin's.
