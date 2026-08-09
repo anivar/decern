@@ -166,7 +166,7 @@ When `decern-serve` and `ext-authz-adapter` run side-by-side on a private networ
 
 ```bash
 # 1. Boot decern-serve declaring proxy trust mode
-decern-serve --listen-addr 127.0.0.1:8080 --trust-proxy
+decern-serve --ledger /tmp/decern.jsonl --addr 127.0.0.1:8080 --trust-proxy
 
 # 2. Boot ext-authz-adapter without a bearer token
 ext-authz-adapter --listen-addr 127.0.0.1:9090 --pdp-url http://127.0.0.1:8080
@@ -178,10 +178,10 @@ When `decern-serve` requires OAuth 2.1 / RFC 9068 bearer validation (`--bearer-i
 ```bash
 # 1. Boot decern-serve with Ed25519 bearer token validation enabled (#45)
 decern-serve \
-  --listen-addr 127.0.0.1:8080 \
+  --addr 127.0.0.1:8080 \
   --bearer-issuer https://auth.example.com \
   --bearer-audience https://decern.example.com \
-  --bearer-issuer-key z6MkpTHR8VNsBxY...
+  --bearer-issuer-key 9c3af6c8d1e24f7b8a55e0d2c4b6f8a19c3af6c8d1e24f7b8a55e0d2c4b6f8a1
 
 # 2. Boot ext-authz-adapter presenting the service access token to decern-serve
 ext-authz-adapter \

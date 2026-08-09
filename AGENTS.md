@@ -13,7 +13,7 @@ guarantees are the product — a change that weakens one is a regression, even i
 - `.agent/` — how agents and contributors work here (method only, no project history).
 
 ## Conventions
-- Rust 2021, toolchain pinned in `rust-toolchain.toml`. Don't bump it casually.
+- Rust 2024, toolchain pinned in `rust-toolchain.toml`. Don't bump it casually.
 - Pure Rust: the core libraries and the `decern`/`decern-serve` binaries have no
   compiled-C-FFI dependencies. The one documented exception is the optional
   `decern-store-postgres` crate (multi-host deployments need a TLS stack); the
@@ -53,7 +53,7 @@ verbatim. CI fails a change under `crates/` or `sdks/` that has neither a fragme
 
 Write it for whoever reads the release notes, not for the reviewer of the diff: what it does, and
 where the guarantee stops. Never describe it as breaking, and never write migration guidance —
-this project has no released users to migrate. End it with `Authored by @handle`, naming the human
+state the change plainly and keep migration prose proportionate to the pre-1.0 audience. End it with `Authored by @handle`, naming the human
 whose work it is, and `reported by @handle` where someone else found the defect.
 
 ## Sign-off (DCO)
