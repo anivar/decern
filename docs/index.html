@@ -293,7 +293,7 @@
           <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:26px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Area 01</p>
             <h3 style="font:600 17px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">A new client SDK</h3>
-            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">Mirror the Python or TypeScript client against the AuthZEN surface in <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">decern-server</span>. Any language.</p>
+            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">Mirror the Go, Python or TypeScript client against the AuthZEN surface in <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">decern-server</span>. Any language.</p>
           </article>
           <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:26px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Area 02</p>
@@ -667,12 +667,12 @@
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;margin-top:40px">
           <div style="border:1px solid #E1E7E4;background:#FFFFFF;padding:26px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">HTTP surface</p>
-            <p style="font:400 13px/2 'IBM Plex Mono',monospace;color:#0C0F0E;margin:16px 0 0">POST /access/v1/evaluation<br>POST /decide <span style="color:#849490">(alias)</span><br>GET&nbsp; /pubkey<br>GET&nbsp; /healthz</p>
+            <p style="font:400 13px/2 'IBM Plex Mono',monospace;color:#0C0F0E;margin:16px 0 0">POST /access/v1/evaluation<br>POST /decide <span style="color:#849490">(alias)</span><br>POST /mission/v1/approve <span style="color:#849490">· GET · terminate</span><br>GET&nbsp; /anchor/v1/tree-head<br>GET&nbsp; /audit/v1/subject<br>GET&nbsp; /directory/v1/&hellip;/descendants<br>GET&nbsp; /.well-known/decern-subject-side-disclosure<br>GET&nbsp; /pubkey · /healthz</p>
             <p style="font:400 13.5px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">Request <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">{subject, action:{name}, resource, context}</span>; response <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">{decision}</span>, with reasons or errors under <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">context</span>.</p>
           </div>
           <div style="border:1px solid #E1E7E4;background:#FFFFFF;padding:26px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Clients</p>
-            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">Python and TypeScript SDKs ship in the repository, written against the AuthZEN surface. New SDKs and enforcement adapters are the easiest way in: mirror an existing client, or put a thin gateway in front of the server.</p>
+            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">Go, Python and TypeScript SDKs ship in the repository, written against the AuthZEN surface. New SDKs and enforcement adapters are the easiest way in: mirror an existing client, or put a thin gateway in front of the server.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:22px 0 0">
             <p style="font:400 12px/1.7 'IBM Plex Mono',monospace;color:#849490;margin:14px 0 0"><span style="color:#5E6B67">crates/decern-kernel/model/</span> holds the Cedar policy, schema and entities the kernel loads.</p>
           </div>
@@ -741,7 +741,7 @@
         <p style="font:400 12px/1.7 'IBM Plex Mono',monospace;letter-spacing:0.02em;color:#849490;margin:14px 0 0;max-width:80ch"><span style="color:#5E6B67">--ledger</span> and <span style="color:#5E6B67">--sharded</span> are mutually exclusive. Audit a sharded deployment with <span style="color:#5E6B67">decern verify --sharded &lt;dir&gt; --pubkey &lt;kid&gt;</span> — it checks every shard and exits non-zero if any fails.</p>
         <div style="border:1px solid #0C0F0E;background:#EDF3F1;margin-top:28px;padding:22px 26px">
           <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Client SDKs</p>
-          <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:12px 0 0;max-width:74ch;text-wrap:pretty">Call a running <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">decern-serve</span> from an application with a thin AuthZEN client &mdash; <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">uv add decern</span> (Python) or <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">npm install decern</span> (TypeScript).</p>
+          <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:12px 0 0;max-width:74ch;text-wrap:pretty">Two worked integrations ship in the repository: an MCP server that consults decern before every tool call (<span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">examples/mcp</span>, run end to end with Claude Code as the client) and a forward-auth shim for NGINX, Traefik and Envoy (<span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">examples/ext_authz_adapter</span>). Call a running <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">decern-serve</span> from an application with a thin AuthZEN client &mdash; <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">uv add decern</span> (Python), <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">npm install decern</span> (TypeScript) or <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">go get</span> (Go).</p>
         </div>
       </div>
     </div>
