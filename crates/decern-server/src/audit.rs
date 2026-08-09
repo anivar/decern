@@ -113,52 +113,95 @@ pub(crate) async fn subject_audit(
         )
             .into_response();
     };
-    let ledger = match m.lock() {
-        Ok(g) => g,
-        Err(_) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({ "error": "audit projection unavailable", "detail": "ledger mutex poisoned" })),
-            )
-                .into_response();
+    // The lock an append needs is held twice, briefly: once to copy the raw bytes out,
+    // once to sign the head. Every parse, match and proof happens between, unlocked —
+    // the projection's cost stops competing with the server's ability to decide.
+    let lines = {
+        let ledger = match m.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({ "error": "audit projection unavailable", "detail": "ledger mutex poisoned" })),
+                )
+                    .into_response();
+            }
+        };
+        match ledger.raw_records() {
+            Ok(l) => l,
+            Err(e) => return audit_unavailable(&e),
         }
     };
 
-    let now_ms = now_secs().saturating_mul(1000);
-    let head = match ledger.tree_head(now_ms) {
-        Ok(th) => th,
-        Err(e) => return audit_unavailable(&e),
-    };
-    let records = match ledger.read_records(0, head.tree_size as usize) {
-        Ok(r) => r,
+    let leaves = match decern_ledger::leaves_from_lines(&lines) {
+        Ok(l) => l,
         Err(e) => return audit_unavailable(&e),
     };
 
+    /// Just enough of a record to match on, so a log of a million strangers' decisions
+    /// is not deserialized in full to answer for one handle.
+    #[derive(serde::Deserialize)]
+    struct Probe {
+        #[serde(default)]
+        entry: ProbeEntry,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct ProbeEntry {
+        #[serde(default)]
+        decision_subject: Option<ProbeSubject>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ProbeSubject {
+        #[serde(default)]
+        handle: Option<String>,
+    }
+
     let mut matched = Vec::new();
     let mut truncated = false;
-    for (seq, rec) in records.iter().enumerate() {
+    for (seq, line) in lines.iter().enumerate() {
         if matched.len() >= MAX_PROJECTED_DECISIONS {
             truncated = true;
             break;
         }
-        let recorded = rec
-            .get("entry")
-            .and_then(|e| e.get("decision_subject"))
-            .and_then(|ds| ds.get("handle"))
-            .and_then(Value::as_str);
-        if recorded != Some(handle.as_str()) {
+        let recorded = serde_json::from_str::<Probe>(line)
+            .ok()
+            .and_then(|p| p.entry.decision_subject)
+            .and_then(|ds| ds.handle);
+        if recorded.as_deref() != Some(handle.as_str()) {
             continue;
         }
-        matched.push((seq as u64, rec));
+        // Only a match is parsed in full — the page is bounded, so this is too.
+        match serde_json::from_str::<Value>(line) {
+            Ok(rec) => matched.push((seq as u64, rec)),
+            Err(e) => return audit_unavailable(&decern_ledger::LedgerError::Serde(e.to_string())),
+        }
     }
 
-    // Proved in one pass. Proving each match as it is found re-derives every leaf in the
-    // log per proof — quadratic in the page size, holding the lock an append needs.
     let seqs: Vec<u64> = matched.iter().map(|(seq, _)| *seq).collect();
-    let proofs = match ledger.inclusion_proofs(&seqs) {
+    let proofs = match decern_ledger::inclusion_proofs_over(&leaves, &seqs) {
         Ok(p) => p,
         Err(e) => return audit_unavailable(&e),
     };
+
+    // Signed over the snapshot the proofs are against. An append that lands between the
+    // two locks makes this a head over the earlier prefix — the same consistent answer
+    // the caller would have gotten before the append, never a mixed one.
+    let now_ms = now_secs().saturating_mul(1000);
+    let root_hex = hex::encode(decern_ledger::merkle::tree_hash(&leaves));
+    let head = {
+        let ledger = match m.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({ "error": "audit projection unavailable", "detail": "ledger mutex poisoned" })),
+                )
+                    .into_response();
+            }
+        };
+        ledger.sign_tree_head(root_hex, leaves.len() as u64, now_ms)
+    };
+
     let decisions: Vec<Value> = matched
         .into_iter()
         .zip(proofs)
