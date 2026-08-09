@@ -28,7 +28,7 @@ use serde_json::Value;
 /// decision about the underlying request: a malformed challenge leaves the decision it
 /// names exactly as it was.
 #[derive(Debug, PartialEq, Eq)]
-pub enum ChallengeError {
+pub(crate) enum ChallengeError {
     Malformed(String),
     StandingNotProved(String),
     NotBound(String),
@@ -55,26 +55,26 @@ impl ChallengeError {
 /// It grants nothing — the authority to have a decision looked at again lives in the answer
 /// this server gives, not in the token.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Standing {
+pub(crate) struct Standing {
     /// The decision this standing is for. A token is good for one decision, not for a role.
-    pub decision_ref: String,
+    pub(crate) decision_ref: String,
     /// The pseudonymous handle of the party, matched against what the record already says.
-    pub decision_subject: String,
+    pub(crate) decision_subject: String,
     /// Expiry, epoch seconds.
-    pub exp: u64,
+    pub(crate) exp: u64,
     /// The capacity the party holds standing in, recorded but not interpreted here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub affected_party_role: Option<String>,
+    pub(crate) affected_party_role: Option<String>,
 }
 
 /// A challenge as it arrives in the decision context.
 #[derive(Debug, Clone)]
-pub struct Challenge {
-    pub standing: Standing,
-    pub decision_ref: String,
-    pub basis: Vec<String>,
-    pub evidence: Option<Value>,
-    pub requested_effect: String,
+pub(crate) struct Challenge {
+    pub(crate) standing: Standing,
+    pub(crate) decision_ref: String,
+    pub(crate) basis: Vec<String>,
+    pub(crate) evidence: Option<Value>,
+    pub(crate) requested_effect: String,
 }
 
 /// How the challenge was answered.
@@ -85,7 +85,7 @@ pub struct Challenge {
 /// would be worse than not offering it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Outcome {
+pub(crate) enum Outcome {
     /// The decision stands, and the reason it stands is stated.
     AffirmPriorDecision { affirm_basis: String },
     /// The decision was made again with the challenge in front of it, and the answer that
@@ -99,7 +99,7 @@ pub enum Outcome {
 /// carrying a challenge is evaluated exactly as the same request without one. A challenge
 /// that could reach the kernel would be an authorization input by accident, which is the
 /// one thing this must never be.
-pub fn take_raw(ctx: &mut Value) -> Option<Value> {
+pub(crate) fn take_raw(ctx: &mut Value) -> Option<Value> {
     ctx.as_object_mut()
         .and_then(|o| o.remove("subject_side_challenge"))
         .filter(|v| !v.is_null())
@@ -111,7 +111,7 @@ pub fn take_raw(ctx: &mut Value) -> Option<Value> {
 /// a key the operator already trusts, then expiry, then that the token and the challenge
 /// name the same decision. A token that proves standing for one decision must not answer
 /// for another.
-pub fn parse(
+pub(crate) fn parse(
     raw: &Value,
     issuer_keys: &[VerifyingKey],
     now: u64,
@@ -286,7 +286,7 @@ fn string_claim(claims: &BTreeMap<String, Value>, name: &str) -> Result<String, 
 /// `subject_matches` is whether the record's own decision subject is the party the standing
 /// names. A challenge from someone the record was not about is answered, not obeyed: it
 /// affirms, because there is nothing here to reconsider on their behalf.
-pub fn answer(challenge: &Challenge, subject_matches: bool) -> Outcome {
+pub(crate) fn answer(challenge: &Challenge, subject_matches: bool) -> Outcome {
     if !subject_matches {
         return Outcome::AffirmPriorDecision {
             affirm_basis: "the challenged decision does not name this party as its subject".into(),

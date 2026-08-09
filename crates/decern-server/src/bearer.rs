@@ -44,7 +44,7 @@ const MAX_ECHO: usize = 64;
 
 /// How the caller is established. Chosen explicitly at startup: a server that cannot say who
 /// is asking should say so in its configuration rather than discover it in an audit.
-pub enum Caller {
+pub(crate) enum Caller {
     /// A token is required, verified, and bound to this server as audience.
     Bearer(Box<Config>),
     /// Something in front has already authenticated the caller. Named rather than defaulted,
@@ -53,26 +53,26 @@ pub enum Caller {
     TrustedProxy,
 }
 
-pub struct Config {
+pub(crate) struct Config {
     /// The `iss` a token must carry, matched exactly. §4 requires an exact match, not a
     /// prefix or a host comparison.
-    pub issuer: String,
+    pub(crate) issuer: String,
     /// This server's resource identifier, which a token's `aud` must contain (RFC 8707 §2).
     /// Without it a token minted for any other service in the estate would be accepted here.
-    pub audience: String,
+    pub(crate) audience: String,
     /// Keys the token may be signed by. Empty is rejected at startup, never at request time.
-    pub keys: Vec<VerifyingKey>,
+    pub(crate) keys: Vec<VerifyingKey>,
     /// Scopes the token's `scope` claim must contain, all of them. Empty means no scope
     /// check, which is the default: a deployment that names no scopes accepts any valid
     /// token, and one that names them refuses a token that carries only some.
-    pub scopes: Vec<String>,
+    pub(crate) scopes: Vec<String>,
 }
 
 /// Why a request was refused, shaped by OAuth 2.1 §5.3 (draft-ietf-oauth-v2-1-15):
 /// no credentials and bad credentials are both 401 but carry different challenges, and a
 /// valid token missing a required scope is 403.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Denied {
+pub(crate) enum Denied {
     /// No `Authorization` header at all. RFC 6750 §3: the challenge then carries no error
     /// code — there is nothing wrong with a token that was never presented.
     NoCredentials,
@@ -96,9 +96,9 @@ impl Denied {
 /// What a verified token says about its bearer. `client_id` is required (RFC 9068 §2.2),
 /// so a verified caller always names both the party and the client acting for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Authenticated {
-    pub subject: String,
-    pub client_id: String,
+pub(crate) struct Authenticated {
+    pub(crate) subject: String,
+    pub(crate) client_id: String,
 }
 
 /// The layer over the protected routes.
@@ -108,7 +108,7 @@ pub struct Authenticated {
 /// second, weaker answer. Under [`Caller::Bearer`] nothing reaches a handler unverified.
 /// The verified identity is not yet carried further: nothing downstream consumes it, and a
 /// value threaded to no reader is a claim nobody checks.
-pub async fn guard(
+pub(crate) async fn guard(
     axum::extract::State(caller): axum::extract::State<std::sync::Arc<Caller>>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -268,7 +268,7 @@ fn numeric_date(claims: &BTreeMap<String, Value>, name: &str) -> Result<Option<f
 /// about itself and is not yet believed; doing the cheap refusals first means a token addressed
 /// to another service is rejected without a signature verification, and — more importantly —
 /// `alg` is settled before any key is chosen, so a token cannot nominate how it is checked.
-pub fn authenticate(
+pub(crate) fn authenticate(
     header: Option<&str>,
     cfg: &Config,
     now_secs: u64,
