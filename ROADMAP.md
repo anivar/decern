@@ -39,6 +39,10 @@ UX into `decern-serve`.
   supplied by the party being audited cannot make an arbitrary log verify.
 - **Releases anyone can check** — signed binaries with a CycloneDX SBOM, an archived DOI per
   release, and SDKs published from CI with no stored credential.
+- **A worked MCP integration** — `examples/mcp/`: an MCP server (revision 2026-07-28, no SDK)
+  that validates its caller and consults the PDP before every tool call, arguments digest-bound
+  onto the record; denials surface as a satisfiable `403 insufficient_scope` or an `isError`
+  tool result, per the spec's own error layering.
 - **Caller verification** — `decern-serve` validates RFC 9068 access tokens on the deciding
   routes (issuer, audience per RFC 8707, expiry, optional scopes), or accepts a declared
   authenticating front with `--trust-proxy`; a server with neither refuses to start. Caller-only
@@ -46,10 +50,6 @@ UX into `decern-serve`.
 
 ## Next — the secure agent-action path
 
-- **A worked MCP integration** — an MCP server that consults decern before it runs a tool, with the
-  decision recorded and verifiable afterwards. MCP's own specification says the protocol cannot
-  enforce its security principles; this is what filling that gap looks like, as an example rather
-  than a product ([#46](https://github.com/anivar/decern/issues/46)).
 - **Enforcement adapter** — a generic forward-auth shim so any gateway can call the PDP and fail
   closed ([#6](https://github.com/anivar/decern/issues/6)).
 - **Default money path behind Mission** — require a Mission for MoveMoney without the opt-in flag
