@@ -126,6 +126,11 @@ directory would decide. It is a faithful reading of what was written down, which
 narrower thing — and the record says which authority it was decided against (`digests.authority`),
 so you can tell whether that authority is still the one in force.
 
+The `bound to:` block prints every digest the entry binds. `digests.parameters` is a JCS SHA-256
+over exactly `{subject, action, resource, context, mission, decision_subject}` as the server
+evaluated them — `entry.context` is byte-for-byte the digested context, so the value is
+recomputable from the record alone, by anyone, with any RFC 8785 implementation.
+
 ---
 
 ## `decern-serve`

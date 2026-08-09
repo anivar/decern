@@ -134,6 +134,28 @@ impl Kernel {
         let policies =
             PolicySet::from_str(&model.policies).map_err(|e| KernelError::Policy(e.to_string()))?;
 
+        // Honor `@id("...")` annotations as policy ids. Without this a decision's
+        // `reasons` name policies by position — `policy9` — which shifts when a policy
+        // is added and tells a reader of the record nothing. A model that annotates
+        // gets named reasons; one that does not keeps the positional ids it had.
+        let policies = {
+            let mut named = PolicySet::new();
+            for p in policies.policies() {
+                let p = match p.annotation("id") {
+                    Some(id) => p.new_id(id.parse().map_err(|_| {
+                        // PolicyId::from_str is infallible in cedar 4; kept for the type.
+                        KernelError::Policy(format!("invalid @id annotation on {}", p.id()))
+                    })?),
+                    None => p.clone(),
+                };
+                let id = p.id().clone();
+                named.add(p).map_err(|e| {
+                    KernelError::Policy(format!("duplicate policy @id {id:?}: {e}"))
+                })?;
+            }
+            named
+        };
+
         let validation = Validator::new(schema.clone()).validate(&policies, ValidationMode::Strict);
         if !validation.validation_passed() {
             let errs: Vec<String> = validation
@@ -464,6 +486,38 @@ mod tests {
         }
         let err = Kernel::new(&model).err().expect("must refuse");
         assert!(matches!(err, KernelError::Graph(_)), "{err}");
+    }
+
+    /// An `@id` annotation names the policy, so a decision's reasons say `F-money`
+    /// rather than a position that shifts when a policy is added. A model without
+    /// annotations keeps the positional ids it always had — the builtin does, and
+    /// every test above that asserts `policyN` is that guarantee's negative control.
+    #[test]
+    fn an_id_annotation_names_the_policy_in_reasons() {
+        let mut model = Model::builtin();
+        model.policies = format!("@id(\"demo-forbid\")\n{}", model.policies);
+        let k = Kernel::new(&model).expect("annotated model must load");
+        // The first builtin policy (P-read) now carries the annotation; an allowed
+        // read must name it.
+        let r = k.check(&sub("corp"), "Read", &res("claim1"), &json!({"now": 100}));
+        assert!(r.decision);
+        assert!(
+            r.reasons.contains(&"demo-forbid".to_owned()),
+            "{:?}",
+            r.reasons
+        );
+    }
+
+    #[test]
+    fn duplicate_id_annotations_refuse_to_load() {
+        let mut model = Model::builtin();
+        model.policies = format!(
+            "@id(\"dup\")\npermit (principal, action, resource) when {{ false }};\n\
+             @id(\"dup\")\npermit (principal, action, resource) when {{ false }};\n{}",
+            model.policies
+        );
+        let err = Kernel::new(&model).err().expect("must refuse");
+        assert!(matches!(err, KernelError::Policy(_)), "{err}");
     }
 
     #[test]

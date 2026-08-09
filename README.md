@@ -166,6 +166,9 @@ RFC 9068 bearer tokens itself (`--bearer-issuer`, `--bearer-audience`,
 something in front already authenticates them. Which routes are guarded, which stay open
 on purpose, and why is in [docs/CLI.md](docs/CLI.md)'s trust-boundary section.
 
+[`examples/mcp/`](examples/mcp/) is the worked integration: an MCP server that validates
+its caller and consults decern before every tool call.
+
 `--sharded <dir>` replaces the single file with a per-tenant sharded ledger several
 processes on one host extend safely (`flock` head store); `--sharded postgres://…` does the
 same across hosts (`--features postgres` — the one optional TLS dependency). Audit either
