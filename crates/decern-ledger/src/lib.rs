@@ -1045,6 +1045,22 @@ impl Ledger {
         hex::encode(self.key.verifying_key().to_bytes())
     }
 
+    /// Every stored line, verbatim and unparsed — for a caller who must hold this
+    /// ledger's lock as briefly as possible. The audit projection copies the bytes out
+    /// under the lock and does every parse, match and proof after releasing it; what
+    /// stays under the lock is one sequential read, not three parsing passes.
+    pub fn raw_records(&self) -> Result<Vec<String>, LedgerError> {
+        let mut out = Vec::new();
+        for line in self.location.lines()? {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            out.push(line);
+        }
+        Ok(out)
+    }
+
     /// A window of records for the admin ledger browser: skip `offset`, take up
     /// to `limit`, each as its stored JSON object. Reads the file, so it's an
     /// admin/audit path, never the decision hot path.
@@ -1139,15 +1155,25 @@ impl Ledger {
     pub fn tree_head(&self, ts_ms: u64) -> Result<TreeHead, LedgerError> {
         let leaves = self.merkle_leaves()?;
         let root_hex = hex::encode(merkle::tree_hash(&leaves));
-        let tree_size = leaves.len() as u64;
-        let sig = self.key.sign(&tree_head_bytes(&root_hex, tree_size, ts_ms));
-        Ok(TreeHead {
-            merkle_root: root_hex,
+        Ok(self.sign_tree_head(root_hex, leaves.len() as u64, ts_ms))
+    }
+
+    /// Sign a tree head over an already-computed root — the signing half of
+    /// [`tree_head`](Ledger::tree_head), for a caller who derived the leaves outside the
+    /// lock. Signs exactly what it is given: a root computed from a prefix that has since
+    /// been appended past is still a consistent commitment to that prefix, the same answer
+    /// the caller would have gotten before the append.
+    pub fn sign_tree_head(&self, merkle_root: String, tree_size: u64, ts_ms: u64) -> TreeHead {
+        let sig = self
+            .key
+            .sign(&tree_head_bytes(&merkle_root, tree_size, ts_ms));
+        TreeHead {
+            merkle_root,
             tree_size,
             ts_ms,
             pubkey_hex: self.pubkey_hex(),
             sig_b64: B64.encode(sig.to_bytes()),
-        })
+        }
     }
 
     /// A compact RFC 9162 inclusion proof that the record at `seq` (0-based) is committed
@@ -1178,24 +1204,7 @@ impl Ledger {
     /// log fails the whole call rather than being skipped — a page of proofs with a hole in
     /// it, where the hole is silent, is worse than no page.
     pub fn inclusion_proofs(&self, seqs: &[u64]) -> Result<Vec<InclusionProof>, LedgerError> {
-        let leaves = self.merkle_leaves()?;
-        let tree_size = leaves.len() as u64;
-        seqs.iter()
-            .map(|&seq| {
-                let idx = seq as usize;
-                let path =
-                    merkle::inclusion_proof(&leaves, idx).ok_or_else(|| LedgerError::Tamper {
-                        seq,
-                        why: "inclusion index past the end of the log".into(),
-                    })?;
-                Ok(InclusionProof {
-                    leaf_index: seq,
-                    tree_size,
-                    leaf_data: hex::encode(&leaves[idx]),
-                    audit_path: path.iter().map(hex::encode).collect(),
-                })
-            })
-            .collect()
+        inclusion_proofs_over(&self.merkle_leaves()?, seqs)
     }
 
     /// A compact RFC 9162 consistency proof that the log of the first `first_size` records
@@ -1634,6 +1643,56 @@ pub(crate) fn verify_stored_records(
 /// The Merkle leaf data of each record, in order: the 32 raw bytes its `hash` hex encodes.
 /// One definition, shared by the signing side and the read-only verifying side — a leaf that
 /// meant two different things in two places would produce proofs that verify nowhere.
+/// The Merkle leaf data of each stored line, in order — the record-form derivation, for a
+/// caller holding raw lines from [`Ledger::raw_records`]. Only the `hash` field is
+/// deserialized, and a line without a valid one fails closed exactly as the record
+/// form does.
+pub fn leaves_from_lines(lines: &[String]) -> Result<Vec<Vec<u8>>, LedgerError> {
+    #[derive(serde::Deserialize)]
+    struct HashOnly {
+        hash: String,
+    }
+    let mut leaves = Vec::with_capacity(lines.len());
+    for (i, line) in lines.iter().enumerate() {
+        let h: HashOnly = serde_json::from_str(line).map_err(|_| LedgerError::Tamper {
+            seq: i as u64,
+            why: "record missing hash field".into(),
+        })?;
+        let bytes = hex::decode(&h.hash).map_err(|_| LedgerError::Tamper {
+            seq: i as u64,
+            why: "record hash is not valid hex".into(),
+        })?;
+        leaves.push(bytes);
+    }
+    Ok(leaves)
+}
+
+/// Inclusion proofs over already-derived leaves — the proving half of
+/// [`Ledger::inclusion_proofs`], for a caller who took the leaves out from under the
+/// lock. Returns proofs in the order the sequences were given; a sequence past the end
+/// fails the whole call rather than being skipped.
+pub fn inclusion_proofs_over(
+    leaves: &[Vec<u8>],
+    seqs: &[u64],
+) -> Result<Vec<InclusionProof>, LedgerError> {
+    let tree_size = leaves.len() as u64;
+    seqs.iter()
+        .map(|&seq| {
+            let idx = seq as usize;
+            let path = merkle::inclusion_proof(leaves, idx).ok_or_else(|| LedgerError::Tamper {
+                seq,
+                why: "inclusion index past the end of the log".into(),
+            })?;
+            Ok(InclusionProof {
+                leaf_index: seq,
+                tree_size,
+                leaf_data: hex::encode(&leaves[idx]),
+                audit_path: path.iter().map(hex::encode).collect(),
+            })
+        })
+        .collect()
+}
+
 fn leaves_from_records(recs: &[serde_json::Value]) -> Result<Vec<Vec<u8>>, LedgerError> {
     let mut leaves = Vec::with_capacity(recs.len());
     for (i, r) in recs.iter().enumerate() {
@@ -2123,6 +2182,53 @@ mod tests {
 
     fn h32(hex_str: &str) -> [u8; 32] {
         <[u8; 32]>::try_from(hex::decode(hex_str).unwrap()).unwrap()
+    }
+
+    /// The unlocked path is the locked path: raw lines yield the same leaves, the same
+    /// proofs, and a head that verifies — one definition of a leaf, reachable two ways.
+    #[test]
+    fn the_out_of_lock_projection_path_equals_the_in_lock_one() {
+        let key = decern_crypto::generate().unwrap();
+        let vk = key.verifying_key();
+        let path = tmp("raw-lines.ledger");
+        let _ = std::fs::remove_file(&path);
+        let mut l = Ledger::open(&path, key).unwrap();
+        for i in 0..5 {
+            l.append(entry(&format!("a{i}"), i % 2 == 0)).unwrap();
+        }
+
+        let lines = l.raw_records().unwrap();
+        assert_eq!(lines.len(), 5);
+        let from_lines = leaves_from_lines(&lines).unwrap();
+        let from_records = l.merkle_leaves().unwrap();
+        assert_eq!(from_lines, from_records);
+
+        let seqs = [0u64, 3, 4];
+        let over = inclusion_proofs_over(&from_lines, &seqs).unwrap();
+        let method = l.inclusion_proofs(&seqs).unwrap();
+        for (a, b) in over.iter().zip(&method) {
+            assert_eq!(a.leaf_index, b.leaf_index);
+            assert_eq!(a.tree_size, b.tree_size);
+            assert_eq!(a.leaf_data, b.leaf_data);
+            assert_eq!(a.audit_path, b.audit_path);
+        }
+
+        let root_hex = hex::encode(merkle::tree_hash(&from_lines));
+        let signed = l.sign_tree_head(root_hex, from_lines.len() as u64, 2_000);
+        let direct = l.tree_head(2_000).unwrap();
+        assert_eq!(signed.merkle_root, direct.merkle_root);
+        assert_eq!(signed.tree_size, direct.tree_size);
+        assert!(verify_tree_head_sig(&signed, &vk));
+    }
+
+    /// A line without a decodable hash fails the whole derivation, exactly as the
+    /// record form does — a leaf set with a silent hole would prove the wrong tree.
+    #[test]
+    fn a_line_without_a_hash_fails_leaf_derivation_closed() {
+        let lines = vec![r#"{"entry":{}}"#.to_owned()];
+        assert!(leaves_from_lines(&lines).is_err());
+        let lines = vec![r#"{"hash":"zz"}"#.to_owned()];
+        assert!(leaves_from_lines(&lines).is_err());
     }
 
     #[test]
