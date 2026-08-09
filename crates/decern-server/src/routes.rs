@@ -70,7 +70,7 @@ mod tests {
     use decern_kernel::{Kernel, Model};
     use decern_ledger::{ShardedLedger, UNATTRIBUTED_SHARD};
     use ed25519_dalek::SigningKey;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use crate::audit::MAX_PROJECTED_DECISIONS;
     use crate::decide::DecideReq;
@@ -118,7 +118,7 @@ mod tests {
                 "resource":{"type":"Resource","id":"claimB"}}"#,
         )
         .unwrap();
-        let resp = decide(State(st), Json(req)).await;
+        let resp = decide(State(st), None, Json(req)).await;
         assert_eq!(resp.status(), StatusCode::OK, "recorded decision is served");
 
         // Read the log back via an independent reader over the same store.
@@ -285,6 +285,53 @@ mod tests {
             "a verified caller was still refused"
         );
         assert!(body.get("decision").is_some(), "no decision was returned");
+
+        // The record says who asserted the request: the token's subject, client and
+        // issuer, exactly as verified. This is the caller column's positive control;
+        // the trusted-proxy test below is its negative.
+        let raw = std::fs::read_to_string(base.join("decern-ledger.jsonl")).unwrap();
+        let rec: Value = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
+        assert_eq!(rec["entry"]["asserted_by"]["sub"], "gateway-1", "{rec}");
+        assert_eq!(rec["entry"]["asserted_by"]["client_id"], "gw", "{rec}");
+        assert_eq!(
+            rec["entry"]["asserted_by"]["iss"], "https://issuer.example/",
+            "{rec}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Under a trusted front the server verified nothing itself, so the record carries
+    /// no asserted_by at all — an absent column, never an empty or guessed one.
+    #[tokio::test]
+    async fn a_trusted_proxy_decision_records_no_asserted_by() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let router = app(st, open());
+        let body = serde_json::to_vec(&json!({
+            "subject": {"type": "Principal", "id": "corp"},
+            "action": {"name": "Read"},
+            "resource": {"type": "Resource", "id": "claim1"},
+        }))
+        .unwrap();
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/access/v1/evaluation")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let raw = std::fs::read_to_string(base.join("decern-ledger.jsonl")).unwrap();
+        let rec: Value = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
+        assert!(rec["entry"].get("asserted_by").is_none(), "{rec}");
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -453,7 +500,7 @@ mod tests {
                 "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
         ))
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(
             body["decision"], true,
@@ -499,7 +546,7 @@ mod tests {
                     "context":{ctx}}}"#
             ))
             .unwrap();
-            let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+            let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
             assert_eq!(status, StatusCode::OK, "{body}");
         }
 
@@ -599,7 +646,7 @@ mod tests {
                     "context":{"decision_subject":"ppid:many"}}"#,
             )
             .unwrap();
-            let (status, _) = body_json(decide(State(st.clone()), Json(req)).await).await;
+            let (status, _) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
             assert_eq!(status, StatusCode::OK);
         }
 
@@ -645,7 +692,7 @@ mod tests {
                 "context":{"decision_subject":"ppid:carol"}}"#,
         )
         .unwrap();
-        let (status, _) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        let (status, _) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
         assert_eq!(status, StatusCode::OK);
 
         // A prefix of a real handle is not that handle.
@@ -748,7 +795,7 @@ mod tests {
                 "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
         ))
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(
             body["decision"], false,
@@ -783,7 +830,7 @@ mod tests {
                 "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
         ))
         .unwrap();
-        let (status, body) = body_json(decide(State(st), Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st), None, Json(req)).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["decision"], false, "{body}");
         assert!(
@@ -822,7 +869,7 @@ mod tests {
                 "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
         ))
         .unwrap();
-        let (status, body) = body_json(decide(State(st), Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st), None, Json(req)).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["decision"], false, "{body}");
         assert!(

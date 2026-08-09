@@ -108,10 +108,13 @@ unrecognized caller is refused a `MoveMoney`; `prev` is the chain link:
  "kid":    "d9396c76113e7aa7126b8358063331f9749ece673ddfdbe8b29661bf03714372"}
 ```
 
-Beyond the decision itself, a record carries two accountability columns. The
+Beyond the decision itself, a record carries accountability columns. The
 **accountable-owner** is the root of the subject's delegation chain, resolved server-side —
-a delegate's record names the principal ultimately answerable for it, and neither column
-ever changes the allow/deny outcome. The **decision subject** is the party a decision is
+a delegate's record names the principal ultimately answerable for it, and none of these columns
+ever changes the allow/deny outcome. Under bearer validation, **asserted_by** names the
+caller the server verified when it took the request — token subject, client, issuer —
+and is absent under a trusted front, where the server verified nothing itself. The
+**decision subject** is the party a decision is
 taken *upon* — a different question from who asked and who answers for it — carried as a
 pseudonymous handle per
 [`draft-aravind-oauth-decision-subject-00`](https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/).

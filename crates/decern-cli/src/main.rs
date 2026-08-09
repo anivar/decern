@@ -283,6 +283,16 @@ fn explain(
             }
         }
 
+        if let Some(a) = &record.entry.asserted_by {
+            println!();
+            println!(
+                "asserted_by:  {} (client {}, issuer {})",
+                a.sub, a.client_id, a.iss
+            );
+            println!("  the caller the server verified when it took this request —");
+            println!("  distinct from the subject asked about and the owner who answers");
+        }
+
         if let Some(sponsor) = &record.entry.sponsor {
             println!();
             println!("accountable_owner: {}:{}", sponsor.kind, sponsor.id);
