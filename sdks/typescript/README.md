@@ -20,7 +20,7 @@ cargo install decern-server && decern-serve --trust-proxy
 ```ts
 import { Client } from "decern";
 
-const c = new Client({ baseUrl: "http://127.0.0.1:8080" });
+const c = new Client({ baseUrl: "http://127.0.0.1:8080", token: "eyJ..." }); // token optional
 
 const d = await c.evaluate({
   subject: { type: "Principal", id: "corp" },
@@ -37,7 +37,9 @@ Also on the client: `c.pubkey()` (the Ed25519 key id the log is signed with) and
 `c.healthy()`. A non-2xx response or transport failure throws `DecernError` with the HTTP
 status and body, so a denial is distinguishable from a misconfigured endpoint. `context` is
 advisory — the server overrides anything it derives itself (the clock, the accountable
-owner), so a caller cannot talk its way into a decision by supplying them.
+owner), so a caller cannot talk its way into a decision by supplying them. `token` is sent
+as `Authorization: Bearer <token>` on every request, for a deployment that requires bearer
+tokens on the evaluation endpoint; leave it unset otherwise.
 
 ## What the server gives you
 

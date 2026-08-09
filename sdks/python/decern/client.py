@@ -48,15 +48,24 @@ class Decision:
 class Client:
     """Client for a decern PDP speaking AuthZEN 1.0 Access Evaluation."""
 
-    def __init__(self, base_url: str = "http://127.0.0.1:8080", timeout: float = 5.0):
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:8080",
+        timeout: float = 5.0,
+        *,
+        token: str | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.token = token
 
     # --- HTTP ---------------------------------------------------------------
 
     def _request(self, method: str, path: str, body: Optional[dict] = None) -> Any:
         data = json.dumps(body).encode() if body is not None else None
         headers = {"Content-Type": "application/json"} if data else {}
+        if self.token is not None:
+            headers["Authorization"] = f"Bearer {self.token}"
         req = urllib.request.Request(
             self.base_url + path, data=data, headers=headers, method=method
         )

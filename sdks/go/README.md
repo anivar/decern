@@ -29,7 +29,7 @@ import (
 )
 
 func main() {
-	c := decern.NewClient(&decern.ClientOptions{BaseURL: "http://127.0.0.1:8080"})
+	c := decern.NewClient(&decern.ClientOptions{BaseURL: "http://127.0.0.1:8080", Token: "<token>"})
 
 	d, err := c.Evaluate(context.Background(), decern.EvaluateArgs{
 		Subject:  decern.Entity{"type": "Principal", "id": "corp"},
@@ -43,6 +43,8 @@ func main() {
 }
 ```
 
+`Token` is optional: set it when the deployment requires bearer tokens on the evaluation
+endpoint, and every request carries `Authorization: Bearer <token>`.
 Also on the client: `Pubkey` (the Ed25519 key id the log is signed with) and `Healthy`.
 `Context` is advisory — the server overrides anything it derives itself (the clock, the
 accountable owner), so a caller cannot talk its way into a decision by supplying them.

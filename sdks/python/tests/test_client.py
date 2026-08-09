@@ -103,6 +103,25 @@ class TestPubkeyHealth(unittest.TestCase):
         self.assertFalse(c.healthy())
 
 
+class TestBearerToken(unittest.TestCase):
+    @staticmethod
+    def _sent_request(client):
+        """Run one evaluate() through urllib and return the outgoing Request."""
+        resp = mock.MagicMock()
+        resp.__enter__.return_value.read.return_value = b'{"decision": true}'
+        with mock.patch("urllib.request.urlopen", return_value=resp) as urlopen:
+            client.evaluate({"id": "a"}, "Read", {"id": "b"})
+        return urlopen.call_args[0][0]
+
+    def test_token_sent_as_bearer_header(self):
+        req = self._sent_request(Client(token="tok123"))
+        self.assertEqual(req.get_header("Authorization"), "Bearer tok123")
+
+    def test_no_token_no_authorization_header(self):
+        req = self._sent_request(Client())
+        self.assertFalse(req.has_header("Authorization"))
+
+
 class TestHttpError(unittest.TestCase):
     def test_http_error_attaches_status_and_body(self):
         import io

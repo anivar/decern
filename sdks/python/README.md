@@ -20,7 +20,7 @@ cargo install decern-server && decern-serve --trust-proxy
 ```python
 from decern import Client
 
-c = Client("http://127.0.0.1:8080")
+c = Client("http://127.0.0.1:8080")  # optionally: token="…"
 
 d = c.evaluate(
     subject={"type": "Principal", "id": "corp"},
@@ -32,6 +32,9 @@ d.allowed   # True / False
 d.reasons   # the policies that decided it, on allow
 d.errors    # why not, on deny
 ```
+
+When `token` is set it is sent as `Authorization: Bearer` on every request, for a
+deployment that requires bearer tokens on the evaluation endpoint.
 
 Also on the client: `c.pubkey()` (the Ed25519 key id the log is signed with) and
 `c.healthy()`. A non-2xx response or transport failure raises `DecernError` with the HTTP

@@ -68,6 +68,61 @@ func TestClientEvaluate(t *testing.T) {
 	}
 }
 
+func TestClientSendsBearerTokenWhenConfigured(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("expected Authorization 'Bearer test-token', got %q", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"decision": true, "context": {}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(&ClientOptions{
+		BaseURL: server.URL,
+		Token:   "test-token",
+	})
+
+	_, err := client.Evaluate(context.Background(), EvaluateArgs{
+		Subject:  Entity{"type": "Principal", "id": "corp"},
+		Action:   "Read",
+		Resource: Entity{"type": "Resource", "id": "claim1"},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClientOmitsAuthorizationWhenNoToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, present := r.Header["Authorization"]; present {
+			t.Errorf("expected no Authorization header, got %q", r.Header.Get("Authorization"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"decision": true, "context": {}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(&ClientOptions{
+		BaseURL: server.URL,
+	})
+
+	_, err := client.Evaluate(context.Background(), EvaluateArgs{
+		Subject:  Entity{"type": "Principal", "id": "corp"},
+		Action:   "Read",
+		Resource: Entity{"type": "Resource", "id": "claim1"},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestClientPubkey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/pubkey" {
