@@ -10,6 +10,7 @@
 // ============================ BUSINESS LAYER ================================
 
 // P-read: owner or delegated principal may Read, in-tenant, in-window, in-scope.
+@id("P-read")
 permit (
   principal,
   action == Action::"Read",
@@ -22,6 +23,7 @@ permit (
 };
 
 // P-move: as above, plus the explicit, fail-closed human approval gate.
+@id("P-move")
 permit (
   principal,
   action == Action::"MoveMoney",
@@ -37,6 +39,7 @@ permit (
 // P-pii: CIAM read of a customer's protected data. Same owner-or-delegate
 // edge and window/scope conditions; the consent backstop (F-consent) then
 // requires the customer's consent whenever the accessor is not the owner.
+@id("P-pii")
 permit (
   principal,
   action == Action::"AccessPII",
@@ -55,6 +58,7 @@ permit (
 // every forbid below (tenant, decay, revocation, consent) overrides it. So a
 // relation tuple can never cross a tenant, expose PII without consent, act past
 // expiry, or survive revocation. `decern prove` certifies those bounds unbounded.
+@id("P-rebac")
 permit (
   principal,
   action == Action::"Read",
@@ -72,6 +76,7 @@ permit (
 // ancestor — the kernel propagates it down the chain) is denied everything.
 // This is the kill-switch: revoke upstream, and the whole delegation subtree
 // fails its next decision.
+@id("F-revoked")
 forbid (principal, action, resource)
 when { principal.revoked };
 
@@ -80,6 +85,7 @@ when { principal.revoked };
 // principal is cleared for that jurisdiction — via ANY action, so no verb
 // bypasses it. Like consent, the protection attaches to the DATA, and the
 // clearance set is attenuated by construction (a delegate's ⊆ its delegator's).
+@id("F-residency")
 forbid (principal, action, resource)
 when {
   resource has residency &&
@@ -92,6 +98,7 @@ when {
 // the role set is attenuated by construction (a delegate's roles ⊆ its delegator's,
 // enforced at load), so a delegate can never present a role its delegator lacked. This
 // forbid survives any future permit, and `decern prove` certifies it (role-gate invariant).
+@id("F-role")
 forbid (principal, action, resource)
 when {
   resource has required_role &&
@@ -99,14 +106,17 @@ when {
 };
 
 // F-tenant: nothing ever crosses a tenant boundary.
+@id("F-tenant")
 forbid (principal, action, resource)
 when { principal.tenant != resource.tenant };
 
 // F-decay: nothing is allowed past the principal's expiry.
+@id("F-decay")
 forbid (principal, action, resource)
 when { context.now > principal.expiry };
 
 // F-money: MoveMoney without explicit human approval is always forbidden.
+@id("F-money")
 forbid (principal, action == Action::"MoveMoney", resource)
 unless { context has human_approved && context.human_approved == true };
 
@@ -116,6 +126,7 @@ unless { context has human_approved && context.human_approved == true };
 // verb chosen (Read, AccessPII, …) cannot bypass it. Self-access (owner ==
 // principal) is exempt. Like F-money, this forbid survives any future permit,
 // and `decern prove` certifies it. The protection attaches to the data.
+@id("F-consent")
 forbid (principal, action, resource)
 when {
   resource has sensitivity && resource.sensitivity == "pii" &&
