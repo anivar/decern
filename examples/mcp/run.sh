@@ -152,8 +152,9 @@ echo
 echo "== 10. The ledger holds all four decisions, arguments digest-bound =="
 kill "$PDP" 2>/dev/null || true; wait "$PDP" 2>/dev/null || true
 cargo run -q -p decern-cli -- verify --ledger "$LEDGER" --pubkey "$KID"
-# seq 0 allow, 1 money deny, 2 step-up allow, 3 tenant deny — denials are records too.
-for SEQ in 0 1 2 3; do
+# seq 0 legacy allow, 1 allow, 2 money deny, 3 step-up allow, 4 tenant deny —
+# denials are records too, and so is the earlier-revision client's call.
+for SEQ in 0 1 2 3 4; do
   cargo run -q -p decern-cli -- explain --ledger "$LEDGER" --seq "$SEQ" --pubkey "$KID" \
     | grep -E "decision:|bound to:" | head -2
 done
@@ -162,7 +163,7 @@ done
 EXPECT=$(python3 -c "
 import hashlib, json
 print(hashlib.sha256(json.dumps(json.loads('$MOVE'), sort_keys=True, separators=(',',':'), ensure_ascii=False).encode()).hexdigest())")
-GOT=$(cargo run -q -p decern-cli -- explain --ledger "$LEDGER" --seq 1 --json | jq -r .context.args_sha256)
+GOT=$(cargo run -q -p decern-cli -- explain --ledger "$LEDGER" --seq 2 --json | jq -r .context.args_sha256)
 [ "$EXPECT" = "$GOT" ]
 echo "   args_sha256 recomputed from the arguments matches the record: $GOT"
 
