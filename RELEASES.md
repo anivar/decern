@@ -20,7 +20,8 @@ archives the source for citation, and writes the release notes from `CHANGELOG.m
    `sdks/python/pyproject.toml`, `sdks/typescript/package.json` and its
    `package-lock.json` (both `version` fields — the lockfile has been missed before),
    and `examples/ext_authz_adapter/Cargo.toml`, which sits outside the workspace so the
-   workspace version does not reach it. All of them must equal the tag, or the publish
+   workspace version does not reach it. The website's at-a-glance version badge
+   (`docs/index.html`) is hand-maintained — bump it in the same commit. All of them must equal the tag, or the publish
    workflow stops before touching a registry.
 
 3. **Verify**, with no flags, so the proofs run:
