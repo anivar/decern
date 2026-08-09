@@ -71,8 +71,15 @@ pub struct Args {
     #[arg(long, value_name = "SECS", default_value = "5")]
     pub pdp_timeout_secs: u64,
 
-    /// Optional Bearer token to present to decern-serve when bearer validation is enabled.
-    #[arg(long, value_name = "TOKEN")]
+    /// Optional Bearer token to present to decern-serve when bearer validation is
+    /// enabled. Prefer the environment variable: an argv value is visible to every
+    /// user on the host for the life of the process.
+    #[arg(
+        long,
+        value_name = "TOKEN",
+        env = "PDP_BEARER_TOKEN",
+        hide_env_values = true
+    )]
     pub pdp_bearer_token: Option<String>,
 }
 
@@ -257,7 +264,7 @@ pub async fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         args.pdp_bearer_token,
     )?);
 
-    // Best-effort PDP health check on boot (3.5)
+    // Best-effort PDP health check on boot.
     match pdp_client.healthcheck().await {
         Ok(()) => eprintln!(
             "ext-authz-adapter: successfully connected to PDP at {}",
@@ -287,41 +294,51 @@ pub async fn run_main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// A forwarded header's value, if present and non-empty.
+fn forwarded<'h>(headers: &'h HeaderMap, name: &HeaderName) -> Option<&'h str> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// The 403 for a request missing one of the three forwarded headers. Denied locally,
+/// before the PDP: nothing was evaluated, so nothing is recorded.
+fn refused_missing(name: &HeaderName) -> Response {
+    eprintln!("check: status=403 decision=deny error=\"missing forwarded header '{name}'\"");
+    let mut res_headers = HeaderMap::new();
+    res_headers.insert("x-decern-decision", HeaderValue::from_static("deny"));
+    (
+        StatusCode::FORBIDDEN,
+        res_headers,
+        "Missing forwarded header",
+    )
+        .into_response()
+}
+
 /// Axum handler for `POST /check` (and `GET /check`).
 pub async fn check_handler(State(st): State<AppState>, headers: HeaderMap) -> Response {
     let start_time = Instant::now();
 
     // 1. Extract subject identity header
-    let subject_id = match headers
-        .get(&st.subject_header)
-        .and_then(|v| v.to_str().ok())
-    {
-        Some(s) if !s.trim().is_empty() => s.trim(),
-        _ => {
-            eprintln!(
-                "check: status=403 decision=deny error=\"missing subject header '{}'\"",
-                st.subject_header
-            );
-            let mut res_headers = HeaderMap::new();
-            res_headers.insert("x-decern-decision", HeaderValue::from_static("deny"));
-            return (StatusCode::FORBIDDEN, res_headers, "Missing subject header").into_response();
-        }
+    let subject_id = match forwarded(&headers, &st.subject_header) {
+        Some(v) => v,
+        None => return refused_missing(&st.subject_header),
     };
 
-    // 2. Extract forwarded action (method) and resource (URI)
-    let action_name = headers
-        .get(&st.method_header)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("Read");
-
-    let resource_id = headers
-        .get(&st.uri_header)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("/");
+    // 2. Extract forwarded action (method) and resource (URI). Refused when absent,
+    // exactly like the subject: a gateway that forwards who is calling but not what
+    // they asked for would otherwise have every request evaluated under a default —
+    // a write authorized as a Read is the fail-open this adapter exists to prevent.
+    let action_name = match forwarded(&headers, &st.method_header) {
+        Some(v) => v,
+        None => return refused_missing(&st.method_header),
+    };
+    let resource_id = match forwarded(&headers, &st.uri_header) {
+        Some(v) => v,
+        None => return refused_missing(&st.uri_header),
+    };
 
     // 3. Evaluate decision against PDP
     match st
@@ -338,7 +355,7 @@ pub async fn check_handler(State(st): State<AppState>, headers: HeaderMap) -> Re
         Ok(true) => {
             let elapsed_ms = start_time.elapsed().as_millis();
             eprintln!(
-                "check: subject={subject_id} action={action_name} resource={resource_id} decision=allow upstream_ms={elapsed_ms}"
+                "check: subject={subject_id:?} action={action_name:?} resource={resource_id:?} decision=allow upstream_ms={elapsed_ms}"
             );
             let mut res_headers = HeaderMap::new();
             res_headers.insert("x-decern-decision", HeaderValue::from_static("allow"));
@@ -347,7 +364,7 @@ pub async fn check_handler(State(st): State<AppState>, headers: HeaderMap) -> Re
         Ok(false) => {
             let elapsed_ms = start_time.elapsed().as_millis();
             eprintln!(
-                "check: subject={subject_id} action={action_name} resource={resource_id} decision=deny upstream_ms={elapsed_ms}"
+                "check: subject={subject_id:?} action={action_name:?} resource={resource_id:?} decision=deny upstream_ms={elapsed_ms}"
             );
             let mut res_headers = HeaderMap::new();
             res_headers.insert("x-decern-decision", HeaderValue::from_static("deny"));
@@ -356,7 +373,8 @@ pub async fn check_handler(State(st): State<AppState>, headers: HeaderMap) -> Re
         Err(err) => {
             let elapsed_ms = start_time.elapsed().as_millis();
             eprintln!(
-                "check_error: subject={subject_id} action={action_name} resource={resource_id} error=\"{err}\" upstream_ms={elapsed_ms}"
+                "check_error: subject={subject_id:?} action={action_name:?} resource={resource_id:?} error={err_text:?} upstream_ms={elapsed_ms}",
+                err_text = err.to_string()
             );
             let mut res_headers = HeaderMap::new();
             res_headers.insert("x-decern-decision", HeaderValue::from_static("unavailable"));

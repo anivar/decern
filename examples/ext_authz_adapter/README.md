@@ -3,7 +3,7 @@
 
 A generic external authorization HTTP adapter for `decern-serve`.
 
-Translates incoming API gateway authorization checks (e.g. NGINX `auth_request`, Traefik `forwardAuth`, HAProxy, or Envoy `ext_authz`) into AuthZEN JSON evaluations against `decern-serve`. Fails closed on deny, PDP error, malformed response, missing subject, or unreachable PDP.
+Translates incoming API gateway authorization checks (e.g. NGINX `auth_request`, Traefik `forwardAuth`, HAProxy, or Envoy `ext_authz`) into AuthZEN JSON evaluations against `decern-serve`. Fails closed on deny, PDP error, malformed response, a missing forwarded header, or unreachable PDP.
 
 ---
 
@@ -44,7 +44,7 @@ cargo build --release
 | `--subject-type` | `Principal` | Cedar subject entity type passed to AuthZEN evaluation. |
 | `--resource-type` | `Resource` | Cedar resource entity type passed to AuthZEN evaluation. |
 | `--pdp-timeout-secs` | `5` | Upstream PDP evaluation request timeout in seconds. |
-| `--pdp-bearer-token` | *(none)* | Optional access token to present to `decern-serve` when bearer validation is active. |
+| `--pdp-bearer-token` | *(none)* | Optional access token for `decern-serve` bearer validation. Prefer `PDP_BEARER_TOKEN` in the environment: an argv value is visible to every user on the host. |
 
 ---
 
@@ -64,8 +64,13 @@ cargo build --release
 | Value of `--subject-header` | `subject.id` | `"corp"` |
 | Configured `--subject-type` | `subject.type` | `"Principal"` |
 | Value of `--method-header` | `action.name` | `"Read"` |
-| Value of `--uri-header` | `resource.id` | `"/claims/claim1"` |
+| Value of `--uri-header` | `resource.id` | `"claim1"` |
 | Configured `--resource-type` | `resource.type` | `"Resource"` |
+
+The URI header's value is passed **verbatim** as the resource id — decern matches it against the
+ids its model declares, so the gateway maps paths to resource ids (`/claims/claim1` → `claim1`)
+before forwarding, or the model declares path-shaped ids. A value the model has never heard of
+denies, which is the correct default.
 
 ---
 
@@ -199,7 +204,7 @@ check: subject=corp action=Read resource=/claims/claim1 decision=allow upstream_
 check: subject=attacker action=Write resource=/claims/claim1 decision=deny upstream_ms=2
 
 # Unauthenticated / Missing subject header:
-check: status=403 decision=deny error="missing subject header 'x-forwarded-subject'"
+check: status=403 decision=deny error="missing forwarded header 'x-forwarded-subject'"
 
 # Downstream PDP evaluation failure / timeout:
 check_error: subject=corp action=Read resource=/claims/claim1 error="PDP evaluation request timed out after 5s" upstream_ms=5001
@@ -215,7 +220,7 @@ The adapter enforces a strict fail-closed contract on every request path:
 |---|---|---|---|
 | PDP returns `{"decision": true}` | `200 OK` | `x-decern-decision: allow` | Request allowed by policy. |
 | PDP returns `{"decision": false}` | `403 Forbidden` | `x-decern-decision: deny` | Request denied by policy. |
-| Missing/empty subject header | `403 Forbidden` | `x-decern-decision: deny` | Unauthenticated callers refused by default. |
+| Missing/empty subject, method, or URI header | `403 Forbidden` | `x-decern-decision: deny` | An incomplete forward is refused, never evaluated under a default. |
 | PDP unreachable / timeout | `503 Service Unavailable` | `x-decern-decision: unavailable` | Fail-closed on network failure. |
 | PDP non-2xx (e.g. ledger fail) | `503 Service Unavailable` | `x-decern-decision: unavailable` | Fail-closed on PDP internal error. |
 | Malformed JSON body from PDP | `503 Service Unavailable` | `x-decern-decision: unavailable` | Malformed response is never an allow. |

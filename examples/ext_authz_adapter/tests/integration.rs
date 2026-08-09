@@ -289,6 +289,54 @@ async fn test_whitespace_only_subject_header_refused() {
 }
 
 #[tokio::test]
+async fn test_missing_method_header_refused() {
+    // A gateway that forwards who is calling but not what they asked for gets a
+    // refusal, not a request evaluated under a defaulted action.
+    let (pdp_url, _mode, _) = spawn_mock_pdp().await;
+    let app = build_adapter_router(&pdp_url);
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/check")
+        .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-uri", "claim1")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        resp.headers()
+            .get("x-decern-decision")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "deny"
+    );
+}
+
+#[tokio::test]
+async fn test_missing_uri_header_refused() {
+    let (pdp_url, _mode, _) = spawn_mock_pdp().await;
+    let app = build_adapter_router(&pdp_url);
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/check")
+        .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-method", "Read")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        resp.headers()
+            .get("x-decern-decision")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "deny"
+    );
+}
+
+#[tokio::test]
 async fn test_bearer_token_forwarded_to_pdp() {
     let (pdp_url, mode, last_auth) = spawn_mock_pdp().await;
     mode.store(0, Ordering::SeqCst);
@@ -327,6 +375,8 @@ async fn test_malformed_pdp_body_fails_closed_503() {
         .method("POST")
         .uri("/check")
         .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-method", "Read")
+        .header("x-forwarded-uri", "claim1")
         .body(axum::body::Body::empty())
         .unwrap();
 
@@ -352,6 +402,8 @@ async fn test_pdp_503_fails_closed() {
         .method("POST")
         .uri("/check")
         .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-method", "Read")
+        .header("x-forwarded-uri", "claim1")
         .body(axum::body::Body::empty())
         .unwrap();
 
@@ -380,6 +432,8 @@ async fn test_unreachable_pdp_fails_closed_503() {
         .method("POST")
         .uri("/check")
         .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-method", "Read")
+        .header("x-forwarded-uri", "claim1")
         .body(axum::body::Body::empty())
         .unwrap();
 
@@ -441,6 +495,8 @@ async fn test_pdp_timeout_fails_closed_503() {
         .method("POST")
         .uri("/check")
         .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-method", "Read")
+        .header("x-forwarded-uri", "claim1")
         .body(axum::body::Body::empty())
         .unwrap();
 

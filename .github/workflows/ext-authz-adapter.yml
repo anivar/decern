@@ -6,8 +6,14 @@ name: ext-authz-adapter
 on:
   push:
     branches: [main]
+    paths:
+      - "examples/ext_authz_adapter/**"
+      - ".github/workflows/ext-authz-adapter.yml"
   pull_request:
     branches: [main]
+    paths:
+      - "examples/ext_authz_adapter/**"
+      - ".github/workflows/ext-authz-adapter.yml"
   workflow_dispatch: {}
 
 permissions:
