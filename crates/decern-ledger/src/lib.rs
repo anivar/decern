@@ -219,6 +219,20 @@ pub struct Entry {
     /// the resource named, carries none, because the record already says so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_subject: Option<DecisionSubject>,
+    /// The caller the server verified when it took this request — who ASSERTED the
+    /// subject, distinct from the subject itself and from the accountable sponsor.
+    /// Present only under bearer validation, where it is what the token proved, and
+    /// only on decision records — mission lifecycle records do not carry it. Absent
+    /// under a trusted front: an assertion the server did not verify itself does not
+    /// belong on a permanent record. Descriptive, never a decision input.
+    ///
+    /// The token's `sub` is written verbatim, permanently, and the subject-side
+    /// projection returns whole records — so front service identities here, not
+    /// end-user tokens: a person's identifier in `sub` becomes visible to anyone
+    /// holding a decision-subject handle on the same record, and cannot be redacted
+    /// after the fact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asserted_by: Option<AssertedBy>,
     /// Whether this decision is one an affected party should be told about. Recorded, not
     /// acted on: telling them is the job of whoever enforces the decision, and this server
     /// does not enforce. Recording it is what makes a notice that never went out a gap
@@ -262,6 +276,19 @@ pub const DIGEST_AUTHORITY: &str = "authority";
 
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+/// The verified caller of the request that produced a record: the token's subject, the
+/// client acting for it, and the issuer that vouched — enough for a reader to ask the
+/// right party why this request was made, and nothing a caller can write for itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssertedBy {
+    /// The token's `sub` — the party the issuer authenticated.
+    pub sub: String,
+    /// The token's `client_id` — the client acting for that party.
+    pub client_id: String,
+    /// The issuer whose signature the server verified.
+    pub iss: String,
 }
 
 /// A challenge and its answer, on the record.

@@ -122,7 +122,19 @@ fn take_decision_subject(
     Ok(Some(ds))
 }
 
-pub(crate) async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq>) -> Response {
+pub(crate) async fn decide(
+    State(st): State<AppState>,
+    caller: Option<axum::Extension<crate::bearer::Authenticated>>,
+    Json(req): Json<DecideReq>,
+) -> Response {
+    // Who asserted this request, when the guard verified a token. Under a trusted
+    // front there is no extension and the column stays off the record: an assertion
+    // this server did not verify itself does not belong on a permanent one.
+    let asserted_by = caller.map(|axum::Extension(who)| decern_ledger::AssertedBy {
+        sub: who.subject,
+        client_id: who.client_id,
+        iss: who.issuer,
+    });
     let now_s = now_secs();
     let mut ctx = if req.context.is_object() {
         req.context
@@ -297,6 +309,7 @@ pub(crate) async fn decide(State(st): State<AppState>, Json(req): Json<DecideReq
         mission: mission_ref,
         decision_subject,
         notice_required,
+        asserted_by,
         challenge: challenge_record.clone(),
         digests: BTreeMap::from([
             (
@@ -558,7 +571,7 @@ mod tests {
                 "context":{"now":100}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st), Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st), None, Json(req)).await).await;
         assert_eq!(status, StatusCode::OK, "a recorded decision is served");
         assert_eq!(
             body["decision"], false,
@@ -579,7 +592,7 @@ mod tests {
                 "context":{"human_approved":true}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st), Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st), None, Json(req)).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["decision"], false, "missing mission must Deny: {body}");
         assert!(
@@ -633,7 +646,7 @@ mod tests {
                 "context":{"decision_subject":"ppid:carol"}}"#,
         )
         .unwrap();
-        let (status, without) = body_json(decide(State(st.clone()), Json(plain)).await).await;
+        let (status, without) = body_json(decide(State(st.clone()), None, Json(plain)).await).await;
         assert_eq!(status, StatusCode::OK, "{without}");
 
         let token = standing_token(&issuer, "dec-1", "ppid:carol", now_secs() + 3600);
@@ -649,7 +662,8 @@ mod tests {
                                 "requested_effect":"reverse"}}}}}}"#
         ))
         .unwrap();
-        let (status, with) = body_json(decide(State(st.clone()), Json(challenged)).await).await;
+        let (status, with) =
+            body_json(decide(State(st.clone()), None, Json(challenged)).await).await;
         assert_eq!(status, StatusCode::OK, "{with}");
         assert_eq!(
             without["decision"], with["decision"],
@@ -707,7 +721,7 @@ mod tests {
                                 "requested_effect":"reverse"}}}}}}"#
         ))
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
         assert_eq!(body["error"], "standing_not_proved");
 
@@ -736,7 +750,7 @@ mod tests {
                                                "purpose":"eligibility-audit"}}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
 
         let ledger_path = base.join("decern-ledger.jsonl");
@@ -769,7 +783,7 @@ mod tests {
                 "context":{"decision_subject":"ppid:bare"}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
 
         let ledger_path = base.join("decern-ledger.jsonl");
@@ -797,7 +811,7 @@ mod tests {
                     "context":{{"decision_subject":"{handle}"}}}}"#
             ))
             .unwrap();
-            let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+            let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
             assert_eq!(status, StatusCode::OK, "{handle}: {body}");
         }
 
@@ -827,7 +841,7 @@ mod tests {
                 "context":{"decision_subject":"carol@example.com"}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
         assert_eq!(
             status,
             StatusCode::UNPROCESSABLE_ENTITY,

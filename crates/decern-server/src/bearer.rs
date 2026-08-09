@@ -94,23 +94,24 @@ impl Denied {
 }
 
 /// What a verified token says about its bearer. `client_id` is required (RFC 9068 §2.2),
-/// so a verified caller always names both the party and the client acting for it.
+/// so a verified caller always names the party, the client acting for it, and the
+/// issuer whose signature was checked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Authenticated {
     pub(crate) subject: String,
     pub(crate) client_id: String,
+    pub(crate) issuer: String,
 }
 
 /// The layer over the protected routes.
 ///
 /// Under [`Caller::TrustedProxy`] this passes everything through — the operator has said the
 /// caller is established in front of this process, and re-checking here would only invent a
-/// second, weaker answer. Under [`Caller::Bearer`] nothing reaches a handler unverified.
-/// The verified identity is not yet carried further: nothing downstream consumes it, and a
-/// value threaded to no reader is a claim nobody checks.
+/// second, weaker answer. Under [`Caller::Bearer`] nothing reaches a handler unverified, and
+/// the verified identity rides the request so the record can say who asserted it.
 pub(crate) async fn guard(
     axum::extract::State(caller): axum::extract::State<std::sync::Arc<Caller>>,
-    req: axum::extract::Request,
+    mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
     let cfg = match caller.as_ref() {
@@ -123,7 +124,10 @@ pub(crate) async fn guard(
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
     match authenticate(header.as_deref(), cfg, now_secs()) {
-        Ok(_) => next.run(req).await,
+        Ok(who) => {
+            req.extensions_mut().insert(who);
+            next.run(req).await
+        }
         Err(denied) => denied.into_response(cfg),
     }
 }
@@ -393,7 +397,11 @@ pub(crate) fn authenticate(
         }
     }
 
-    Ok(Authenticated { subject, client_id })
+    Ok(Authenticated {
+        subject,
+        client_id,
+        issuer: iss,
+    })
 }
 
 /// `aud` is a string or an array of strings (RFC 7519 §4.1.3). Compared exactly: a resource
