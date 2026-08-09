@@ -3,7 +3,7 @@
 
 A generic external authorization HTTP adapter for `decern-serve`.
 
-Translates incoming API gateway authorization checks (e.g. NGINX `auth_request`, Traefik `forwardAuth`, HAProxy, or Envoy `ext_authz`) into AuthZEN JSON evaluations against `decern-serve`. Fails closed on deny, PDP error, malformed response, a missing forwarded header, or unreachable PDP.
+Translates incoming API gateway authorization checks (e.g. NGINX `auth_request`, Traefik `forwardAuth`, HAProxy, or Envoy `ext_authz`) into AuthZEN JSON evaluations against `decern-serve`. Fails closed on deny, PDP error, malformed response, a missing forwarded header, or unreachable PDP. The in-process counterpart is [`../mcp/`](../mcp/README.md) — same decision point, consulted from inside an MCP tool server instead of at the gateway.
 
 ---
 

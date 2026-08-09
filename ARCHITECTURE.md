@@ -35,16 +35,29 @@ Two binaries over seven library crates. The stock build is pure Rust; the one ex
 | `decern-cli` | bin → `decern` | `prove` / `decide` / `verify`. |
 | `decern-server` | bin → `decern-serve` | The fail-closed AuthZEN PDP: evaluate, record, serve. Also serves the Mission lifecycle over `decern-identity` (`POST /mission/v1/approve`, `GET`/`terminate`), recording each transition to the ledger. |
 
-`crates/decern-kernel/model/` holds the Cedar policy, schema, and entities the kernel loads. `.agent/` holds the working
+`decern-server` is split by layer, one seam per file: `main.rs` (flags, the caller-posture
+refusal, startup), `routes.rs` (the router and the guarded/open split), `bearer.rs` (RFC 9068
+token validation), `record.rs` (the fail-closed append path), `decide.rs` (the decision handler
+and its derivations), `audit.rs` (the published reads: pubkey, tree head, subject projection,
+descendants, disclosure), `mission.rs` (the lifecycle), `challenge.rs` (the subject-side
+challenge), `testutil.rs` (shared fixtures).
+
+`crates/decern-kernel/model/` holds the Cedar policy, schema, and entities the kernel loads. `examples/` holds the worked integrations and the quickstart — runnable and CI-tested, never published as crates. `.agent/` holds the working
 method and the standards registry. `scripts/verify.sh` is the one gate every change must pass.
 
 ## How a decision flows
 
-1. A request reaches `decern-serve` (`POST /access/v1/evaluation`, AuthZEN-shaped).
+1. A request reaches `decern-serve` (`POST /access/v1/evaluation`, AuthZEN-shaped), and the
+   caller is established first: an RFC 9068 bearer token validated against configured keys, or
+   the declared front under `--trust-proxy`. A server with neither posture named refuses to
+   start; under bearer mode a request with no verified caller is refused before anything is
+   evaluated or recorded.
 2. `decern-kernel` evaluates the pure decision function over the loaded authority graph and policy.
    The server supplies `now` from its own clock (never the request body).
-3. The decision, plus a server-derived **accountable-owner** (the root of the subject's delegation
-   chain), is appended to the `decern-ledger` — Ed25519-signed and hash-chained.
+3. The decision, plus a server-derived **accountable-owner** (the root of the subject's
+   delegation chain) and — under bearer validation — the **asserting caller** exactly as
+   verified, is appended to the `decern-ledger` — Ed25519-signed and hash-chained, the exact
+   request digest-bound (`digests.parameters`).
 4. The decision is returned **only if that record was written**. If it couldn't be, the server
    returns `503`, never a bare allow. This fail-closed contract is the whole point of the PDP.
 5. Anyone can later run `decern verify` over the ledger: signatures prove each record authentic,
@@ -77,8 +90,11 @@ established where the proofs run, not on the request path.
 
 Match a contribution area to the crate that owns it:
 
-- **A new client SDK** → mirror `sdks/python` / `sdks/typescript` against the AuthZEN surface in `decern-server`.
-- **An enforcement adapter** (put decern behind an HTTP/gRPC gateway) → a thin client over `decern-server`.
+- **A new client SDK** → mirror `sdks/go` / `sdks/python` / `sdks/typescript` against the AuthZEN surface in `decern-server`.
+- **Enforcement adapters** → the HTTP forward-auth shim shipped (`examples/ext_authz_adapter/`,
+  contributed); extend it, or bring the gRPC `ext_authz` variant.
+- **Agent-protocol integrations** → `examples/mcp/` is the worked MCP integration; other agent
+  protocols compose the same way — validate the caller, consult the PDP per action, record.
 - **Authority-graph tooling** (traversal, blast-radius, export) → `decern-kernel`'s `Directory`.
 - **A new ledger backend** → implement `decern-store`'s `LedgerHeadStore` trait.
 - **A new proven property** → `decern-proof` (add the invariant *and* its negative control).
