@@ -79,6 +79,27 @@ jq -e '.result.tools | length == 2' <<<"$BODY" >/dev/null
 echo "   discover + list conformant."
 
 echo
+echo "== 4b. An earlier-revision client (initialize, no _meta) is served too =="
+# The transport spec's backward-compatibility clause: a request without the
+# protocolVersion _meta key is treated as an earlier revision. Shipping clients
+# (Claude Code among them) still speak this shape; this beat is what they send.
+LEGACY=$(curl -s -m 5 "$MCP" -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"jsonrpc":"2.0","id":9,"method":"initialize",
+       "params":{"protocolVersion":"2025-06-18","capabilities":{},
+                 "clientInfo":{"name":"legacy-probe","version":"0"}}}')
+jq -e '.result.protocolVersion == "2025-06-18"' <<<"$LEGACY" >/dev/null
+LEGACY=$(curl -s -m 5 "$MCP" -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"jsonrpc":"2.0","id":10,"method":"tools/call",
+       "params":{"name":"read_claim","arguments":{"claim_id":"claim1"},
+                 "_meta":{"vendor.example/trace":"t1"}}}')
+jq -e '.result.isError != true and (.result.content[0].text | contains("claim1")) and (.result | has("resultType") | not)' <<<"$LEGACY" >/dev/null
+echo "   legacy handshake and tool call served; new-revision fields absent."
+
+echo
 echo "== 5. read_claim(claim1) — Allow, and the tool runs =="
 ARGS='{"claim_id":"claim1"}'
 OUT=$(call tools/call read_claim "{\"name\":\"read_claim\",\"arguments\":$ARGS}" "$TOKEN")

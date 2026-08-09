@@ -33,24 +33,22 @@ decided and that the record holds.
 examples/mcp/run.sh
 ```
 
-Needs `cargo`, `cvc5` on `PATH`, `uv`, `jq`. Ten asserted beats: the model-drift guard,
-the nine invariants proved over this example's model, Allow, the satisfiable 403, the
-step-up, the unfixable Deny, two 401s, and the ledger check ending with the arguments
+Needs `cargo`, `cvc5` on `PATH`, `uv`, `jq`. Eleven asserted beats: the model-drift guard,
+the nine invariants proved over this example's model, the earlier-revision handshake,
+Allow, the satisfiable 403, the step-up, the unfixable Deny, two 401s, and the ledger check ending with the arguments
 digest recomputed from the arguments themselves and found on the record.
 
 ## What is different from the builtin model, and why
 
-`model/` is the builtin model with three declared divergences, each guarded by a `diff`
-in the walkthrough:
+`model/` is the builtin model with two declared divergences, each guarded by a `diff`
+in the walkthrough (the policies are the builtin's verbatim — including the `@id`
+names the 403-vs-`isError` split keys on, which live in the builtin itself):
 
 - **`args_sha256?: String`** on each action's context. decern's context schema is
   closed — an undeclared attribute is refused — so binding tool arguments into the
   record is a schema decision, which is where it belongs. The added optional attribute
   widens the input space the nine invariants quantify over without changing what any of
   them says; the walkthrough proves them over this model, not the builtin.
-- **`@id("F-money")`-style names on every policy**, so a Deny says `F-money` rather
-  than a position that shifts when a policy is added. The 403-vs-`isError` split keys
-  on that name and never on position.
 - **Two demo entities**: `account9`, so `move_money` denies on the money-gate rather
   than on an unknown entity, and `mcp_agent` — an agent delegated by `corp`, which is
   what an MCP front is. Its records name `corp` as the accountable owner: the server
@@ -73,6 +71,17 @@ in the walkthrough:
   signs the tokens; the issuer URL in the Protected Resource Metadata is an identifier,
   and the discovery chain is demonstrated as far as that document and no further. OAuth
   over plain HTTP and an `http://127.0.0.1` resource identifier are demo-only.
+
+## Earlier-revision clients
+
+The server implements revision 2026-07-28, whose transport spec says a server may treat
+a request without the protocol-version metadata as an earlier revision. It does: a
+client speaking the 2025-06-18 lifecycle — `initialize`, no per-request `_meta` — is
+served through a clearly-marked legacy path that adds no authorization surface (the
+bearer check runs before dispatch either way). This is what lets a shipping client
+connect today; Claude Code has run this example's whole allow/deny/step-up matrix
+end-to-end. Delete `legacy_dispatch` when the clients you care about carry `_meta`,
+and the example is single-revision again.
 
 ## Why decern's `decide` is not an MCP tool
 

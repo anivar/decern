@@ -224,7 +224,11 @@ def rpc_error(rid, code, message, data=None):
     return {"jsonrpc": "2.0", "id": rid, "error": err}
 
 
-def rpc_result(rid, result):
+def rpc_result(rid, result, legacy=False):
+    if legacy:
+        # Earlier revisions know neither resultType nor result _meta.
+        result.pop("resultType", None)
+        return {"jsonrpc": "2.0", "id": rid, "result": result}
     result["_meta"] = {"io.modelcontextprotocol/serverInfo": SERVER_INFO}  # a SHOULD
     return {"jsonrpc": "2.0", "id": rid, "result": result}
 
@@ -329,8 +333,15 @@ class Handler(BaseHTTPRequestHandler):
 
         # Basic protocol, per-request fields: protocolVersion and clientCapabilities
         # are REQUIRED; missing → -32602 (a malformed request, not a header mismatch).
+        # A request without the protocolVersion _meta key is an earlier-revision
+        # client, which the transport spec's backward-compatibility clause lets a
+        # server serve. Keyed on that key alone: real clients decorate _meta with
+        # their own namespaced entries, so emptiness discriminates nothing.
         version = meta.get("io.modelcontextprotocol/protocolVersion")
-        if not version or "io.modelcontextprotocol/clientCapabilities" not in meta:
+        if version is None:
+            self.legacy_dispatch(rid, method, msg.get("params") or {}, claims)
+            return
+        if "io.modelcontextprotocol/clientCapabilities" not in meta:
             self.send_json(400, rpc_error(rid, -32602, "missing required _meta fields"))
             return
         # Transports, Protocol Version Header: header and body MUST match → -32020.
@@ -381,12 +392,50 @@ class Handler(BaseHTTPRequestHandler):
             # Transports: unknown method → HTTP 404 with -32601.
             self.send_json(404, rpc_error(rid, -32601, "method not found"))
 
+    # ------------------------------------------------- earlier-revision clients
+    # The 2026-07-28 transport spec's own backward-compatibility clause: a server MAY
+    # treat a request without the protocol-version header as revision 2025-03-26. As of
+    # this example's writing, shipping clients (Claude Code included) still speak the
+    # 2025-06-18 lifecycle — initialize, notifications/initialized, no per-request
+    # _meta — so this block is what lets a real client connect today. It adds no
+    # authorization surface: the bearer check ran before dispatch, and tools/call joins
+    # the same guarded path. Delete this method when the clients you care about carry
+    # _meta, and the example becomes single-revision again.
+    def legacy_dispatch(self, rid, method, params, claims):
+        if method == "initialize":
+            requested = params.get("protocolVersion", "2025-03-26")
+            supported = ("2025-03-26", "2025-06-18")
+            self.send_json(
+                200,
+                {
+                    "jsonrpc": "2.0",
+                    "id": rid,
+                    "result": {
+                        "protocolVersion": requested if requested in supported else "2025-06-18",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": SERVER_INFO,
+                    },
+                },
+            )
+        elif method == "ping":
+            self.send_json(200, {"jsonrpc": "2.0", "id": rid, "result": {}})
+        elif method == "tools/list":
+            self.send_json(
+                200,
+                {"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOL_LIST}},
+            )
+        elif method == "tools/call":
+            self.tool_call(rid, params, claims, legacy=True)
+        else:
+            self.send_json(200, rpc_error(rid, -32601, "method not found"))
+
     # ------------------------------------------------------------ the seam
-    def tool_call(self, rid, params, claims):
+    def tool_call(self, rid, params, claims, legacy=False):
         name = params.get("name", "")
         # Transports, Standard Request Headers: Mcp-Name is REQUIRED on tools/call
-        # (and MUST NOT be expected on discover/list).
-        if decode_sentinel(self.headers.get("Mcp-Name")) != name:
+        # (and MUST NOT be expected on discover/list). Earlier revisions had no such
+        # header, so the legacy path does not demand one.
+        if not legacy and decode_sentinel(self.headers.get("Mcp-Name")) != name:
             self.send_json(400, rpc_error(rid, -32020, "Mcp-Name does not match params.name"))
             return
         tool = TOOLS.get(name)
@@ -415,6 +464,7 @@ class Handler(BaseHTTPRequestHandler):
                         "content": [{"type": "text", "text": f"invalid arguments: {problem}"}],
                         "isError": True,
                     },
+                    legacy,
                 ),
             )
             return
@@ -444,6 +494,7 @@ class Handler(BaseHTTPRequestHandler):
                         ],
                         "isError": True,
                     },
+                    legacy,
                 ),
             )
             return
@@ -457,6 +508,7 @@ class Handler(BaseHTTPRequestHandler):
                         "resultType": "complete",
                         "content": [{"type": "text", "text": tool["run"](args)}],
                     },
+                    legacy,
                 ),
             )
         elif "F-money" in reasons:
@@ -487,6 +539,7 @@ class Handler(BaseHTTPRequestHandler):
                         ],
                         "isError": True,
                     },
+                    legacy,
                 ),
             )
 
