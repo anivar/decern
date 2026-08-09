@@ -38,12 +38,16 @@ type ClientOptions struct {
 	BaseURL    string
 	Timeout    time.Duration
 	HTTPClient *http.Client
+	// Token, when set, is sent as "Authorization: Bearer <token>" on every
+	// request. The client only carries it; acquisition is the caller's problem.
+	Token string
 }
 
 // Client for a decern PDP speaking AuthZEN 1.0 Access Evaluation.
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+	token      string
 }
 
 // maxErrorBodyBytes caps how much of a non-2xx response body the client
@@ -68,6 +72,7 @@ func (e *DecernError) Error() string {
 func NewClient(opts *ClientOptions) *Client {
 	baseURL := "http://127.0.0.1:8080"
 	var httpClient *http.Client
+	var token string
 
 	if opts != nil {
 		if opts.BaseURL != "" {
@@ -78,6 +83,7 @@ func NewClient(opts *ClientOptions) *Client {
 		} else if opts.Timeout != 0 {
 			httpClient = &http.Client{Timeout: opts.Timeout}
 		}
+		token = opts.Token
 	}
 
 	if httpClient == nil {
@@ -89,6 +95,7 @@ func NewClient(opts *ClientOptions) *Client {
 	return &Client{
 		baseURL:    baseURL,
 		httpClient: httpClient,
+		token:      token,
 	}
 }
 
@@ -109,6 +116,9 @@ func (c *Client) request(ctx context.Context, method, path string, body any) ([]
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
 	resp, err := c.httpClient.Do(req)

@@ -30,6 +30,8 @@ export interface EvaluateArgs {
 export interface ClientOptions {
   baseUrl?: string;
   timeoutMs?: number;
+  /** Sent as {@code Authorization: Bearer <token>} on every request when set. */
+  token?: string;
   /** Injectable fetch (for tests); defaults to the global fetch. */
   fetch?: typeof fetch;
 }
@@ -118,21 +120,26 @@ function buildHttpError(
 export class Client {
   readonly baseUrl: string;
   readonly timeoutMs: number;
+  readonly token?: string;
   fetch: typeof fetch;
 
   constructor(opts: ClientOptions = {}) {
     this.baseUrl = (opts.baseUrl ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
     this.timeoutMs = opts.timeoutMs ?? 5000;
+    this.token = opts.token;
     this.fetch = opts.fetch ?? globalThis.fetch;
   }
 
   private async request(method: string, path: string, body?: unknown): Promise<string> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (this.token !== undefined) headers.Authorization = `Bearer ${this.token}`;
     try {
       const res = await this.fetch(this.baseUrl + path, {
         method,
-        headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });

@@ -148,6 +148,26 @@ test("non-2xx body is capped at 64 KiB even when the server sends more", async (
   );
 });
 
+test("token set: Authorization bearer header on every request", async () => {
+  const calls: Call[] = [];
+  const c = new Client({ token: "app-token", fetch: fakeFetch(200, '{"decision": true}', calls) });
+  await c.evaluate({ subject: { id: "a" }, action: "Read", resource: { id: "b" } });
+  await c.healthy();
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal((call.init.headers as Record<string, string>).Authorization, "Bearer app-token");
+  }
+});
+
+test("no token: no Authorization header on any request", async () => {
+  const { c, calls } = clientWith(200, '{"decision": true}');
+  await c.evaluate({ subject: { id: "a" }, action: "Read", resource: { id: "b" } });
+  await c.healthy();
+  assert.ok(!("Authorization" in (calls[0].init.headers as Record<string, string>)));
+  // GET carried no headers at all before the option existed; still none.
+  assert.equal(calls[1].init.headers, undefined);
+});
+
 test("pubkey returns kid", async () => {
   const { c } = clientWith(200, '{"kid": "deadbeef"}');
   assert.equal(await c.pubkey(), "deadbeef");
