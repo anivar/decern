@@ -522,4 +522,64 @@ mod tests {
         assert_eq!(r.id, "alice");
         assert!(parse_ref("noseparator").is_err());
     }
+
+    /// The flags a docs/CLI.md option table names, in row order.
+    pub(crate) fn documented_flags(doc: &str, heading: &str) -> Vec<String> {
+        let start = doc
+            .find(heading)
+            .unwrap_or_else(|| panic!("{heading} not found in docs/CLI.md"));
+        let section = &doc[start + heading.len()..];
+        let section = &section[..section.find("\n## ").unwrap_or(section.len())];
+        section
+            .lines()
+            .filter_map(|l| l.strip_prefix("| `--"))
+            .map(|rest| {
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| *c != ' ' && *c != '`')
+                    .collect();
+                format!("--{name}")
+            })
+            .collect()
+    }
+
+    /// The gate's own control: extraction sees exactly the flags a table names — value
+    /// placeholders, boolean rows, and prose stripped — so a diff against clap means
+    /// what it says.
+    #[test]
+    fn documented_flags_reads_a_table_faithfully() {
+        let doc = "## `decern fake`\n\n| Option | Meaning |\n|---|---|\n\
+                   | `--alpha <X>` | With a placeholder. |\n\
+                   | `--beta` | A boolean row. |\n\n## `decern next`\n\n| `--gamma` | Other section. |\n";
+        assert_eq!(
+            documented_flags(doc, "## `decern fake`"),
+            vec!["--alpha".to_owned(), "--beta".to_owned()]
+        );
+    }
+
+    /// docs/CLI.md's option tables are a claim about the binary, and flags have shipped
+    /// with the two out of step before — nothing noticed until a reader did. This diffs
+    /// each subcommand's table against clap, by flag name, so drift is a red build
+    /// instead of a stale page. Placeholders and prose stay the table's own.
+    #[test]
+    fn every_cli_table_matches_the_binary() {
+        use clap::CommandFactory;
+        let doc = include_str!("../../../docs/CLI.md");
+        let cmd = Cli::command();
+        for sub in cmd.get_subcommands() {
+            let heading = format!("## `decern {}`", sub.get_name());
+            let mut documented = documented_flags(doc, &heading);
+            let mut real: Vec<String> = sub
+                .get_arguments()
+                .filter(|a| !matches!(a.get_id().as_str(), "help" | "version"))
+                .filter_map(|a| a.get_long().map(|l| format!("--{l}")))
+                .collect();
+            documented.sort();
+            real.sort();
+            assert_eq!(
+                documented, real,
+                "the {heading} table and the binary disagree — fix whichever is wrong"
+            );
+        }
+    }
 }
