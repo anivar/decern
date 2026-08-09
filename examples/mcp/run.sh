@@ -47,10 +47,10 @@ MCP_ISSUER_PUBKEY=$PUB PDP_URL="http://127.0.0.1:$PDP_PORT" MCP_PORT=$MCP_PORT \
   uv run examples/mcp/server.py &
 SRV=$!
 trap 'kill "$PDP" "$SRV" 2>/dev/null || true; rm -rf "$WORK"' EXIT
-until curl -sf "localhost:$PDP_PORT/healthz" >/dev/null 2>&1; do sleep 0.3; done
+until curl -sf "http://127.0.0.1:$PDP_PORT/healthz" >/dev/null 2>&1; do sleep 0.3; done
 # The MCP endpoint answers GET with 405 by design; readiness is the PRM document.
-until curl -sf "localhost:$MCP_PORT/.well-known/oauth-protected-resource" >/dev/null 2>&1; do sleep 0.3; done
-KID=$(curl -s "localhost:$PDP_PORT/pubkey" | jq -r .kid)
+until curl -sf "http://127.0.0.1:$MCP_PORT/.well-known/oauth-protected-resource" >/dev/null 2>&1; do sleep 0.3; done
+KID=$(curl -s "http://127.0.0.1:$PDP_PORT/pubkey" | jq -r .kid)
 echo "   serving; ledger key = $KID"
 
 # A conformant client call: Accept both content types, the three required headers, the
@@ -149,7 +149,9 @@ grep -q "HTTP/1.1 401" <<<"$OUT" && grep -q resource_metadata <<<"$OUT"
 echo "   both refused, WWW-Authenticate present."
 
 echo
-echo "== 10. The ledger holds all four decisions, arguments digest-bound =="
+# NOTE for beat authors: every tools/call that reaches the PDP appends a ledger
+# record, so ADDING A BEAT SHIFTS EVERY SEQ ASSERTED BELOW. Recount before merging.
+echo "== 10. The ledger holds all five decisions, arguments digest-bound =="
 kill "$PDP" 2>/dev/null || true; wait "$PDP" 2>/dev/null || true
 cargo run -q -p decern-cli -- verify --ledger "$LEDGER" --pubkey "$KID"
 # seq 0 legacy allow, 1 allow, 2 money deny, 3 step-up allow, 4 tenant deny —
