@@ -5,9 +5,9 @@
 
 | Version | Supported |
 | ------- | --------- |
-| 0.1.x   | Yes       |
+| latest minor | Yes |
 
-Only the latest 0.1.x release receives security fixes.
+Only the latest minor release receives security fixes — version-free on purpose, so this page cannot go stale when a release ships.
 
 ## Reporting a Vulnerability
 

@@ -196,7 +196,7 @@
       <aside style="border:1px solid #0C0F0E;background:#FFFFFF">
         <div style="border-bottom:1px solid #0C0F0E;background:#EDF3F1;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px">
           <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67">At a glance</span>
-          <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;border:1px solid #C4CFCB;padding:6px 8px">unreleased</span>
+          <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;border:1px solid #C4CFCB;padding:6px 8px">v0.2.0</span>
         </div>
         <dl style="margin:0;padding:8px 20px 20px">
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
@@ -297,13 +297,13 @@
           </article>
           <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:26px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Area 02</p>
-            <h3 style="font:600 17px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">An enforcement adapter</h3>
-            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">Put decern behind an HTTP or gRPC gateway — a thin client over the server.</p>
+            <h3 style="font:600 17px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Harden the enforcement adapter</h3>
+            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">The HTTP shim shipped in examples/ext_authz_adapter — extend it, or bring the gRPC ext_authz variant — a thin client over the server.</p>
           </article>
           <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:26px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Area 03</p>
             <h3 style="font:600 17px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Authority-graph tooling</h3>
-            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">Traversal, revocation blast-radius and graph export over the kernel's directory.</p>
+            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">Authority-graph export — blast-radius shipped; DOT and Mermaid renderings remain over the kernel's directory.</p>
           </article>
           <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:26px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Area 04</p>
@@ -504,7 +504,7 @@
               <div class="dc-clean" style="display:grid;grid-template-columns:56px 84px minmax(190px,1fr) 96px 104px;gap:16px;padding:15px 0;border-bottom:1px solid #E1E7E4;align-items:baseline;min-width:640px">
                 <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">0002</span>
                 <span style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">deny</span>
-                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E">agent-7 · Transfer · account9</span>
+                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E">agent-7 · MoveMoney · account9</span>
                 <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">9f3c…a1</span>
                 <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B">intact</span>
               </div>
@@ -513,7 +513,7 @@
               <div class="dc-tampered" style="display:grid;grid-template-columns:56px 84px minmax(190px,1fr) 96px 104px;gap:16px;padding:15px 0;border-bottom:1px solid #E1E7E4;align-items:baseline;background:#F6EBEB;min-width:640px">
                 <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">0002</span>
                 <span style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">allow</span>
-                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">agent-7 · Transfer · account9</span>
+                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">agent-7 · MoveMoney · account9</span>
                 <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">9f3c…a1</span>
                 <span style="font:500 12px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">mismatch</span>
               </div>
@@ -555,6 +555,7 @@
     "resource_type": "Resource", "resource_id": "claim1",
     "context": { "now": 1785682110 },
     "decision": true, "reasons": ["P-read"],
+    "digests": {"authority": "cb03c58cb1f6…", "parameters": "f2eaa74d032e…"},
     "sponsor": { "kind": "Principal", "id": "corp" }
   },
   "prev":    "0000000000000000000000000000000000000000000000000000000000000000",
@@ -756,7 +757,7 @@
         <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border:1px solid #0C0F0E;margin-top:36px">
           <div style="padding:28px;border-right:1px solid #0C0F0E;background:#EDF3F1">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">What is next</p>
-            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">Derive who a decision was about, rather than accepting it named. Check a log against an outside anchor from the CLI. Show the blast radius before a revocation, and explain a recorded decision after it. OAuth, vendor credentials and approval UX stay outside the decision plane.</p>
+            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">Record who asserted a mission transition, not only a decision. Derive approval at the decision point by default, not from the request. Publish a signed revocation feed a gateway can hold open. Fetch and store anchors from the CLI, for single and sharded logs alike. OAuth, vendor credentials and approval UX stay outside the decision plane.</p>
             <p style="font:400 12px/1.7 'IBM Plex Mono',monospace;color:#849490;margin:16px 0 0"><a href="https://github.com/anivar/decern/blob/main/ROADMAP.md" style="font:400 12px/1.7 'IBM Plex Mono',monospace">ROADMAP.md</a></p>
           </div>
           <div style="padding:28px;background:#FFFFFF">

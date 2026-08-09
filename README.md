@@ -95,17 +95,21 @@ Every decision lands in an append-only, Ed25519-signed, hash-chained ledger, and
 allow. A crash-torn tail heals; truncating committed history is detected.
 
 <p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: the caller is established, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p> Here an
-unrecognized caller is refused a `MoveMoney`; `prev` is the chain link:
+unrecognized caller is refused a `MoveMoney` — the money-gate forbid fires by name, no
+`sponsor` is derived for a caller the directory does not know, the exact request is
+digest-bound, and `prev` is the chain link:
 
 ```json
-{"entry":{"seq":1,"ts_ms":1785682110000,
+{"entry":{"seq":1,"ts_ms":1786245929000,
           "subject_type":"Principal","subject_id":"agent-7",
           "action":"MoveMoney","resource_type":"Resource","resource_id":"account9",
-          "context":{"now":1785682110},"decision":false},
- "prev":   "8f658ccb5595b7e85a9f020f6a128985929865558c642505e206134337e40e41",
- "hash":   "590547867e1d4592d68d028f0d61745146ab986499dfadd073eacafcf58e63b8",
- "sig_b64":"vtUu4gP1CkgqKIYDpHuYHtbez/XROdcnpOq8Y3aZdbfeVHK2tT3mpp9yvmTlTF2QtYtZxg7TbP/f6SqfZ/eWDQ==",
- "kid":    "d9396c76113e7aa7126b8358063331f9749ece673ddfdbe8b29661bf03714372"}
+          "context":{"now":1786245929},"decision":false,"reasons":["F-money"],
+          "digests":{"authority":"cb03c58cb1f689cc270f99791138dbd913d25bd50c6ee2f70a41206ad795f9be",
+                     "parameters":"5b86c3bfd81d4092515553da5c4063222554e8e7b5a053271699e78b4628f04b"}},
+ "prev":   "78d312d1b88a75d8441e19920408e3a8438ec2d547e7b5496636ba37a4bed8a6",
+ "hash":   "7bd414059c27b912b87ba359d362830d81a63163c06c7d9ca0c7f5d0ac335205",
+ "sig_b64":"gdyqqGJQB75EFgzBhAt2WVSGMucdyCeECYsCqiMx8QugQ6+zmeQOSBWsxJq7jhEZkO2pZsB3K+88E0bjf+l2CQ==",
+ "kid":    "46a941e7d9536df4922254a6a3cf983bd90ea3d2264c44390257adca00468fff"}
 ```
 
 Beyond the decision itself, a record carries accountability columns. The
