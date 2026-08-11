@@ -221,9 +221,9 @@ pub struct Entry {
     pub decision_subject: Option<DecisionSubject>,
     /// The caller the server verified when it took this request — who ASSERTED the
     /// subject, distinct from the subject itself and from the accountable sponsor.
-    /// Present only under bearer validation, where it is what the token proved, and
-    /// only on decision records — mission lifecycle records do not carry it. Absent
-    /// under a trusted front: an assertion the server did not verify itself does not
+    /// Present only under bearer validation, where it is what the token proved, on
+    /// decision records and mission lifecycle records (`Mission.Approve`, `Mission.Terminate`).
+    /// Absent under a trusted front: an assertion the server did not verify itself does not
     /// belong on a permanent record. Descriptive, never a decision input.
     ///
     /// The token's `sub` is written verbatim, permanently, and the subject-side

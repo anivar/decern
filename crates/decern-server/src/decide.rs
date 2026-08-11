@@ -147,6 +147,11 @@ pub(crate) async fn decide(
     // sole time source for the decay/expiry gate, so honoring a caller's `now`
     // would let `{"now":0}` win an Allow for an expired principal.
     ctx["now"] = json!(now_s);
+    // A caller-supplied `asserted_by` key in the request context must not appear
+    // on the permanent record alongside the server-derived top-level column.
+    if let Some(obj) = ctx.as_object_mut() {
+        obj.remove("asserted_by");
+    }
     let subject = EntityRef {
         ty: req.subject.ty,
         id: req.subject.id,
@@ -853,6 +858,33 @@ mod tests {
         assert!(
             !recorded.contains("carol@example.com"),
             "a refused handle must never reach the ledger: {recorded}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A caller-supplied `context.asserted_by` look-alike must be stripped before recording.
+    /// It must not shadow or coexist with the top-level server-derived `asserted_by` column.
+    #[tokio::test]
+    async fn forged_context_asserted_by_is_stripped_from_ledger_entry() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let req: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"corp"},
+                "action":{"name":"Read"},
+                "resource":{"type":"Resource","id":"claim1"},
+                "context":{"asserted_by":{"sub":"forged-caller"}}}"#,
+        )
+        .unwrap();
+        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
+        let last = records.last().expect("decision recorded");
+        assert!(
+            last["entry"]["context"].get("asserted_by").is_none(),
+            "caller-supplied asserted_by must be stripped from context: {last}"
         );
         let _ = std::fs::remove_dir_all(&base);
     }
