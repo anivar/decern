@@ -67,6 +67,15 @@ jobs:
         if: steps.relevant.outputs.run == 'true'
         run: cargo fmt -- --check
 
+      - name: Install cargo-deny
+        if: steps.relevant.outputs.run == 'true'
+        run: cargo install cargo-deny --locked
+
+      - name: Check supply-chain (cargo-deny)
+        if: steps.relevant.outputs.run == 'true'
+        run: cargo deny check
+
       - name: Run integration tests
         if: steps.relevant.outputs.run == 'true'
         run: cargo test
+
