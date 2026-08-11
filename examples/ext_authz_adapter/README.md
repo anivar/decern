@@ -7,20 +7,17 @@ Translates incoming API gateway authorization checks (e.g. NGINX `auth_request`,
 
 ---
 
-## Security: The Trust Boundary (CRITICAL)
+## Security and the trust boundary
 
-> [!CAUTION]
-> **Authentication Bypass Hazard**: The `--subject-header` flag configures which HTTP header the adapter reads as the caller's verified identity (default: `x-forwarded-subject`).
->
-> Whoever can reach the adapter directly can claim to be **any subject**. This is not a flaw in the design — it is how forward-auth adapters work — but it makes the deployment responsible for something the code cannot enforce:
->
-> **The API gateway MUST set that header itself (from verified identity/JWT) AND strip any client-supplied copy of it.**
->
-> If the gateway fails to strip client-supplied headers before forwarding to the adapter, **the adapter becomes an authentication bypass wearing an authorization decision.**
+The `--subject-header` flag configures which HTTP header the adapter reads as the caller's verified identity (default: `x-forwarded-subject`).
+
+Whoever can reach the adapter directly can claim to be any subject. This is not a flaw in the design — it is how forward-auth adapters work — but it makes the deployment responsible for something the code cannot enforce:
+
+The API gateway must set that header itself (from verified identity/JWT) and strip any client-supplied copy of it. If the gateway fails to strip client-supplied headers before forwarding to the adapter, the adapter becomes an authentication bypass wearing an authorization decision.
 
 ---
 
-## Build and Run
+## Build and run
 
 ```bash
 # Build the adapter standalone binary
@@ -32,7 +29,7 @@ cargo build --release
 
 ---
 
-## CLI Options
+## CLI options
 
 | Flag | Default | Description |
 |---|---|---|
@@ -48,7 +45,7 @@ cargo build --release
 
 ---
 
-## Adapter Endpoints
+## Adapter endpoints
 
 | Endpoint | Method | Purpose | Response |
 |---|---|---|---|
@@ -57,7 +54,7 @@ cargo build --release
 
 ---
 
-## Header Mapping (Gateway → AuthZEN)
+## Header mapping
 
 | Incoming Gateway Header | AuthZEN Payload Field | Example Value |
 |---|---|---|
@@ -67,14 +64,11 @@ cargo build --release
 | Value of `--uri-header` | `resource.id` | `"claim1"` |
 | Configured `--resource-type` | `resource.type` | `"Resource"` |
 
-The URI header's value is passed **verbatim** as the resource id — decern matches it against the
-ids its model declares, so the gateway maps paths to resource ids (`/claims/claim1` → `claim1`)
-before forwarding, or the model declares path-shaped ids. A value the model has never heard of
-denies, which is the correct default.
+The URI header's value is passed verbatim as the resource id — decern matches it against the ids its model declares, so the gateway maps paths to resource ids (`/claims/claim1` → `claim1`) before forwarding, or the model declares path-shaped ids. A value the model has never heard of denies, which is the correct default.
 
 ---
 
-## Gateway Configuration Examples
+## Gateway configuration examples
 
 ### NGINX `auth_request`
 
@@ -98,7 +92,7 @@ server {
         internal;
         proxy_pass http://127.0.0.1:9090/check;
 
-        # 3. MUST strip incoming client copy and inject verified subject
+        # 3. Strip incoming client copy and inject verified subject
         proxy_set_header x-forwarded-subject $remote_user;
         proxy_set_header x-forwarded-method $request_method;
         proxy_set_header x-forwarded-uri $request_uri;
@@ -131,7 +125,7 @@ http:
         trustForwardHeader: false
 ```
 
-### Envoy HTTP `ext_authz` Filter
+### Envoy HTTP `ext_authz` filter
 
 ```yaml
 http_filters:
@@ -157,11 +151,12 @@ http_filters:
 
 ---
 
-## How It Composes With decern-serve Caller Postures (#45 / PR #72)
+## How it composes with decern-serve caller postures
 
 `decern-serve` requires an explicit caller posture on boot. The adapter supports both postures seamlessly:
 
-### Option A: Standard Proxy Trust Posture (`--trust-proxy`)
+### Standard proxy trust posture (`--trust-proxy`)
+
 When `decern-serve` and `ext-authz-adapter` run side-by-side on a private network or loopback interface (`127.0.0.1`), no bearer token is required on PDP calls:
 
 ```bash
@@ -172,11 +167,12 @@ decern-serve --ledger /tmp/decern.jsonl --addr 127.0.0.1:8080 --trust-proxy
 ext-authz-adapter --listen-addr 127.0.0.1:9090 --pdp-url http://127.0.0.1:8080
 ```
 
-### Option B: Bearer Validation Posture (`--bearer-issuer`)
+### Bearer validation posture (`--bearer-issuer`)
+
 When `decern-serve` requires OAuth 2.1 / RFC 9068 bearer validation (`--bearer-issuer` / `--bearer-audience` / `--bearer-issuer-key`), the adapter acts as the client holding the service access token. Pass `--pdp-bearer-token <TOKEN>` to the adapter:
 
 ```bash
-# 1. Boot decern-serve with Ed25519 bearer token validation enabled (#45)
+# 1. Boot decern-serve with Ed25519 bearer token validation enabled
 decern-serve \
   --addr 127.0.0.1:8080 \
   --bearer-issuer https://auth.example.com \
@@ -192,27 +188,27 @@ ext-authz-adapter \
 
 ---
 
-## Observability and Structured Logging
+## Observability and structured logging
 
 The adapter emits single-line, key-value formatted logs to `stderr` without external logging dependencies. Log output is machine-readable and ready for log aggregators (e.g. Datadog, Grafana Loki, AWS CloudWatch):
 
 ```text
 # Successful authorization evaluation:
-check: subject=corp action=Read resource=/claims/claim1 decision=allow upstream_ms=4
+check: subject="corp" action="Read" resource="claim1" decision=allow upstream_ms=4
 
 # Policy refusal:
-check: subject=attacker action=Write resource=/claims/claim1 decision=deny upstream_ms=2
+check: subject="attacker" action="Write" resource="claim1" decision=deny upstream_ms=2
 
 # Unauthenticated / Missing subject header:
 check: status=403 decision=deny error="missing forwarded header 'x-forwarded-subject'"
 
 # Downstream PDP evaluation failure / timeout:
-check_error: subject=corp action=Read resource=/claims/claim1 error="PDP evaluation request timed out after 5s" upstream_ms=5001
+check_error: subject="corp" action="Read" resource="claim1" error="PDP evaluation request timed out after 5s" upstream_ms=5001
 ```
 
 ---
 
-## Fail-Closed Contract
+## Fail-closed contract
 
 The adapter enforces a strict fail-closed contract on every request path:
 
