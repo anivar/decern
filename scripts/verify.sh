@@ -51,13 +51,13 @@ no_lineage() {
        --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
   if grep -rnwE 'TODO|FIXME|HACK|XXX' . \
        --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
-  if grep -rniwE 'moat' . \
+  if grep -rniwE 'moat|wedge|commercial|pitch|headline' . \
        --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
   if grep -rniE 'adoption unlock' . \
        --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
-  # Public-launch leak guards over shipped Rust: no internal-review process
-  # narration, no phantom HTTP-route strings. `--include='*.rs'` excludes this
-  # script, so the patterns don't self-match.
+  # Contributor-facing hygiene guards over shipped Rust: no internal-review
+  # process narration, no phantom HTTP-route strings. `--include='*.rs'`
+  # excludes this script, so the patterns don't self-match.
   if grep -rniE 'adversarial[ -]review' . \
        --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
   if grep -rnE '/admin/v1/|/observe/v1/' . \
