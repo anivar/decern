@@ -9,6 +9,7 @@ mod decide;
 mod mission;
 mod record;
 mod routes;
+mod sig;
 #[cfg(test)]
 mod testutil;
 
@@ -94,11 +95,25 @@ struct Args {
         requires = "bearer_issuer"
     )]
     bearer_scopes: Vec<String>,
+    /// An agent identifier this deployment recognizes and the one Ed25519 key it may
+    /// sign requests with, as `ID=HEX`. Repeatable: one entry per agent, and a key
+    /// rollover is a second entry for the same ID rather than an atomic swap. Turns on
+    /// RFC 9421 signed-request validation (see `docs/CLI.md` "Sender-constrained caller
+    /// authentication") for the decision and mission-mutation endpoints. An identifier
+    /// with no entry here cannot authenticate under this mode, by design: keys are
+    /// configured, never fetched.
+    #[arg(long = "signed-agent-key", value_name = "ID=HEX", requires = "signed_audience", conflicts_with_all = ["bearer_issuer", "trust_proxy"])]
+    signed_agent_keys: Vec<String>,
+    /// This deployment's resource identifier, which a signed request's bound token's
+    /// `aud` must contain. Required with `--signed-agent-key`, same role as
+    /// `--bearer-audience`.
+    #[arg(long, value_name = "URI")]
+    signed_audience: Option<String>,
     /// Accept every caller, because something in front has already authenticated them.
-    /// One of this or the bearer flags is required to start: "no token configured" and
-    /// "authentication deliberately delegated" are indistinguishable from inside this
+    /// One of this or the bearer/signed flags is required to start: "no token configured"
+    /// and "authentication deliberately delegated" are indistinguishable from inside this
     /// process and mean very different things outside it.
-    #[arg(long, conflicts_with = "bearer_issuer")]
+    #[arg(long, conflicts_with_all = ["bearer_issuer", "signed_agent_keys"])]
     trust_proxy: bool,
     /// Address to bind. Default loopback.
     #[arg(long, value_name = "ADDR", default_value = "127.0.0.1:8080")]
@@ -184,6 +199,7 @@ pub(crate) struct AppState {
 pub(crate) fn caller_disclosure(caller: &bearer::Caller) -> Value {
     match caller {
         bearer::Caller::Bearer(c) => json!({ "mode": "bearer", "audience": c.audience }),
+        bearer::Caller::Signed(c) => json!({ "mode": "signed", "audience": c.audience }),
         bearer::Caller::TrustedProxy => json!({ "mode": "trusted-proxy" }),
     }
 }
@@ -225,6 +241,30 @@ pub(crate) fn now_secs() -> u64 {
 /// trust boundary on a shared host or inside a container's network namespace, and nothing
 /// here checks peer credentials.
 fn caller_from(args: &Args) -> Result<bearer::Caller> {
+    if !args.signed_agent_keys.is_empty() {
+        let mut agents = std::collections::BTreeMap::new();
+        for entry in &args.signed_agent_keys {
+            let (id, hex_key) = entry
+                .split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("--signed-agent-key {entry} is not ID=HEX"))?;
+            if id.is_empty() {
+                anyhow::bail!("--signed-agent-key {entry} names an empty agent id");
+            }
+            agents.insert(
+                id.to_owned(),
+                parse_issuer_key(hex_key, "--signed-agent-key")?,
+            );
+        }
+        // clap's `requires` establishes this; the check stays for the same reason the
+        // bearer path's does — a future edit to the clap attribute should degrade to
+        // this error, not an unconfigured guard.
+        let Some(audience) = args.signed_audience.clone() else {
+            anyhow::bail!("--signed-agent-key requires --signed-audience");
+        };
+        return Ok(bearer::Caller::Signed(std::sync::Arc::new(
+            sig::SigConfig { agents, audience },
+        )));
+    }
     let Some(issuer) = args.bearer_issuer.clone() else {
         if args.trust_proxy {
             return Ok(bearer::Caller::TrustedProxy);
@@ -232,8 +272,9 @@ fn caller_from(args: &Args) -> Result<bearer::Caller> {
         anyhow::bail!(
             "refusing to serve the decision and mission-mutation endpoints with no way to \
              establish the caller: pass --bearer-issuer/--bearer-audience/--bearer-issuer-key \
-             to validate access tokens here, or --trust-proxy to state that something in front \
-             already authenticates them (see docs/CLI.md \"The trust boundary\")"
+             to validate access tokens here, --signed-agent-key/--signed-audience for signed \
+             requests, or --trust-proxy to state that something in front already \
+             authenticates them (see docs/CLI.md \"The trust boundary\")"
         );
     };
     // A key that cannot be read is a startup failure, never a token that quietly fails to
@@ -277,6 +318,7 @@ async fn main() -> Result<()> {
     let caller = Arc::new(caller_from(&args)?);
     let caller_desc = match caller.as_ref() {
         bearer::Caller::Bearer(c) => format!("bearer for {}", c.audience),
+        bearer::Caller::Signed(c) => format!("signed-request for {}", c.audience),
         bearer::Caller::TrustedProxy => "caller trusted (--trust-proxy)".to_owned(),
     };
     let model = match &args.model {
@@ -507,6 +549,53 @@ mod tests {
         assert_eq!(cfg.audience, "https://pdp.example/");
         assert_eq!(cfg.keys.len(), 1);
         assert_eq!(cfg.scopes, vec!["decern.decide".to_owned()]);
+    }
+
+    #[test]
+    fn the_signed_agent_key_flags_configure_the_guard() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let hex_key = hex::encode(key.verifying_key().to_bytes());
+        let args = Args::parse_from([
+            "decern-serve",
+            "--signed-agent-key",
+            &format!("agent-1={hex_key}"),
+            "--signed-audience",
+            "https://pdp.example/access/v1/evaluation",
+        ]);
+        let bearer::Caller::Signed(cfg) = caller_from(&args).unwrap() else {
+            panic!("--signed-agent-key must configure the signed guard");
+        };
+        assert_eq!(cfg.audience, "https://pdp.example/access/v1/evaluation");
+        assert_eq!(cfg.agents.len(), 1);
+        assert!(cfg.agents.contains_key("agent-1"));
+    }
+
+    /// `requires = "signed_audience"` on the clap arg makes this a parse-time failure,
+    /// not a `caller_from` one — checked here so the enforcement point can't quietly move.
+    #[test]
+    fn signed_agent_key_without_signed_audience_is_a_startup_failure() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let hex_key = hex::encode(key.verifying_key().to_bytes());
+        assert!(
+            Args::try_parse_from([
+                "decern-serve",
+                "--signed-agent-key",
+                &format!("agent-1={hex_key}"),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_malformed_signed_agent_key_entry_is_a_startup_failure() {
+        let args = Args::parse_from([
+            "decern-serve",
+            "--signed-agent-key",
+            "agent-1-with-no-equals-sign",
+            "--signed-audience",
+            "https://pdp.example/access/v1/evaluation",
+        ]);
+        assert!(caller_from(&args).is_err());
     }
 
     #[test]

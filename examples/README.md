@@ -11,6 +11,10 @@ Runnable end to end, tested in CI, never published as crates.
 - [`ext_authz_adapter/`](ext_authz_adapter/) — a forward-auth shim that puts decern behind
   NGINX `auth_request`, Traefik `forwardAuth`, or Envoy `ext_authz`: the gateway
   integration. Fails closed on deny, incomplete forwards, and an unreachable PDP.
+- [`signed-request/`](signed-request/) — a caller that proves possession of its key on
+  every request (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), and the
+  same token refused when the signature comes from a different key.
 
-The two integrations are a pair: same decision point, consulted from inside the tool
-server or from the gateway in front of it.
+The first two integrations are a pair: same decision point, consulted from inside the tool
+server or from the gateway in front of it. The third is about the other axis — not where
+the decision point sits, but how much a caller has to prove to reach it.

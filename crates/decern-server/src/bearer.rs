@@ -47,6 +47,12 @@ const MAX_ECHO: usize = 64;
 pub(crate) enum Caller {
     /// A token is required, verified, and bound to this server as audience.
     Bearer(Box<Config>),
+    /// A signature over the request itself is required, verified against a configured
+    /// per-agent key, and the bound token verified and bound to this server as audience.
+    /// See [`crate::sig`]. `Arc`, not `Box`: passed by value (cheap clone) into the
+    /// per-request async handler rather than borrowed across it, which is what a
+    /// borrowed reference held across a nested `.await` was found not to compile as.
+    Signed(std::sync::Arc<crate::sig::SigConfig>),
     /// Something in front has already authenticated the caller. Named rather than defaulted,
     /// because "no token configured" and "authentication deliberately delegated" look identical
     /// from inside the process and mean very different things outside it.
@@ -114,9 +120,13 @@ pub(crate) async fn guard(
     mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
+    if let Caller::Signed(cfg) = caller.as_ref() {
+        return signed_guard(std::sync::Arc::clone(cfg), req, next).await;
+    }
     let cfg = match caller.as_ref() {
         Caller::TrustedProxy => return next.run(req).await,
         Caller::Bearer(cfg) => cfg,
+        Caller::Signed(_) => unreachable!("handled above"),
     };
     let header = req
         .headers()
@@ -130,6 +140,68 @@ pub(crate) async fn guard(
         }
         Err(denied) => denied.into_response(cfg),
     }
+}
+
+/// The [`Caller::Signed`] path. A separate function because the request shape it reads
+/// from (method/authority/path/three headers) has nothing in common with the bearer
+/// path's single header — forcing them through one function would blur, not share, logic.
+async fn signed_guard(
+    cfg: std::sync::Arc<crate::sig::SigConfig>,
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    fn header(req: &axum::extract::Request, name: &str) -> Option<String> {
+        req.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+    }
+    let signature_key_header = header(&req, "signature-key");
+    let signature_input_header = header(&req, "signature-input");
+    let signature_header = header(&req, "signature");
+    let authority = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let method = req.method().as_str().to_owned();
+    let path = req.uri().path().to_owned();
+
+    let signed_req = crate::sig::SignedRequest {
+        method: &method,
+        authority: &authority,
+        path: &path,
+        signature_key_header: signature_key_header.as_deref(),
+        signature_input_header: signature_input_header.as_deref(),
+        signature_header: signature_header.as_deref(),
+    };
+    match crate::sig::authenticate(&signed_req, &cfg, now_secs() as i64) {
+        Ok(signed) => {
+            req.extensions_mut().insert(Authenticated {
+                subject: signed.agent.clone(),
+                client_id: signed.agent,
+                issuer: signed.issuer,
+            });
+            next.run(req).await
+        }
+        Err(denied) => signed_denied_response(denied),
+    }
+}
+
+/// A [`Denied`] under the signed-request path, as a response. Deliberately not
+/// [`Denied::into_response`]: that method's `WWW-Authenticate: Bearer ...` challenge
+/// names the wrong scheme for this path, and RFC 9421 defines no challenge header of its
+/// own to construct instead — the body alone carries the reason.
+fn signed_denied_response(denied: Denied) -> Response {
+    let status = match denied {
+        Denied::InsufficientScope(_) => axum::http::StatusCode::FORBIDDEN,
+        _ => axum::http::StatusCode::UNAUTHORIZED,
+    };
+    let body = axum::Json(
+        serde_json::json!({ "error": "invalid_signature", "error_description": denied.detail() }),
+    );
+    (status, body).into_response()
 }
 
 fn now_secs() -> u64 {
