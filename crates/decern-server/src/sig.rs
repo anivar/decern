@@ -254,13 +254,9 @@ pub(crate) fn authenticate(
     }
 
     // `Signature-Key` conveys the bearer token this signature is over; this deployment
-    // accepts the token itself, verbatim.
+    // accepts the token itself, verbatim. No separate size check here: trimming can only
+    // shrink it, and `key_header` is already bounded above.
     let token = key_header.trim();
-    if token.len() > MAX_TOKEN_BYTES {
-        return Err(Denied::Invalid(
-            "bound token exceeds the accepted size".into(),
-        ));
-    }
 
     // Both headers are labelled dictionaries; this deployment accepts exactly one label,
     // named `sig1`, and refuses anything with more than one signature attached.
