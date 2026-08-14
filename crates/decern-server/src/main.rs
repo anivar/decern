@@ -56,7 +56,8 @@ struct Args {
     /// Require every decision to name a live Mission in `context.mission`.
     /// When set, client-supplied `human_approved` / `consent` are ignored; those
     /// flags are derived server-side from the verified Mission (or the decision
-    /// is Denied). Start opt-in; operators harden MoveMoney behind this flag.
+    /// is Denied). MoveMoney requires a Mission unconditionally regardless of this
+    /// flag; this opt-in extends the same requirement to Read and AccessPII.
     #[arg(long)]
     require_mission: bool,
     /// Hex Ed25519 public key of an issuer whose standing tokens this deployment
