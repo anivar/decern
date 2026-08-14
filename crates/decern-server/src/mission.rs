@@ -127,7 +127,7 @@ fn mission_reference(approver: &str, s256: &str) -> Value {
 /// `POST /mission/v1/approve` — attenuate a scoped Mission, record it, then register it.
 pub(crate) async fn mission_approve(
     State(st): State<AppState>,
-    caller: Option<axum::Extension<crate::bearer::Authenticated>>,
+    caller: Option<axum::Extension<crate::caller::Authenticated>>,
     Json(req): Json<MissionApproveReq>,
 ) -> Response {
     let asserted_by = caller.map(|axum::Extension(who)| decern_ledger::AssertedBy {
@@ -264,7 +264,7 @@ pub(crate) async fn mission_get(
 /// `POST /mission/v1/{s256}/terminate` — terminate (no revival), then record it.
 pub(crate) async fn mission_terminate(
     State(st): State<AppState>,
-    caller: Option<axum::Extension<crate::bearer::Authenticated>>,
+    caller: Option<axum::Extension<crate::caller::Authenticated>>,
     UrlPath(s256): UrlPath<String>,
 ) -> Response {
     let asserted_by = caller.map(|axum::Extension(who)| decern_ledger::AssertedBy {
@@ -576,7 +576,7 @@ mod tests {
         let (st, pubkey) = mission_state_at(&base);
         let ledger_path = base.join("decern-ledger.jsonl");
 
-        let auth = crate::bearer::Authenticated {
+        let auth = crate::caller::Authenticated {
             subject: "operator-1".into(),
             client_id: "admin-cli".into(),
             issuer: "https://auth.example.com".into(),
@@ -639,7 +639,7 @@ mod tests {
         let (st, pubkey) = mission_state_at(&base);
         let ledger_path = base.join("decern-ledger.jsonl");
 
-        let auth_approve = crate::bearer::Authenticated {
+        let auth_approve = crate::caller::Authenticated {
             subject: "operator-1".into(),
             client_id: "admin-cli".into(),
             issuer: "https://auth.example.com".into(),
@@ -657,7 +657,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let s256 = body["s256"].as_str().unwrap().to_owned();
 
-        let auth_term = crate::bearer::Authenticated {
+        let auth_term = crate::caller::Authenticated {
             subject: "operator-2".into(),
             client_id: "ops-tool".into(),
             issuer: "https://auth.example.com".into(),
@@ -757,7 +757,7 @@ mod tests {
         let (status, body_a) = body_json(
             mission_approve(
                 State(st.clone()),
-                Some(axum::Extension(crate::bearer::Authenticated {
+                Some(axum::Extension(crate::caller::Authenticated {
                     subject: "caller-a".into(),
                     client_id: "client-a".into(),
                     issuer: "https://auth.example.com".into(),
@@ -774,7 +774,7 @@ mod tests {
         let (status, body_b) = body_json(
             mission_approve(
                 State(st.clone()),
-                Some(axum::Extension(crate::bearer::Authenticated {
+                Some(axum::Extension(crate::caller::Authenticated {
                     subject: "caller-b".into(),
                     client_id: "client-b".into(),
                     issuer: "https://auth.example.com".into(),
