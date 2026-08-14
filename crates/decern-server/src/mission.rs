@@ -50,8 +50,14 @@ fn mission_entry(
     approver: &str,
     action: &str,
     s256: &str,
-    context: Value,
+    mut context: Value,
+    asserted_by: Option<decern_ledger::AssertedBy>,
 ) -> Entry {
+    // Defense-in-depth: remove any asserted_by key that somehow reached the context,
+    // so it cannot shadow the server-derived top-level column on the permanent record.
+    if let Some(obj) = context.as_object_mut() {
+        obj.remove("asserted_by");
+    }
     // For a Mission event the accountable-owner is the APPROVER's own delegation root
     // (subject = approver), not the agent the mission authorizes: the approver is who
     // stands behind the grant. Resolved server-side, never read from the request.
@@ -76,6 +82,7 @@ fn mission_entry(
             approver: approver.to_owned(),
             s256: s256.to_owned(),
         }),
+        asserted_by,
         digests: BTreeMap::from([(
             decern_ledger::DIGEST_PARAMETERS.to_owned(),
             parameters_digest,
@@ -120,8 +127,14 @@ fn mission_reference(approver: &str, s256: &str) -> Value {
 /// `POST /mission/v1/approve` — attenuate a scoped Mission, record it, then register it.
 pub(crate) async fn mission_approve(
     State(st): State<AppState>,
+    caller: Option<axum::Extension<crate::bearer::Authenticated>>,
     Json(req): Json<MissionApproveReq>,
 ) -> Response {
+    let asserted_by = caller.map(|axum::Extension(who)| decern_ledger::AssertedBy {
+        sub: who.subject,
+        client_id: who.client_id,
+        iss: who.issuer,
+    });
     let now_s = now_secs();
     let mission = Mission {
         approver: req.approver,
@@ -172,7 +185,15 @@ pub(crate) async fn mission_approve(
         "approved_at": approved.mission.approved_at,
         "s256": s256,
     });
-    let entry = mission_entry(dir, now_s, &approver, "Mission.Approve", &s256, context);
+    let entry = mission_entry(
+        dir,
+        now_s,
+        &approver,
+        "Mission.Approve",
+        &s256,
+        context,
+        asserted_by,
+    );
 
     // Record-then-register, fail-closed on AUTHORITY: append the ledger entry FIRST and
     // register the mission ONLY if that write landed. A record failure → 503 and NOTHING
@@ -243,8 +264,14 @@ pub(crate) async fn mission_get(
 /// `POST /mission/v1/{s256}/terminate` — terminate (no revival), then record it.
 pub(crate) async fn mission_terminate(
     State(st): State<AppState>,
+    caller: Option<axum::Extension<crate::bearer::Authenticated>>,
     UrlPath(s256): UrlPath<String>,
 ) -> Response {
+    let asserted_by = caller.map(|axum::Extension(who)| decern_ledger::AssertedBy {
+        sub: who.subject,
+        client_id: who.client_id,
+        iss: who.issuer,
+    });
     let now_s = now_secs();
     // Resolve the mission first: its approver is the subject/accountable-owner of the
     // termination record, and an unknown reference has nothing to terminate.
@@ -280,6 +307,7 @@ pub(crate) async fn mission_terminate(
         "Mission.Terminate",
         &s256,
         context,
+        asserted_by,
     );
 
     let backend = st.backend.clone();
@@ -313,6 +341,7 @@ mod tests {
         let (status, body) = body_json(
             mission_approve(
                 State(st.clone()),
+                None,
                 Json(approve_req(&["read"], corp_expiry())),
             )
             .await,
@@ -338,6 +367,7 @@ mod tests {
         let (status, body) = body_json(
             mission_approve(
                 State(st.clone()),
+                None,
                 Json(approve_req(&["read"], corp_expiry())),
             )
             .await,
@@ -347,7 +377,8 @@ mod tests {
         let s256 = body["s256"].as_str().unwrap().to_owned();
 
         let (status, _b) =
-            body_json(mission_terminate(State(st.clone()), UrlPath(s256.clone())).await).await;
+            body_json(mission_terminate(State(st.clone()), None, UrlPath(s256.clone())).await)
+                .await;
         assert_eq!(status, StatusCode::OK);
 
         // Because `s256` is now deterministic, a handler re-POST of the SAME grant carries
@@ -359,6 +390,7 @@ mod tests {
         let (status, _b) = body_json(
             mission_approve(
                 State(st.clone()),
+                None,
                 Json(approve_req(&["read"], corp_expiry())),
             )
             .await,
@@ -426,6 +458,7 @@ mod tests {
         let (status, _b) = body_json(
             mission_approve(
                 State(st.clone()),
+                None,
                 Json(approve_req(&["read"], corp_expiry())),
             )
             .await,
@@ -454,6 +487,7 @@ mod tests {
         let (status, _b) = body_json(
             mission_approve(
                 State(st.clone()),
+                None,
                 Json(approve_req(&["read"], corp_expiry())),
             )
             .await,
@@ -468,6 +502,7 @@ mod tests {
         let (status, _b) = body_json(
             mission_approve(
                 State(st),
+                None,
                 Json(approve_req(&["read", "root_everything"], corp_expiry())),
             )
             .await,
@@ -495,6 +530,7 @@ mod tests {
         let (status, body) = body_json(
             mission_approve(
                 State(st.clone()),
+                None,
                 Json(approve_req(&["read", "move_money"], corp_expiry())),
             )
             .await,
@@ -504,7 +540,7 @@ mod tests {
         let s256 = body["s256"].as_str().unwrap().to_owned();
 
         let (status, _b) =
-            body_json(mission_terminate(State(st), UrlPath(s256.clone())).await).await;
+            body_json(mission_terminate(State(st), None, UrlPath(s256.clone())).await).await;
         assert_eq!(status, StatusCode::OK);
 
         let report = decern_ledger::verify(&ledger_path, Some(&pubkey)).unwrap();
@@ -531,6 +567,205 @@ mod tests {
                 "accountable-owner is the approver's own root"
             );
         }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn mission_approve_records_asserted_by_under_bearer_mode() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let ledger_path = base.join("decern-ledger.jsonl");
+
+        let auth = crate::bearer::Authenticated {
+            subject: "operator-1".into(),
+            client_id: "admin-cli".into(),
+            issuer: "https://auth.example.com".into(),
+        };
+
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                Some(axum::Extension(auth)),
+                Json(approve_req(&["read"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 10).unwrap();
+        assert_eq!(records.len(), 1);
+        let entry = &records[0]["entry"];
+        assert_eq!(entry["action"], "Mission.Approve");
+        assert_eq!(entry["resource_id"], s256);
+        assert_eq!(entry["asserted_by"]["sub"], "operator-1");
+        assert_eq!(entry["asserted_by"]["client_id"], "admin-cli");
+        assert_eq!(entry["asserted_by"]["iss"], "https://auth.example.com");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn mission_approve_omits_asserted_by_under_proxy_mode() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let ledger_path = base.join("decern-ledger.jsonl");
+
+        let (status, _body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                None,
+                Json(approve_req(&["read"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 10).unwrap();
+        assert_eq!(records.len(), 1);
+        let entry = &records[0]["entry"];
+        assert!(entry.get("asserted_by").is_none());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn mission_terminate_records_asserted_by_under_bearer_mode() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let ledger_path = base.join("decern-ledger.jsonl");
+
+        let auth_approve = crate::bearer::Authenticated {
+            subject: "operator-1".into(),
+            client_id: "admin-cli".into(),
+            issuer: "https://auth.example.com".into(),
+        };
+
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                Some(axum::Extension(auth_approve)),
+                Json(approve_req(&["read"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+
+        let auth_term = crate::bearer::Authenticated {
+            subject: "operator-2".into(),
+            client_id: "ops-tool".into(),
+            issuer: "https://auth.example.com".into(),
+        };
+
+        let (status, _b) = body_json(
+            mission_terminate(
+                State(st.clone()),
+                Some(axum::Extension(auth_term)),
+                UrlPath(s256.clone()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 10).unwrap();
+        assert_eq!(records.len(), 2);
+        let term_entry = &records[1]["entry"];
+        assert_eq!(term_entry["action"], "Mission.Terminate");
+        assert_eq!(term_entry["asserted_by"]["sub"], "operator-2");
+        assert_eq!(term_entry["asserted_by"]["client_id"], "ops-tool");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn mission_terminate_omits_asserted_by_under_proxy_mode() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let ledger_path = base.join("decern-ledger.jsonl");
+
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                None,
+                Json(approve_req(&["read"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+
+        let (status, _b) =
+            body_json(mission_terminate(State(st), None, UrlPath(s256.clone())).await).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 10).unwrap();
+        assert_eq!(records.len(), 2);
+        let term_entry = &records[1]["entry"];
+        assert_eq!(term_entry["action"], "Mission.Terminate");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn asserted_by_does_not_influence_the_mission_reference() {
+        // The s256 reference is a pure function of the grant's authority, not of who called
+        // the endpoint. Two approvals with different bearer identities for the same grant must
+        // produce the same reference — asserted_by is strictly descriptive, never an input.
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let ledger_path = base.join("decern-ledger.jsonl");
+
+        let (status, body_a) = body_json(
+            mission_approve(
+                State(st.clone()),
+                Some(axum::Extension(crate::bearer::Authenticated {
+                    subject: "caller-a".into(),
+                    client_id: "client-a".into(),
+                    issuer: "https://auth.example.com".into(),
+                })),
+                Json(approve_req(&["read"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let s256_a = body_a["s256"].as_str().unwrap().to_owned();
+
+        // Second approve: same grant, different bearer — hits the idempotent registered path.
+        let (status, body_b) = body_json(
+            mission_approve(
+                State(st.clone()),
+                Some(axum::Extension(crate::bearer::Authenticated {
+                    subject: "caller-b".into(),
+                    client_id: "client-b".into(),
+                    issuer: "https://auth.example.com".into(),
+                })),
+                Json(approve_req(&["read"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let s256_b = body_b["s256"].as_str().unwrap().to_owned();
+
+        assert_eq!(
+            s256_a, s256_b,
+            "reference must be invariant to the bearer identity"
+        );
+
+        // Verify both ledger entries are signed and chained cleanly.
+        let report = decern_ledger::verify(&ledger_path, Some(&pubkey)).unwrap();
+        assert!(report.signatures_checked);
+
         let _ = std::fs::remove_dir_all(&base);
     }
 }
