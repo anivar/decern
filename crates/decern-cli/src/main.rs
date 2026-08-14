@@ -592,4 +592,42 @@ mod tests {
             );
         }
     }
+
+    /// Prove that `explain` handles an `asserted_by`-bearing record without error.
+    /// The four-case matrix (bearer/proxy × approve/terminate) lives in the server tests;
+    /// this confirms the rendering path does not panic or error on the asserted_by field.
+    #[test]
+    fn explain_renders_record_with_asserted_by() {
+        let dir = std::env::temp_dir().join(format!(
+            "decern-cli-test-asserted-by-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ledger_path = dir.join("ledger.jsonl");
+
+        let entry = decern_ledger::Entry {
+            ts_ms: 1000,
+            subject_type: "Principal".into(),
+            subject_id: "corp".into(),
+            action: "Mission.Approve".into(),
+            resource_type: "Mission".into(),
+            resource_id: "abc123".into(),
+            decision: true,
+            asserted_by: Some(decern_ledger::AssertedBy {
+                sub: "operator-1".into(),
+                client_id: "admin-cli".into(),
+                iss: "https://auth.example.com".into(),
+            }),
+            ..Default::default()
+        };
+
+        let key = decern_crypto::generate().unwrap();
+        let mut writer = decern_ledger::Ledger::open(&ledger_path, key).unwrap();
+        writer.append(entry).unwrap();
+
+        assert!(explain(&ledger_path, 0, None, false).is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

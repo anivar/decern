@@ -1,0 +1,1 @@
+- **`asserted_by` on Mission lifecycle records.** Under bearer validation (`--bearer-issuer`), `Mission.Approve` and `Mission.Terminate` ledger records now record the verified bearer identity (`asserted_by`). Absent under `--trust-proxy`. Forged `context.asserted_by` values supplied in request bodies are stripped across all endpoints before recording. Authored by @sameer-kireap.

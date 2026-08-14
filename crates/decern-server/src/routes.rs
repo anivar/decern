@@ -476,6 +476,7 @@ mod tests {
         let (status, body) = body_json(
             mission_approve(
                 State(st.clone()),
+                None,
                 Json(MissionApproveReq {
                     approver: "corp".into(),
                     agent: "corp".into(),
@@ -778,6 +779,7 @@ mod tests {
         let (status, body) = body_json(
             mission_approve(
                 State(st.clone()),
+                None,
                 Json(approve_req(&["read", "move_money"], corp_expiry())),
             )
             .await,
@@ -811,6 +813,7 @@ mod tests {
         let (status, body) = body_json(
             mission_approve(
                 State(st.clone()),
+                None,
                 Json(approve_req(&["read"], corp_expiry())),
             )
             .await,
@@ -819,7 +822,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let s256 = body["s256"].as_str().unwrap().to_owned();
         // approve_req uses agent-mission; terminate then try decide as that agent.
-        let _ = mission_terminate(State(st.clone()), UrlPath(s256.clone())).await;
+        let _ = mission_terminate(State(st.clone()), None, UrlPath(s256.clone())).await;
 
         let mut st = st;
         st.require_mission = true;
@@ -851,6 +854,7 @@ mod tests {
         let (status, body) = body_json(
             mission_approve(
                 State(st.clone()),
+                None,
                 Json(approve_req(&["read"], corp_expiry())),
             )
             .await,
