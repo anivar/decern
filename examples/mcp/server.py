@@ -49,12 +49,16 @@ ISSUER = "https://issuer.example/"
 ISSUER_KEY = Ed25519PublicKey.from_public_bytes(bytes.fromhex(os.environ["MCP_ISSUER_PUBKEY"]))
 
 # The scope this deployment's step-up story is written in. A verified token carrying it
-# is the AS's statement that a human approved money movement for this bearer; the server
-# relays that statement into the decision context. decern's own boundary applies
-# verbatim: establishing the caller says who is asserting those flags, not that they are
-# true — a deployment that wants approval derived by the decision point itself runs
-# decern with --require-mission and grants Missions instead.
+# is the AS's statement that a human approved money movement for this bearer. decern
+# requires a Mission for MoveMoney unconditionally — asserting `human_approved` in the
+# body is never honored for this action — so the server turns the verified scope into a
+# Mission via /mission/v1/approve and names it in the decision context, rather than
+# relaying the scope as an approval flag itself.
 APPROVAL_SCOPE = "decern.move_money.approved"
+# The principal mcp_agent delegates from (see model/entities.json): the human/operator
+# whose authority the Mission attenuates. A real deployment would resolve this from the
+# verified token or an out-of-band approval flow, not hardcode it.
+MISSION_APPROVER = "corp"
 
 PRM = {  # RFC 9728 Protected Resource Metadata (Authorization: a MUST for MCP servers)
     "resource": RESOURCE,
@@ -214,6 +218,33 @@ def decide(subject_id, action, resource_id, context):
         d = json.loads(resp.read())
     ctx = d.get("context", {})
     return d.get("decision") is True, ctx.get("reasons", []), ctx.get("errors", [])
+
+
+def approve_mission(agent, tools, ttl_seconds=3600):
+    """Mint a Mission on decern for `agent`, scoped to `tools`, and return its s256
+    reference. Raises on transport failure or a refused approval (e.g. the approver
+    lacking a requested tool) — the caller decides how to surface that as a Deny.
+    """
+    import time
+
+    body = json.dumps(
+        {
+            "approver": MISSION_APPROVER,
+            "agent": agent,
+            "description": f"step-up: {agent} requested {', '.join(tools)}",
+            "approved_tools": tools,
+            "capabilities": [],
+            "expiry": int(time.time()) + ttl_seconds,
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"{PDP_URL}/mission/v1/approve",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read())["s256"]
 
 
 # ---------------------------------------------------------------- JSON-RPC plumbing
@@ -469,12 +500,22 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        # The decision context: the argument digest always; the approval flag only as
-        # a relay of a scope this server VERIFIED on the token. Nothing else crosses.
+        # The decision context: the argument digest always; a Mission only as a relay
+        # of a scope this server VERIFIED on the token. MoveMoney requires a Mission
+        # unconditionally, so a verified scope is turned into one here rather than
+        # asserted as an approval flag decern would refuse to honor for this action.
         context = {"args_sha256": digest}
         scopes = (claims.get("scope") or "").split()
         if tool["action"] == "MoveMoney" and APPROVAL_SCOPE in scopes:
-            context["human_approved"] = True
+            try:
+                s256 = approve_mission(claims["sub"], ["move_money"])
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError):
+                # Mission minting is unavailable or was refused: fall through with no
+                # mission named, so decide() below denies MoveMoney the same way it
+                # would deny any other missing-Mission request.
+                pass
+            else:
+                context["mission"] = {"approver": MISSION_APPROVER, "s256": s256}
 
         try:
             allowed, reasons, errors = decide(
@@ -511,11 +552,14 @@ class Handler(BaseHTTPRequestHandler):
                     legacy,
                 ),
             )
-        elif "F-money" in reasons:
+        elif "F-money" in reasons or any("required for MoveMoney" in e for e in errors):
             # An approval-shaped Deny: a grant the caller could obtain. Authorization,
             # error handling: 403 with an insufficient_scope challenge naming every
             # scope that would satisfy the request — and it truly would; see the
-            # step-up beat in run.sh.
+            # step-up beat in run.sh. "F-money" is Cedar's own forbid-policy reason
+            # (still possible if a Mission was named but denied for another cause);
+            # the mission-required message is decern's unconditional MoveMoney gate,
+            # which fires before Cedar ever sees the request.
             self.send_challenge(
                 403, "insufficient_scope", scope=APPROVAL_SCOPE, description="human approval required"
             )
