@@ -178,7 +178,9 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | `--bearer-audience <URI>` | This deployment's resource identifier, which a token's `aud` must contain (RFC 8707 §2). |
 | `--bearer-issuer-key <HEX>` | An Ed25519 key access tokens may be signed by. Repeatable, so a key rollover is two configured keys rather than a window with none. |
 | `--bearer-scope <SCOPE>` | A scope every token must carry. Repeatable; all are required, and a verified token missing one is refused `403 insufficient_scope`. Omit for no scope check. |
-| `--trust-proxy` | Accept every caller, because something in front already authenticates them. Conflicts with `--bearer-issuer`; one of the two is required to start. |
+| `--signed-agent-key <ID=HEX>` | An agent identifier this deployment recognizes and the one Ed25519 key it may sign requests with. Repeatable: one entry per agent, and a key rollover is a second entry rather than an atomic swap. Turns on RFC 9421 + RFC 7800 sender-constrained request validation for the guarded routes; requires `--signed-audience`. Conflicts with `--bearer-issuer`/`--trust-proxy`. An identifier with no entry here cannot authenticate under this mode, by design: keys are configured, never fetched. |
+| `--signed-audience <URI>` | This deployment's resource identifier, which a signed request's bound token's `aud` must contain. Required with `--signed-agent-key`, same role as `--bearer-audience`. |
+| `--trust-proxy` | Accept every caller, because something in front already authenticates them. Conflicts with `--bearer-issuer` and `--signed-agent-key`; one posture is required to start. |
 | `--addr <ADDR>` | Default `127.0.0.1:8080`. |
 
 **A decision is served only if its record was written.** An append that cannot be committed returns
@@ -215,6 +217,14 @@ names one of two postures:
   or invalid gets `401` with an RFC 6750 challenge; a valid token missing a required scope gets
   `403`. Verification is signature-checking against configured keys, never fetching, so this adds
   no TLS stack and no reliance on a third party being reachable.
+- **Sender-constrained validation** (`--signed-agent-key`, `--signed-audience`): the guarded routes
+  require an RFC 9421 HTTP Message Signature over `@method`, `@authority`, `@path`, and
+  `signature-key`, bound to an RFC 7800 `cnf.jwk` claim matching a key configured here for the
+  claimed agent identifier. Where bearer validation accepts a token as long as it is presented
+  before it expires — a leaked bearer JWT is replayable as-is — this mode requires proof of
+  possession of the signing key on every single request. Verification is against configured keys
+  only, same no-fetch posture as bearer validation, and an agent identifier with no configured key
+  is refused before any cryptography runs.
 - **`--trust-proxy`**: every caller is accepted, because the operator states that something in
   front — an authenticating proxy, a service mesh, the OS boundary around a local walkthrough —
   has already established who is calling. The flag is that statement. It is exactly the old
