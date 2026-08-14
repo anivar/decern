@@ -170,10 +170,12 @@ pub(crate) async fn decide(
     );
     let (mission_ref, mission_errors) = match mission_bind {
         // No Mission named and none required: `context` is left as the caller sent
-        // it, including any approval flags. Establishing the caller (the bearer guard,
-        // or the trusted front) says who is asserting those flags, not that they are
-        // true — approval is server-derived only under a Mission, so an operator who
-        // wants that guarantee for money must run `--require-mission`.
+        // it, including any approval flags, for every action except MoveMoney (which
+        // `bind_mission` already denied above rather than reaching here). Establishing
+        // the caller (the bearer guard, or the trusted front) says who is asserting
+        // those flags, not that they are true — approval is server-derived only under
+        // a Mission, and an operator who wants that guarantee for Read/AccessPII too
+        // must run `--require-mission`.
         MissionBind::None => (None, Vec::new()),
         MissionBind::Ok(mref) => {
             apply_mission_context(&mut ctx, &action);
@@ -332,7 +334,8 @@ pub(crate) async fn decide(
 
 /// Outcome of resolving `context.mission` against the registry.
 enum MissionBind {
-    /// No mission named and `--require-mission` is off.
+    /// No mission named, `--require-mission` is off, and the action is not
+    /// MoveMoney (which requires a Mission unconditionally).
     None,
     /// Live Mission bound; caller should inject server-side approval flags.
     Ok(decern_ledger::MissionRef),
@@ -391,10 +394,16 @@ fn bind_mission(
     let mission_val = ctx.get("mission");
     let named = mission_val.is_some() && !mission_val.map(|v| v.is_null()).unwrap_or(true);
     if !named {
+        // MoveMoney requires a Mission unconditionally, independent of
+        // `--require-mission`: an operator who has not opted into the flag must
+        // still be unable to move money on a body-asserted `human_approved`. Every
+        // other action keeps the opt-in behavior `--require-mission` controls.
         return if require {
             MissionBind::Deny(vec![
                 "context.mission is required (--require-mission)".into(),
             ])
+        } else if action == "MoveMoney" {
+            MissionBind::Deny(vec!["context.mission is required for MoveMoney".into()])
         } else {
             MissionBind::None
         };
@@ -601,6 +610,38 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|e| e.as_str().unwrap_or("").contains("require-mission")),
+            "{body}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The bypass this closes: without `--require-mission`, a caller could assert
+    /// `human_approved` directly and move money on nobody's authority. MoveMoney
+    /// must deny on a missing Mission even when `--require-mission` is off.
+    #[tokio::test]
+    async fn movemoney_denies_without_a_mission_even_when_not_required() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        assert!(!st.require_mission, "fixture guard: opt-in flag is off");
+        let req: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"corp"},
+                "action":{"name":"MoveMoney"},
+                "resource":{"type":"Resource","id":"claim1"},
+                "context":{"human_approved":true}}"#,
+        )
+        .unwrap();
+        let (status, body) = body_json(decide(State(st), None, Json(req)).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["decision"], false,
+            "a body-asserted human_approved must not move money without a Mission: {body}"
+        );
+        assert!(
+            body["context"]["errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e.as_str().unwrap_or("").contains("MoveMoney")),
             "{body}"
         );
         let _ = std::fs::remove_dir_all(&base);
