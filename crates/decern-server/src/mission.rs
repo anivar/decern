@@ -715,6 +715,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// No caller reaches this today — `mission_approve`/`mission_terminate` build
+    /// `context` entirely from `approved.mission.*`, never from the request body — so
+    /// the strip in `mission_entry` has no live exploit path. This calls the function
+    /// directly to prove the defense-in-depth fires anyway, in case a future change
+    /// ever makes the path reachable.
+    #[test]
+    fn mission_entry_strips_a_context_supplied_asserted_by() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let dir = st.kernel.directory();
+        let entry = mission_entry(
+            dir,
+            1,
+            "corp",
+            "Mission.Approve",
+            "deadbeef",
+            json!({
+                "approved_tools": ["read"],
+                "asserted_by": {"sub": "forged", "client_id": "x", "iss": "y"},
+            }),
+            None,
+        );
+        assert!(
+            entry.context.get("asserted_by").is_none(),
+            "a context-supplied asserted_by must not survive into the record: {:?}",
+            entry.context
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[tokio::test]
     async fn asserted_by_does_not_influence_the_mission_reference() {
         // The s256 reference is a pure function of the grant's authority, not of who called
