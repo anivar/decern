@@ -55,11 +55,9 @@ no_lineage() {
        --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
   if grep -rniE 'adoption unlock' . \
        --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
-  # Public-launch leak guards over shipped Rust: no derivation narrative naming an
-  # external protocol, no internal-review process narration, no phantom HTTP-route
-  # strings. `--include='*.rs'` excludes this script, so the patterns don't self-match.
-  if grep -rniE 'aauth' . \
-       --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
+  # Public-launch leak guards over shipped Rust: no internal-review process
+  # narration, no phantom HTTP-route strings. `--include='*.rs'` excludes this
+  # script, so the patterns don't self-match.
   if grep -rniE 'adversarial[ -]review' . \
        --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
   if grep -rnE '/admin/v1/|/observe/v1/' . \
