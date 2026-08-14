@@ -225,6 +225,9 @@ names one of two postures:
   possession of the signing key on every single request. Verification is against configured keys
   only, same no-fetch posture as bearer validation, and an agent identifier with no configured key
   is refused before any cryptography runs.
+  [`examples/signed-request/`](../examples/signed-request/README.md) runs this mode end to end,
+  including the beat that separates it from a bearer credential: the *same* token, refused when the
+  signature comes from a different key.
 - **`--trust-proxy`**: every caller is accepted, because the operator states that something in
   front — an authenticating proxy, a service mesh, the OS boundary around a local walkthrough —
   has already established who is calling. The flag is that statement. It is exactly the old
