@@ -32,6 +32,8 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::caller::{Authenticated, CallerAuth, Denied};
+
 /// A compact JWS three parts of which each fit in an HTTP header has no business being
 /// larger. Enforced before anything is decoded, so an oversized token costs its sender a
 /// length comparison, not this server an allocation.
@@ -41,23 +43,6 @@ const MAX_TOKEN_BYTES: usize = 8192;
 /// recognise a misconfigured issuer or algorithm name; not enough to use the error
 /// channel as a reflector.
 const MAX_ECHO: usize = 64;
-
-/// How the caller is established. Chosen explicitly at startup: a server that cannot say who
-/// is asking should say so in its configuration rather than discover it in an audit.
-pub(crate) enum Caller {
-    /// A token is required, verified, and bound to this server as audience.
-    Bearer(Box<Config>),
-    /// A signature over the request itself is required, verified against a configured
-    /// per-agent key, and the bound token verified and bound to this server as audience.
-    /// See [`crate::sig`]. `Arc`, not `Box`: passed by value (cheap clone) into the
-    /// per-request async handler rather than borrowed across it, which is what a
-    /// borrowed reference held across a nested `.await` was found not to compile as.
-    Signed(std::sync::Arc<crate::sig::SigConfig>),
-    /// Something in front has already authenticated the caller. Named rather than defaulted,
-    /// because "no token configured" and "authentication deliberately delegated" look identical
-    /// from inside the process and mean very different things outside it.
-    TrustedProxy,
-}
 
 pub(crate) struct Config {
     /// The `iss` a token must carry, matched exactly. §4 requires an exact match, not a
@@ -74,141 +59,24 @@ pub(crate) struct Config {
     pub(crate) scopes: Vec<String>,
 }
 
-/// Why a request was refused, shaped by OAuth 2.1 §5.3 (draft-ietf-oauth-v2-1-15):
-/// no credentials and bad credentials are both 401 but carry different challenges, and a
-/// valid token missing a required scope is 403.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Denied {
-    /// No `Authorization` header at all. RFC 6750 §3: the challenge then carries no error
-    /// code — there is nothing wrong with a token that was never presented.
-    NoCredentials,
-    /// A token that cannot be trusted. 401, `error="invalid_token"`.
-    Invalid(String),
-    /// A verified token that does not carry a scope this deployment requires. 403,
-    /// `error="insufficient_scope"`, and the challenge names the scopes so the client
-    /// knows what to ask its issuer for.
-    InsufficientScope(String),
-}
-
-impl Denied {
-    pub fn detail(&self) -> &str {
-        match self {
-            Denied::NoCredentials => "no credentials presented",
-            Denied::Invalid(d) | Denied::InsufficientScope(d) => d,
-        }
+impl CallerAuth for Config {
+    /// RFC 6750 §2.1: the credential is the `Authorization` header, and nothing else on
+    /// the request contributes to establishing the caller.
+    fn authenticate(
+        &self,
+        req: &axum::extract::Request,
+        now_secs: u64,
+    ) -> Result<Authenticated, Denied> {
+        let header = req
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok());
+        authenticate(header, self, now_secs)
     }
-}
 
-/// What a verified token says about its bearer. `client_id` is required (RFC 9068 §2.2),
-/// so a verified caller always names the party, the client acting for it, and the
-/// issuer whose signature was checked.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Authenticated {
-    pub(crate) subject: String,
-    pub(crate) client_id: String,
-    pub(crate) issuer: String,
-}
-
-/// The layer over the protected routes.
-///
-/// Under [`Caller::TrustedProxy`] this passes everything through — the operator has said the
-/// caller is established in front of this process, and re-checking here would only invent a
-/// second, weaker answer. Under [`Caller::Bearer`] nothing reaches a handler unverified, and
-/// the verified identity rides the request so the record can say who asserted it.
-pub(crate) async fn guard(
-    axum::extract::State(caller): axum::extract::State<std::sync::Arc<Caller>>,
-    mut req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> Response {
-    if let Caller::Signed(cfg) = caller.as_ref() {
-        return signed_guard(std::sync::Arc::clone(cfg), req, next).await;
+    fn refuse(&self, denied: Denied) -> Response {
+        denied.into_response(self)
     }
-    let cfg = match caller.as_ref() {
-        Caller::TrustedProxy => return next.run(req).await,
-        Caller::Bearer(cfg) => cfg,
-        Caller::Signed(_) => unreachable!("handled above"),
-    };
-    let header = req
-        .headers()
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-    match authenticate(header.as_deref(), cfg, now_secs()) {
-        Ok(who) => {
-            req.extensions_mut().insert(who);
-            next.run(req).await
-        }
-        Err(denied) => denied.into_response(cfg),
-    }
-}
-
-/// The [`Caller::Signed`] path. A separate function because the request shape it reads
-/// from (method/authority/path/three headers) has nothing in common with the bearer
-/// path's single header — forcing them through one function would blur, not share, logic.
-async fn signed_guard(
-    cfg: std::sync::Arc<crate::sig::SigConfig>,
-    mut req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> Response {
-    fn header(req: &axum::extract::Request, name: &str) -> Option<String> {
-        req.headers()
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned)
-    }
-    let signature_key_header = header(&req, "signature-key");
-    let signature_input_header = header(&req, "signature-input");
-    let signature_header = header(&req, "signature");
-    let authority = req
-        .headers()
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default()
-        .to_owned();
-    let method = req.method().as_str().to_owned();
-    let path = req.uri().path().to_owned();
-
-    let signed_req = crate::sig::SignedRequest {
-        method: &method,
-        authority: &authority,
-        path: &path,
-        signature_key_header: signature_key_header.as_deref(),
-        signature_input_header: signature_input_header.as_deref(),
-        signature_header: signature_header.as_deref(),
-    };
-    match crate::sig::authenticate(&signed_req, &cfg, now_secs() as i64) {
-        Ok(signed) => {
-            req.extensions_mut().insert(Authenticated {
-                subject: signed.agent.clone(),
-                client_id: signed.agent,
-                issuer: signed.issuer,
-            });
-            next.run(req).await
-        }
-        Err(denied) => signed_denied_response(denied),
-    }
-}
-
-/// A [`Denied`] under the signed-request path, as a response. Deliberately not
-/// [`Denied::into_response`]: that method's `WWW-Authenticate: Bearer ...` challenge
-/// names the wrong scheme for this path, and RFC 9421 defines no challenge header of its
-/// own to construct instead — the body alone carries the reason.
-fn signed_denied_response(denied: Denied) -> Response {
-    let status = match denied {
-        Denied::InsufficientScope(_) => axum::http::StatusCode::FORBIDDEN,
-        _ => axum::http::StatusCode::UNAUTHORIZED,
-    };
-    let body = axum::Json(
-        serde_json::json!({ "error": "invalid_signature", "error_description": denied.detail() }),
-    );
-    (status, body).into_response()
-}
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 impl Denied {

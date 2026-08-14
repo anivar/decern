@@ -124,7 +124,7 @@ fn take_decision_subject(
 
 pub(crate) async fn decide(
     State(st): State<AppState>,
-    caller: Option<axum::Extension<crate::bearer::Authenticated>>,
+    caller: Option<axum::Extension<crate::caller::Authenticated>>,
     Json(req): Json<DecideReq>,
 ) -> Response {
     // Who asserted this request, when the guard verified a token. Under a trusted

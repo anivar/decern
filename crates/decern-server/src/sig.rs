@@ -34,13 +34,14 @@
 
 use std::collections::BTreeMap;
 
+use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::bearer::Denied;
+use crate::caller::{Authenticated, CallerAuth, Denied};
 
 /// The exact, ordered component list this deployment requires. RFC 9421 lets a signer
 /// name any subset; decern accepts precisely this one, in this order, or refuses —
@@ -223,6 +224,48 @@ fn jwk_to_verifying_key(jwk: &JwkEd25519) -> Result<VerifyingKey, Denied> {
         .map_err(|_| Denied::Invalid("cnf.jwk.x is not 32 bytes".into()))?;
     VerifyingKey::from_bytes(&arr)
         .map_err(|_| Denied::Invalid("cnf.jwk.x is not a valid point".into()))
+}
+
+impl CallerAuth for SigConfig {
+    /// The credential is spread across the request line and three headers, so unlike the
+    /// bearer posture this reads the method, authority and path too — they are covered
+    /// components of the signature, not incidental context.
+    fn authenticate(
+        &self,
+        req: &axum::extract::Request,
+        now_secs: u64,
+    ) -> Result<Authenticated, Denied> {
+        fn header<'a>(req: &'a axum::extract::Request, name: &str) -> Option<&'a str> {
+            req.headers().get(name).and_then(|v| v.to_str().ok())
+        }
+        let presented = SignedRequest {
+            method: req.method().as_str(),
+            authority: header(req, "host").unwrap_or_default(),
+            path: req.uri().path(),
+            signature_key_header: header(req, "signature-key"),
+            signature_input_header: header(req, "signature-input"),
+            signature_header: header(req, "signature"),
+        };
+        let signed = authenticate(&presented, self, now_secs as i64)?;
+        Ok(Authenticated {
+            // A signed request names one agent, which is both the party and the client
+            // acting for it — there is no separate delegating client to distinguish.
+            subject: signed.agent.clone(),
+            client_id: signed.agent,
+            issuer: signed.issuer,
+        })
+    }
+
+    /// No `WWW-Authenticate` here, deliberately: that header names an authentication
+    /// scheme, RFC 9421 defines none of its own to name, and emitting `Bearer` would
+    /// invite a client to retry with exactly the credential this posture does not accept.
+    /// The body carries the reason instead.
+    fn refuse(&self, denied: Denied) -> Response {
+        let body = axum::Json(
+            serde_json::json!({ "error": "invalid_signature", "error_description": denied.detail() }),
+        );
+        (denied.status(), body).into_response()
+    }
 }
 
 /// Everything needed from the request to verify a signed presentation, gathered by the

@@ -15,12 +15,12 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde_json::{Value, json};
 
 use crate::mission::MissionApproveReq;
-use crate::{AppState, LedgerBackend, bearer, caller_disclosure};
+use crate::{AppState, LedgerBackend, caller_disclosure};
 
 /// The posture every pre-existing test runs under: the caller is taken on trust, which is
 /// what those tests are about. The guard's own behaviour is tested separately, below.
-pub(crate) fn open() -> Arc<bearer::Caller> {
-    Arc::new(bearer::Caller::TrustedProxy)
+pub(crate) fn open() -> Arc<crate::caller::Caller> {
+    Arc::new(crate::caller::Caller::TrustedProxy)
 }
 
 /// A small directory with a real 3-hop chain a <- b <- c, a standalone
@@ -106,7 +106,7 @@ pub(crate) fn mission_state_at(base: &Path) -> (AppState, VerifyingKey) {
         require_mission: false,
         standing_issuers: Arc::new(Vec::new()),
         authority_digest: Arc::from("test-authority"),
-        caller_disclosure: Arc::new(caller_disclosure(&bearer::Caller::TrustedProxy)),
+        caller_disclosure: Arc::new(caller_disclosure(&crate::caller::Caller::TrustedProxy)),
     };
     (st, pubkey)
 }

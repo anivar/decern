@@ -4,6 +4,7 @@
 
 mod audit;
 mod bearer;
+mod caller;
 mod challenge;
 mod decide;
 mod mission;
@@ -196,11 +197,11 @@ pub(crate) struct AppState {
 /// The `caller` object the subject-side disclosure reports: which posture, and under
 /// `bearer` the audience a token must be bound to — public by construction, it is what
 /// every client must already know to mint a usable token.
-pub(crate) fn caller_disclosure(caller: &bearer::Caller) -> Value {
+pub(crate) fn caller_disclosure(caller: &caller::Caller) -> Value {
     match caller {
-        bearer::Caller::Bearer(c) => json!({ "mode": "bearer", "audience": c.audience }),
-        bearer::Caller::Signed(c) => json!({ "mode": "signed", "audience": c.audience }),
-        bearer::Caller::TrustedProxy => json!({ "mode": "trusted-proxy" }),
+        caller::Caller::Bearer(c) => json!({ "mode": "bearer", "audience": c.audience }),
+        caller::Caller::Signed(c) => json!({ "mode": "signed", "audience": c.audience }),
+        caller::Caller::TrustedProxy => json!({ "mode": "trusted-proxy" }),
     }
 }
 
@@ -240,7 +241,7 @@ pub(crate) fn now_secs() -> u64 {
 /// configuration, not in an audit. There is no bind-address carve-out — loopback is not a
 /// trust boundary on a shared host or inside a container's network namespace, and nothing
 /// here checks peer credentials.
-fn caller_from(args: &Args) -> Result<bearer::Caller> {
+fn caller_from(args: &Args) -> Result<caller::Caller> {
     if !args.signed_agent_keys.is_empty() {
         let mut agents = std::collections::BTreeMap::new();
         for entry in &args.signed_agent_keys {
@@ -261,13 +262,14 @@ fn caller_from(args: &Args) -> Result<bearer::Caller> {
         let Some(audience) = args.signed_audience.clone() else {
             anyhow::bail!("--signed-agent-key requires --signed-audience");
         };
-        return Ok(bearer::Caller::Signed(std::sync::Arc::new(
-            sig::SigConfig { agents, audience },
-        )));
+        return Ok(caller::Caller::Signed(Box::new(sig::SigConfig {
+            agents,
+            audience,
+        })));
     }
     let Some(issuer) = args.bearer_issuer.clone() else {
         if args.trust_proxy {
-            return Ok(bearer::Caller::TrustedProxy);
+            return Ok(caller::Caller::TrustedProxy);
         }
         anyhow::bail!(
             "refusing to serve the decision and mission-mutation endpoints with no way to \
@@ -291,7 +293,7 @@ fn caller_from(args: &Args) -> Result<bearer::Caller> {
     if keys.is_empty() {
         anyhow::bail!("--bearer-issuer requires at least one --bearer-issuer-key");
     }
-    Ok(bearer::Caller::Bearer(Box::new(bearer::Config {
+    Ok(caller::Caller::Bearer(Box::new(bearer::Config {
         issuer,
         audience,
         keys,
@@ -317,9 +319,9 @@ async fn main() -> Result<()> {
     // established refuses to start, and a refused boot should leave nothing behind.
     let caller = Arc::new(caller_from(&args)?);
     let caller_desc = match caller.as_ref() {
-        bearer::Caller::Bearer(c) => format!("bearer for {}", c.audience),
-        bearer::Caller::Signed(c) => format!("signed-request for {}", c.audience),
-        bearer::Caller::TrustedProxy => "caller trusted (--trust-proxy)".to_owned(),
+        caller::Caller::Bearer(c) => format!("bearer for {}", c.audience),
+        caller::Caller::Signed(c) => format!("signed-request for {}", c.audience),
+        caller::Caller::TrustedProxy => "caller trusted (--trust-proxy)".to_owned(),
     };
     let model = match &args.model {
         Some(d) => {
@@ -523,7 +525,7 @@ mod tests {
         let args = Args::parse_from(["decern-serve", "--trust-proxy"]);
         assert!(matches!(
             caller_from(&args).unwrap(),
-            bearer::Caller::TrustedProxy
+            caller::Caller::TrustedProxy
         ));
     }
 
@@ -542,7 +544,7 @@ mod tests {
             "--bearer-scope",
             "decern.decide",
         ]);
-        let bearer::Caller::Bearer(cfg) = caller_from(&args).unwrap() else {
+        let caller::Caller::Bearer(cfg) = caller_from(&args).unwrap() else {
             panic!("bearer flags must configure the bearer guard");
         };
         assert_eq!(cfg.issuer, "https://issuer.example/");
@@ -562,7 +564,7 @@ mod tests {
             "--signed-audience",
             "https://pdp.example/access/v1/evaluation",
         ]);
-        let bearer::Caller::Signed(cfg) = caller_from(&args).unwrap() else {
+        let caller::Caller::Signed(cfg) = caller_from(&args).unwrap() else {
             panic!("--signed-agent-key must configure the signed guard");
         };
         assert_eq!(cfg.audience, "https://pdp.example/access/v1/evaluation");
@@ -616,7 +618,7 @@ mod tests {
     /// public by construction: every client must already know it to mint a usable token.
     #[test]
     fn the_caller_disclosure_names_the_bearer_audience() {
-        let d = caller_disclosure(&bearer::Caller::Bearer(Box::new(bearer::Config {
+        let d = caller_disclosure(&caller::Caller::Bearer(Box::new(bearer::Config {
             issuer: "https://issuer.example/".into(),
             audience: "https://pdp.example/".into(),
             keys: vec![SigningKey::from_bytes(&[6u8; 32]).verifying_key()],

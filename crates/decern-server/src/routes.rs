@@ -11,9 +11,9 @@ use axum::routing::{get, post};
 use crate::audit::{descendants, pubkey, subject_audit, subject_side_disclosure, tree_head};
 use crate::decide::decide;
 use crate::mission::{mission_approve, mission_get, mission_terminate};
-use crate::{AppState, bearer};
+use crate::{AppState, caller};
 
-pub(crate) fn app(state: AppState, caller: Arc<bearer::Caller>) -> Router {
+pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
     // Everything that decides, or that changes what a later decision will be. Split into
     // its own router so the guard covers it by construction: a route added here is
     // guarded, and a route that should be guarded cannot become open by someone
@@ -40,7 +40,7 @@ pub(crate) fn app(state: AppState, caller: Arc<bearer::Caller>) -> Router {
             "/directory/v1/principals/{id}/descendants",
             get(descendants),
         )
-        .route_layer(axum::middleware::from_fn_with_state(caller, bearer::guard));
+        .route_layer(axum::middleware::from_fn_with_state(caller, caller::guard));
 
     // Open by intent, each for its own reason. `/healthz` and `/pubkey` are operational;
     // the tree head and the disclosure are what an operator publishes on purpose, so a
@@ -64,6 +64,7 @@ pub(crate) fn app(state: AppState, caller: Arc<bearer::Caller>) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bearer;
     use axum::Json;
     use axum::extract::{Path as UrlPath, State};
     use axum::http::StatusCode;
@@ -108,7 +109,7 @@ mod tests {
             require_mission: false,
             standing_issuers: Arc::new(Vec::new()),
             authority_digest: Arc::from("test-authority"),
-            caller_disclosure: Arc::new(caller_disclosure(&bearer::Caller::TrustedProxy)),
+            caller_disclosure: Arc::new(caller_disclosure(&caller::Caller::TrustedProxy)),
         };
 
         // corpB is a builtin principal in tenant "B".
@@ -139,6 +140,53 @@ mod tests {
     /// Which routes the guard covers, asserted through the router rather than read off the
     /// source. A route added to the open half by mistake is exactly the failure this catches,
     /// and it can only be caught from outside.
+    /// The two credential postures refuse differently, and that difference is a design
+    /// decision rather than an accident of which module grew first: a bearer refusal owes
+    /// an RFC 6750 challenge naming the scheme to retry with, and a signed-request refusal
+    /// has no such scheme to name — offering `Bearer` there would invite a retry with
+    /// exactly the credential this posture does not accept. Pinned here because the
+    /// `CallerAuth` trait now makes it easy to give a new posture the wrong one by default.
+    #[tokio::test]
+    async fn each_posture_refuses_in_its_own_scheme() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let mut agents = std::collections::BTreeMap::new();
+        agents.insert(
+            "agent-1".to_owned(),
+            SigningKey::from_bytes(&[9u8; 32]).verifying_key(),
+        );
+        let router = app(
+            st,
+            Arc::new(caller::Caller::Signed(Box::new(crate::sig::SigConfig {
+                agents,
+                audience: "https://pdp.example/".into(),
+            }))),
+        );
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/access/v1/evaluation")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            resp.headers()
+                .get(axum::http::header::WWW_AUTHENTICATE)
+                .is_none(),
+            "a signed-request refusal must not advertise a scheme it does not accept"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[tokio::test]
     async fn every_deciding_route_refuses_an_unauthenticated_caller() {
         use axum::body::Body;
@@ -153,7 +201,7 @@ mod tests {
             keys: vec![SigningKey::from_bytes(&[3u8; 32]).verifying_key()],
             scopes: vec![],
         };
-        let router = app(st, Arc::new(bearer::Caller::Bearer(Box::new(cfg))));
+        let router = app(st, Arc::new(caller::Caller::Bearer(Box::new(cfg))));
 
         // Every route in the guarded half of `app()`, plus one wrong-method probe: the
         // guard is a route layer, so a mismatched method on a guarded path must still be
@@ -235,7 +283,7 @@ mod tests {
         let issuer_key = SigningKey::from_bytes(&[4u8; 32]);
         let router = app(
             st,
-            Arc::new(bearer::Caller::Bearer(Box::new(bearer::Config {
+            Arc::new(caller::Caller::Bearer(Box::new(bearer::Config {
                 issuer: "https://issuer.example/".into(),
                 audience: "https://pdp.example/".into(),
                 keys: vec![issuer_key.verifying_key()],
