@@ -8,8 +8,13 @@
 //! This is a second credential format alongside [`crate::bearer`], not a replacement:
 //! a bearer token proves the caller once held a secret at issuance time; a signature
 //! over this exact request proves the caller holds the private key *now*. A leaked
-//! bearer token is replayable until it expires; a leaked signed request is not replayable
-//! at all — mint another one and the signature no longer covers it.
+//! bearer token is replayable against any request until it expires; a leaked signed
+//! request cannot be replayed against a *different* request — mint one and the signature
+//! no longer covers it. Verbatim replay of the exact same captured signature is not
+//! separately prevented here (no nonce/`jti` cache): it verifies again within
+//! [`MAX_SIGNATURE_AGE_SECS`], the same as it did the first time. What shrinks is the
+//! window, from a token's full lifetime to one signature's freshness period, not the
+//! possibility.
 //!
 //! Every principal's key is configured, not discovered. This deployment does not fetch a
 //! `.well-known` document for anyone: the same reason bearer tokens name issuer keys in
@@ -47,6 +52,12 @@ const REQUIRED_COMPONENTS: [&str; 4] = ["@method", "@authority", "@path", "signa
 /// clock skew, not a session length — a signature is proof for one request, not a grant
 /// that outlives it.
 const MAX_SIGNATURE_AGE_SECS: i64 = 60;
+
+/// How far ahead of this server's clock a signer's `created` may be and still be
+/// accepted. Independent clocks drift in both directions, not just late — a signer a
+/// few seconds ahead of this server is an ordinary NTP-grade skew, not an attack, and
+/// refusing it here would be an operational failure with a security-shaped symptom.
+const MAX_CLOCK_SKEW_AHEAD_SECS: i64 = 5;
 
 /// A compact JWS three parts of which each fit in an HTTP header has no business being
 /// larger. Mirrors `bearer.rs`'s own token size ceiling.
@@ -270,7 +281,7 @@ pub(crate) fn authenticate(
         ));
     }
     let age = now_secs - input.created;
-    if !(0..=MAX_SIGNATURE_AGE_SECS).contains(&age) {
+    if !(-MAX_CLOCK_SKEW_AHEAD_SECS..=MAX_SIGNATURE_AGE_SECS).contains(&age) {
         return Err(Denied::Invalid(
             "signature is outside the accepted freshness window".into(),
         ));
@@ -553,6 +564,38 @@ mod tests {
         let token = bound_token(&k.verifying_key(), |_| {});
         let stale_created = NOW - MAX_SIGNATURE_AGE_SECS - 1;
         let (key_h, input_h, sig_h) = sign_request(&k, &token, &REQUIRED_COMPONENTS, stale_created);
+        let e = authenticate(
+            &req(&key_h, &input_h, &sig_h),
+            &cfg(&k.verifying_key()),
+            NOW,
+        )
+        .unwrap_err();
+        assert!(e.detail().contains("freshness"), "{}", e.detail());
+    }
+
+    /// Ordinary NTP-grade clock skew, not an attack: a signer a few seconds ahead of this
+    /// server's clock must still authenticate.
+    #[test]
+    fn a_signature_created_slightly_ahead_of_the_servers_clock_is_accepted() {
+        let k = decern_crypto::generate().unwrap();
+        let token = bound_token(&k.verifying_key(), |_| {});
+        let ahead_created = NOW + MAX_CLOCK_SKEW_AHEAD_SECS;
+        let (key_h, input_h, sig_h) = sign_request(&k, &token, &REQUIRED_COMPONENTS, ahead_created);
+        authenticate(
+            &req(&key_h, &input_h, &sig_h),
+            &cfg(&k.verifying_key()),
+            NOW,
+        )
+        .expect("a signer within the allowed skew tolerance must authenticate");
+    }
+
+    /// The tolerance is bounded, not unlimited: a signer far enough ahead is still refused.
+    #[test]
+    fn a_signature_created_too_far_ahead_of_the_servers_clock_is_refused() {
+        let k = decern_crypto::generate().unwrap();
+        let token = bound_token(&k.verifying_key(), |_| {});
+        let too_far_ahead = NOW + MAX_CLOCK_SKEW_AHEAD_SECS + 1;
+        let (key_h, input_h, sig_h) = sign_request(&k, &token, &REQUIRED_COMPONENTS, too_far_ahead);
         let e = authenticate(
             &req(&key_h, &input_h, &sig_h),
             &cfg(&k.verifying_key()),

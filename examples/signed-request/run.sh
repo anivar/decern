@@ -6,8 +6,11 @@
 # third party can check.
 #
 # The property this demonstrates is the one a bearer token cannot give you: a leaked
-# access token is replayable until it expires, but a leaked signed request is not
-# replayable at all — the signature covers this exact request and nothing else.
+# access token is replayable against any request until it expires, but a leaked signed
+# request cannot be replayed against a DIFFERENT request — the signature covers this
+# exact request and nothing else. Verbatim replay of the same captured signature is not
+# separately prevented (no nonce cache); it verifies again within the freshness window,
+# just a much shorter one than a token's full lifetime.
 #
 # Needs: cargo, uv, jq, python3, curl.
 set -euo pipefail
