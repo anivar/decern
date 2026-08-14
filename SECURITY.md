@@ -22,13 +22,15 @@ security reports.
 - **Coordinated disclosure**: we investigate, prepare a fix, and agree on a
   public disclosure timeline with you before any details are published.
 
-The trust boundary matters for triage: `decern-serve` refuses to start unless its
-caller posture is named. The postures are RFC 9068 bearer validation, RFC 9421
-sender-constrained signed requests (`--signed-agent-key`), or a declared
-authenticating front (`--trust-proxy`). A few routes are open by intent (the
-anchor, the disclosure, the subject-side audit projection). The full map is in
-[docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly); a report that assumes
-an endpoint is unauthenticated should say which posture it was tested under.
+The trust boundary matters for triage: `decern-serve` refuses to start unless its caller
+posture is named. The postures are RFC 9068 bearer validation, RFC 9421
+sender-constrained signed requests (`--signed-agent-key`), SPIFFE JWT-SVIDs
+(`--spiffe-trust-domain`), or a declared authenticating front (`--trust-proxy`). The two
+workload postures also bind a caller to the principals it may name, so a report about one
+naming another party should say whether `--pep` was set. A few routes are open by intent
+(the anchor, the disclosure, the subject-side audit projection). The full map is in
+[docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly); a report that assumes an
+endpoint is unauthenticated should say which posture it was tested under.
 
 decern's safety invariants are machine-checked over the entire input space, but
 the project is pre-1.0 — reports of gaps in what the proofs actually cover are
