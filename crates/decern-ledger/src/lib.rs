@@ -640,6 +640,41 @@ fn heal_torn_tail(path: &Path, offset: u64) -> Result<(), LedgerError> {
     Ok(())
 }
 
+/// Open the ledger for append, owner-only.
+///
+/// The record holds decision subjects and the pseudonymous handles the subject-side audit
+/// route is keyed by. It was being created at the process umask — commonly `0644` — while
+/// the signing key and the mission registry beside it are `0600`, which made the audit log
+/// the readable one. `.mode()` applies only when the file is created, so an existing file
+/// is corrected too; both are needed, the same reasoning `decern-store` documents for the
+/// mission registry.
+///
+/// Unlike the signing key this does not refuse a group- or other-readable file: a ledger
+/// is not a secret in the way a key is, existing deployments have readable ones, and
+/// failing their next append would be a worse outcome than tightening it in place.
+fn open_append_owner_only(path: &Path) -> Result<File, LedgerError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| io_err(path, e))?;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| io_err(path, e))
+    }
+}
+
 impl Ledger {
     /// Open a single-key ledger (the common case). Equivalent to
     /// [`open_with_verifiers`](Ledger::open_with_verifiers) with no retired keys.
@@ -691,11 +726,7 @@ impl Ledger {
         } else {
             (GENESIS.to_owned(), 0)
         };
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .map_err(|e| io_err(path, e))?;
+        let file = open_append_owner_only(path)?;
         Ok(Ledger {
             location,
             active_path: path.to_owned(),
@@ -803,11 +834,7 @@ impl Ledger {
 
         let (last_hash, next_seq) = resolve_open_head(&location, &verifiers, anchor)?;
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&active_path)
-            .map_err(|e| io_err(&active_path, e))?;
+        let file = open_append_owner_only(&active_path)?;
         Ok(Ledger {
             location,
             active_path,
@@ -2213,6 +2240,7 @@ mod tests {
 
     /// The unlocked path is the locked path: raw lines yield the same leaves, the same
     /// proofs, and a head that verifies — one definition of a leaf, reachable two ways.
+
     #[test]
     fn the_out_of_lock_projection_path_equals_the_in_lock_one() {
         let key = decern_crypto::generate().unwrap();
@@ -3141,7 +3169,10 @@ mod tests {
         drop(l);
         let sealed = dir.join("00000001.jsonl");
         let mode = std::fs::metadata(&sealed).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o444, "sealed segment must be read-only");
+        assert_eq!(
+            mode, 0o400,
+            "a sealed segment must be read-only AND not readable by group or other"
+        );
     }
 
     #[test]
@@ -4185,5 +4216,41 @@ mod tests {
             healed_before + 1,
             "chain verifies across the segment boundary after healing the active tail"
         );
+    }
+    /// The ledger holds decision subjects and the pseudonymous handles the subject-side
+    /// audit route is keyed by. It was created at the process umask — commonly 0644 —
+    /// while the signing key and the mission registry beside it are 0600, which made the
+    /// audit log the readable one of the three.
+    #[cfg(unix)]
+    #[test]
+    fn a_ledger_file_is_not_readable_by_group_or_other() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = tmp("perm-new.ledger");
+        std::fs::remove_file(&path).ok();
+        let key = decern_crypto::generate().unwrap();
+        let mut led = Ledger::open(&path, key).unwrap();
+        led.append(entry("Read", true)).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "ledger must be 0600, got {mode:o}");
+    }
+
+    /// A ledger written before this change is tightened when it is next opened, rather
+    /// than left readable forever. `.mode()` alone would not do it: it applies only on
+    /// creation.
+    #[cfg(unix)]
+    #[test]
+    fn reopening_an_existing_world_readable_ledger_tightens_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = tmp("perm-tighten.ledger");
+        std::fs::remove_file(&path).ok();
+        let key = decern_crypto::generate().unwrap();
+        {
+            let mut led = Ledger::open(&path, key.clone()).unwrap();
+            led.append(entry("Read", true)).unwrap();
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let _led = Ledger::open(&path, key).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "reopen must tighten, got {mode:o}");
     }
 }

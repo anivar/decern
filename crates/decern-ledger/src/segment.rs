@@ -305,7 +305,7 @@ pub(crate) fn save_manifest(dir: &Path, manifest: &Manifest) -> Result<(), Ledge
     Ok(())
 }
 
-/// Best-effort: mark a sealed segment file read-only (0444 on Unix). Defense
+/// Best-effort: mark a sealed segment file read-only to its owner (0400 on Unix). Defense
 /// in depth, never the real protection (that's the chain + signature +
 /// externally-anchored checkpoint, which no filesystem permission bit can
 /// substitute for) — so a failure here is silently ignored rather than
@@ -316,7 +316,7 @@ pub(crate) fn seal_file_permissions(path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o444));
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o400));
     }
     #[cfg(not(unix))]
     {
@@ -325,7 +325,7 @@ pub(crate) fn seal_file_permissions(path: &Path) {
 }
 
 /// The write-side counterpart of [`seal_file_permissions`]: ensure the ACTIVE
-/// segment is writable (0644 on Unix). Applied on every open, symmetrically
+/// segment is writable by its owner (0600 on Unix). Applied on every open, symmetrically
 /// with sealing every sealed segment — so a manifest edit that re-marks a
 /// previously-sealed (and thus read-only) segment as active again still
 /// reopens cleanly, rather than failing with a confusing permission-denied
@@ -335,7 +335,7 @@ pub(crate) fn unseal_file_permissions(path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o644));
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
     }
     #[cfg(not(unix))]
     {
