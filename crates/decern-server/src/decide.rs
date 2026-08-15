@@ -169,7 +169,9 @@ pub(crate) async fn decide(
 
     // Decision-under-mission: bind (and optionally require) a live Mission.
     // Client-supplied human_approved/consent are stripped whenever a mission is
-    // in play; the server re-derives them from the verified grant.
+    // in play. human_approved is re-derived from the grant for MoveMoney only.
+    // consent is never re-derived: a Mission is an approver's grant, not a
+    // data subject's consent.
     let mission_bind = bind_mission(
         st.missions.as_ref(),
         st.require_mission,
@@ -381,15 +383,13 @@ fn scope_for_action(action: &str) -> Option<&'static str> {
 /// action the grant does not cover, so each flag set here is backed by that check.
 fn apply_mission_context(ctx: &mut Value, action: &str) {
     strip_client_approval_flags(ctx);
-    // A verified Mission that covers the action is the human/consent approval.
+    // A verified Mission that covers MoveMoney is the human approval that
+    // F-money requires. It is not a data subject's consent: F-consent is a
+    // different claim, about the resource owner, and an approver granting
+    // `pii:read` never made it. AccessPII and Read therefore leave `consent`
+    // unset — the same as they already did for Read.
     if action == "MoveMoney" {
         ctx["human_approved"] = json!(true);
-    }
-    // Consent is asserted only where the action is itself the consent-bearing one.
-    // `Read` is not: a Mission approving reads is not a data subject's consent, and
-    // recording it as one would put a claim in the ledger the grant never made.
-    if action == "AccessPII" {
-        ctx["consent"] = json!(true);
     }
 }
 
@@ -990,5 +990,30 @@ mod tests {
                 .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A Mission is an approver's grant. It is not a data subject's consent.
+    /// Asserting `consent: true` from AccessPII-under-mission made F-consent
+    /// a no-op for every OBO PII read that rode on a grant.
+    #[test]
+    fn a_mission_does_not_assert_data_subject_consent() {
+        let mut ctx = json!({"consent": true, "human_approved": true});
+        apply_mission_context(&mut ctx, "AccessPII");
+        assert!(
+            ctx.get("consent").is_none(),
+            "AccessPII under a Mission must not mint consent: {ctx}"
+        );
+        assert!(
+            ctx.get("human_approved").is_none(),
+            "AccessPII is not the money gate: {ctx}"
+        );
+
+        let mut ctx = json!({"consent": true});
+        apply_mission_context(&mut ctx, "MoveMoney");
+        assert_eq!(ctx["human_approved"], true);
+        assert!(
+            ctx.get("consent").is_none(),
+            "MoveMoney must not mint consent either: {ctx}"
+        );
     }
 }
