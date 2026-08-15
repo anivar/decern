@@ -6,6 +6,236 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-15
+
+### Added
+
+- **Adapter supply-chain gate and house-voice README.** `examples/ext_authz_adapter` gains a
+  `cargo deny` supply-chain check step in its CI workflow (`.github/workflows/ext-authz-adapter.yml`)
+  and brings its documentation into decern's house voice. Authored by @sameer-kireap.
+- **The record says who asserted the request.** Under any credential posture a decision
+  carries `asserted_by` — the caller's subject, client and issuer, exactly as the server
+  verified them — so a hardened deployment's log reads "the gateway asked about alice",
+  not only "alice". Absent under `--trust-proxy`: an assertion the server did not verify
+  itself does not belong on a permanent record. Never a decision input, and
+  `decern explain` prints it. Authored by @anivar.
+- **`asserted_by` on Mission lifecycle records.** Under any credential posture, `Mission.Approve` and `Mission.Terminate` ledger records now record the verified caller identity (`asserted_by`). Absent under `--trust-proxy`. Forged `context.asserted_by` values supplied in request bodies are stripped across all endpoints before recording. Authored by @sameer-kireap.
+- **`decern-serve` can validate the access token itself.** `--bearer-issuer`,
+  `--bearer-audience` and `--bearer-issuer-key` (repeatable) make the deciding and
+  mission-lifecycle routes require an RFC 9068 `at+jwt` bearer token: EdDSA over an
+  operator-configured key, issuer matched exactly, audience containing this server per
+  RFC 8707 §2, all required claims present. `--bearer-scope` (repeatable) additionally
+  requires scopes, refusing a verified token without them as `403 insufficient_scope`.
+  Absent or invalid tokens get `401`; every refusal carries an RFC 6750 challenge.
+  Verification is signature-checking against configured keys, never fetching, so the
+  default build still carries no TLS stack. The subject-side routes — the anchor, the
+  disclosure, `/audit/v1/subject` — stay open by intent, and the disclosure now reports
+  how callers are established. Authored by @anivar.
+- **An ext_authz HTTP enforcement adapter.** `examples/ext_authz_adapter` is a generic,
+  standalone HTTP external authorization shim for `decern-serve`. Translates incoming HTTP
+  gateway requests carrying forwarded headers into AuthZEN evaluations, failing closed with
+  403 on policy deny or any missing forwarded header, and 503 on PDP error, timeout, unreachable PDP,
+  or malformed response. Authored by @sameer-kireap.
+- **A worked MCP integration** under `examples/mcp/`: an MCP server (spec revision
+  2026-07-28, no SDK) that validates its client's access token and consults
+  `POST /access/v1/evaluation` before every tool call — subject from the token, the
+  exact arguments digest-bound onto the record. A Deny a fresh grant could satisfy is
+  `403 insufficient_scope` with a challenge that actually works on retry; a Deny no
+  re-authorization can fix is a tool result with `isError`. The walkthrough proves the
+  nine invariants over the example's own model and ends by recomputing the argument
+  digest from the arguments and finding it on the verified ledger. Authored by @anivar.
+- **A direct test for the `asserted_by` context strip.** `mission_entry` already stripped
+  a caller-supplied `context.asserted_by` before recording, but no test called it with
+  one — there is no live path through `mission_approve`/`mission_terminate` today that
+  reaches it. `mission_entry_strips_a_context_supplied_asserted_by` calls the function
+  directly to prove the defense-in-depth fires, so a future change that makes the path
+  reachable does not silently lose the guarantee.
+- **`@id` annotations name policies in decision reasons.** A model that annotates a
+  policy with `@id("F-money")` gets that name in `reasons` and in `decern explain`,
+  instead of a position that shifts when a policy is added; duplicate names refuse to
+  load. A model without annotations keeps the positional ids it always had — the
+  builtin model is unchanged. Authored by @anivar.
+- **Every SDK client can send a bearer token.** An optional token on the Go, Python and
+  TypeScript clients, sent as `Authorization: Bearer` on every request when set and
+  absent entirely when not — for a deployment that requires access tokens on the
+  evaluation endpoint. The client carries a token the application already holds;
+  acquiring one stays the issuer's business. Authored by @anivar.
+- **A runnable walkthrough for sender-constrained callers.**
+  `examples/signed-request/` serves the proven builtin model to a caller that must prove
+  possession of a configured key on every request, and shows the property a bearer
+  credential cannot give: the *same* token, byte-identical and unexpired, is refused when
+  the RFC 9421 signature comes from a different key. Also covers refusal for signature
+  age alone, refusal when a valid signature is replayed against a different path, the
+  deployment disclosing its own caller posture, and the ledger naming the caller the
+  server verified via `asserted_by`. Runs in CI. Authored by @anivar.
+- **`decern-serve` can require proof of possession on every request, not just a bearer
+  token.** `--signed-agent-key` (repeatable, `ID=HEX`) and `--signed-audience` make the
+  deciding and mission-lifecycle routes require an RFC 9421 HTTP Message Signature over
+  `@method`, `@authority`, `@path` and `signature-key`, bound to an RFC 7800 `cnf.jwk`
+  claim matching a key configured here for the claimed agent identifier. Unlike bearer
+  validation, a leaked token alone is not enough here: it must also be signed, per
+  request, by the key it is bound to. Verification is against configured keys only —
+  no live key discovery, no outbound HTTP client — and an agent identifier with no
+  configured key is refused before any cryptography runs. Conflicts with
+  `--bearer-issuer`/`--trust-proxy`; one posture is required to start. Authored by
+  @anivar.
+- **`decern-serve` can establish its caller from a SPIFFE JWT-SVID.**
+  `--spiffe-trust-domain TRUST_DOMAIN=PATH` (repeatable) and `--spiffe-audience` make the
+  deciding and mission-lifecycle routes require a JWT-SVID, presented as a `Bearer`
+  credential per JWT-SVID §5.2 and verified against a JWK Set pinned at startup. Trust
+  domains are matched exactly, so a domain that merely shares a prefix cannot present as a
+  configured one; the bundle is filtered to `use: jwt-svid` keys and refused at boot if it
+  carries none, an entry without a `kid`, or a key this build cannot verify with. Bundles
+  are configured, never fetched, so this adds no TLS stack and no reliance on a SPIFFE
+  control plane being reachable. **`ES256` only** — `RS*`/`PS*` would require a crate
+  carrying an unpatched key-recovery advisory, so a SPIRE deployment issuing RSA SVIDs is
+  not interoperable, which the docs state rather than soften. A verified `spiffe://…`
+  identity is recorded as the caller and never minted into the authority graph: what a
+  decision may be *about* is unchanged. `examples/spiffe/` runs the whole posture with no
+  SPIRE daemon. Authored by @anivar.
+- **The four caller postures are now one clap group.** Naming two at once is a startup
+  failure rather than a matrix of `conflicts_with` pairs that has to grow with each
+  posture. Authored by @anivar.
+- **A SPIFFE caller is a workload, and binds to itself.** Like a signed-request agent, a
+  verified `spiffe://…` identity may only name itself as AuthZEN `subject`, mission
+  `approver`, stored approver on terminate, and directory principal, unless it is listed
+  in `--pep`. A mismatch is `403 caller_mismatch`. Without this the second posture would
+  have reopened the escalation the first one closed. Authored by @anivar.
+- **The README shows views and clones**, accumulated rather than the fourteen days GitHub keeps
+  before discarding them. Authored by @anivar.
+
+### Changed
+
+- **The builtin model names its policies.** Decision reasons and `decern explain` now say
+  `P-read` or `F-money` instead of `policy0`-style positions. Records written before this
+  change keep the positional ids they were written with — a record is a statement about
+  the moment it was made, and renaming it afterwards would be editing history.
+  Authored by @anivar.
+- **The MCP example serves shipping clients.** Real clients still speak the 2025-06-18
+  lifecycle; the example now serves them through the transport spec's own
+  backward-compatibility clause — a clearly-marked legacy path that adds no
+  authorization surface and is deletable when clients carry per-request metadata.
+  Verified end to end with Claude Code as the client: allow, tenant-deny as a tool
+  error the model reads, approved money movement, and the insufficient-scope 403 —
+  all recorded and verified on the ledger. Authored by @anivar.
+- **The TypeScript SDK requires Node 24**, the active LTS line, which is now also the only version
+  it is tested against.
+- **Both SDK packages carry their source, homepage and issue tracker.** The npm package also
+  publishes a signed provenance statement, which the registry validates against `repository.url` —
+  so the field is required, not decoration.
+- **Number digits come from `ryu-js`**, Ryu adapted to ECMAScript's own rules — which is what
+  RFC 8785 §3.2.2.3 defers to, and the generator the maintained JCS crates use. Output is
+  unchanged: still byte-identical to V8 across 3.1M doubles. Authored by @anivar.
+- **The SDK package pages say what decern does.** Both descriptions opened with "client for the
+  decern PDP", which tells a reader who has not heard of decern nothing at all. Each page now
+  explains what the server is for, links the website, repository and command reference, and shows
+  how to verify a decision after the fact. Authored by @anivar.
+- **The SDK package pages lead with working code.** Install and a complete example first,
+  the server's story after, on all three clients. Badges now come from our own
+  infrastructure, like the main README's. Registry pages update with the next patch
+  release of each package. Authored by @anivar.
+- **The README badges are served from our own infrastructure** rather than a third party, so
+  reading the page no longer makes a request to img.shields.io. Values are live from crates.io,
+  npm, PyPI, docs.rs and the Actions API. Authored by @anivar.
+- **`decern-serve` refuses to start unless the caller posture is named.** Either the bearer
+  flags establish callers here, or `--trust-proxy` states that something in front already
+  authenticates them — the proxy deployment every earlier version assumed, now a choice the
+  operator writes down. A bind with neither used to warn; a warning is what a startup script
+  discards, so it is now a refusal, and the quickstart passes `--trust-proxy` explicitly.
+  A standing token whose `typ` is `at+jwt` is also now refused: an access token proves the
+  right to call this server, not standing as the party a decision was about.
+  Authored by @anivar.
+
+### Fixed
+
+- **The subject-audit projection no longer parses the log under the append lock.** It
+  held the same mutex every decision needs while deserializing every record and deriving
+  every proof — a way to slow the server's ability to decide. The lock is now held twice,
+  briefly: once to copy raw bytes out, once to sign the head; parsing, matching and
+  proving happen unlocked, and only matched records are parsed in full.
+  Authored by @anivar.
+- **The subject-side disclosure names the audit projection the way the route reads it.**
+  It advertised `/audit/v1/subject/{handle}` while the route takes `?handle=` — a party
+  following the deployment's own pointer got a routing 404 that reads as "no records
+  about you". Authored by @anivar.
+- **The MCP example mints a Mission for MoveMoney instead of asserting approval.**
+  `examples/mcp/server.py` used to relay a verified OAuth scope into
+  `context.human_approved` directly. Since MoveMoney now requires a Mission
+  unconditionally, that assertion is refused — the example instead calls
+  `POST /mission/v1/approve` when the scope is present and names the resulting
+  Mission in the decision context, demonstrating the pattern a real PEP should use.
+- **`--require-mission` no longer promises server-derived consent.** Its help text said
+  client-supplied `human_approved` and `consent` are "derived server-side from the verified
+  Mission". Only `human_approved` is, and only for `MoveMoney`; `consent` is stripped and
+  never put back, because a Mission is an approver's grant and not the resource owner's
+  consent. An operator who turned the flag on *to make consent server-derived* got
+  fail-closed on-behalf-of PII access and a contract that was not true. The flag's behaviour
+  is unchanged — the text now describes it. Authored by @anivar.
+- **The ledger signing key is no longer written world-readable.** `decern-serve --key`
+  created the seed file with `std::fs::write`, which uses the process umask — commonly
+  `0644`. That key signs every record and every tree head, so a readable copy on a shared
+  host was enough to forge history that verifies. The server now routes through
+  `decern-crypto`'s existing key discipline: created at `0600`, never overwritten, and a
+  key that is group- or other-readable is refused rather than loaded silently, so a file
+  opened up by a later `chmod` fails closed. The seed is zeroized on both paths. Existing
+  key files keep working unchanged, provided their permissions are not open. Authored by
+  @anivar.
+- **The TypeScript lockfile carries the package version.** `package-lock.json` had missed
+  the 0.2.0 bump; both of its version fields now match `package.json`, and the release
+  checklist names the lockfile so it cannot be missed again. Authored by @anivar.
+
+### Security
+
+- **Agent Badge verification uses `verify_strict`.** The path that admits a principal
+  into the authority graph now rejects small-order keys and non-canonical signatures,
+  matching the ledger and the caller postures. A badge that only passed the cofactorless
+  equation is refused. Authored by @anivar.
+- **The ledger is no longer world-readable.** It was created at the process umask —
+  commonly `0644` — while the signing key and the mission registry beside it are `0600`,
+  which made the audit log the readable one of the three. It holds decision subjects and
+  the pseudonymous handles the subject-side audit route is keyed by. Now `0600` on
+  creation, and an existing ledger is tightened when it is next opened rather than left
+  readable forever. Sealed segments go from `0444` to `0400` for the same reason. Unlike
+  the signing key, a group- or other-readable ledger is tightened rather than refused:
+  failing an existing deployment's next append would be worse than fixing it in place.
+  Authored by @anivar.
+- **The Envoy `ext_authz` snippet no longer forwards a client-supplied subject header.**
+  `allowed_headers` forwards whatever is on the request, so the documented config passed a
+  client's own `x-forwarded-subject` straight to the adapter — the exact bypass the README
+  warns about, in the README. The NGINX example overwrites the header and the Traefik one
+  sets `trustForwardHeader: false`; the Envoy one now strips it and says why filter
+  ordering has to be checked. Authored by @anivar.
+- **A Mission is not a data subject's consent.** `POST /access/v1/evaluation` no longer
+  sets `context.consent = true` when a live Mission covers `AccessPII`. The grant is an
+  approver's `pii:read`; F-consent is a claim about the resource owner, and the two are
+  not the same. Client-supplied `consent` is still stripped under a Mission, so OBO PII
+  access requires a consent signal that did not come from the grant. Self-access is
+  unchanged: the owner does not need consent. Authored by @anivar.
+- **MoveMoney now requires a Mission unconditionally.** Previously, a request naming
+  `context.human_approved: true` directly could move money whenever an operator had not
+  turned on `--require-mission` — the flag only made the *server*-derived guarantee apply
+  to every action; MoveMoney itself had no floor beneath it. `decern-serve` now denies any
+  MoveMoney decision that does not name a live, verified Mission, regardless of
+  `--require-mission`. Read and AccessPII keep the existing opt-in behavior.
+  **Migration:** a deployment gating money through its own PEP by asserting
+  `human_approved` in the request body, without using Missions, must switch to approving a
+  Mission (`POST /mission/v1/approve`) and naming it in `context.mission` before this
+  upgrade — the old body assertion is now denied rather than honored.
+- **Signed-request callers may only name themselves.** Under `--signed-agent-key`, the
+  authenticated agent must equal the AuthZEN `subject`, the mission `approver`, the
+  stored approver on terminate, and the principal id on
+  `/directory/v1/principals/{id}/descendants`. A mismatch is 403 `caller_mismatch` —
+  the credential was accepted; the name is not theirs. `--pep <ID>` (repeatable) names
+  agents that remain PEPs. Bearer validation and `--trust-proxy` are unchanged: those
+  postures authenticate a gateway, which legitimately asks about other parties.
+  Authored by @anivar.
+- **Signed POST requests now cover the body.** `--signed-agent-key` requires
+  `Content-Digest` (RFC 9530, `sha-256` only) as a fifth covered component on POST,
+  verified against the bytes the handler will see. A captured signature over one JSON
+  body cannot authorize a different one at the same path. GET is unchanged: it has no
+  body to cover. Verbatim replay of the same path and body is still accepted within
+  the freshness window — there is no nonce cache. Authored by @anivar.
+
 ## [0.2.0] - 2026-08-08
 
 ### Added
