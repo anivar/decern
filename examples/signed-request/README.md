@@ -15,16 +15,22 @@ now, with the key the token confirms.
 ```
 agent ──Signature-Key:   <token bound to a key via cnf.jwk>──▶ decern-serve ──▶ ledger
         Signature-Input: ("@method" "@authority" "@path"       (--signed-agent-key
-                          "signature-key");created=…            agent-1=<hex>)
+                          "content-digest" "signature-key");    agent-1=<hex>)
+                         created=…   [content-digest on POST]
+        Content-Digest:  sha-256=:<SHA-256 of the body>:
         Signature:       sig1=:<Ed25519 over the base>:
 ```
 
 The token travels in `Signature-Key`, per
 [`draft-hardt-httpbis-signature-key`](https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/),
-and is itself one of the four covered components — so tampering with any claim inside it
+and is itself one of the covered components — so tampering with any claim inside it
 invalidates the outer signature. That is why decern does not separately verify the token's
 own JWS signature: the outer signature already covers it, and a second check would prove
-nothing the first does not.
+nothing the first does not. POST also covers `content-digest` (RFC 9530, `sha-256` of the
+body bytes the handler will see), so a captured signature over one JSON body cannot
+authorize a different one at the same path. GET is unchanged: it has no body to cover.
+Verbatim replay of the *same* captured signature (same path, same body) is not separately
+prevented — no nonce cache — and verifies again within the freshness window.
 
 ## Run it
 
@@ -32,11 +38,11 @@ nothing the first does not.
 examples/signed-request/run.sh      # needs cargo, uv, jq, python3, curl
 ```
 
-Eight beats: a correctly signed request allowed and recorded; **the same token refused when
+Nine beats: a correctly signed request allowed and recorded; **the same token refused when
 the signature comes from a different key**; a signature refused for age alone; the same
-signature refused when replayed against a different path; no credentials refused; the
-deployment disclosing its own caller posture; and the ledger naming the caller the server
-verified.
+signature refused when replayed against a different path; **the same signature refused when
+replayed against a different body**; no credentials refused; the deployment disclosing its
+own caller posture; and the ledger naming the caller the server verified.
 
 Beat 3 is the one worth reading twice. The token there is byte-identical to the one that
 just succeeded — same `sub`, same `aud`, same `cnf`, unexpired. Only the signature differs,
