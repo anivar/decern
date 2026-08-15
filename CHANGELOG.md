@@ -236,6 +236,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body to cover. Verbatim replay of the same path and body is still accepted within
   the freshness window — there is no nonce cache. Authored by @anivar.
 
+### Known limits in this release
+
+Stated here rather than left to be discovered, because the project's claim is that it is
+checkable. None of these is a regression; all are the honest state of 0.3.0.
+
+- **Consent has no server-side signal.** On the default path a request body's `consent` is
+  still honoured, the same shape that was closed for money and not for personal data. With
+  `--require-mission`, on-behalf-of access to PII fails closed rather than becoming
+  server-derived — a Mission is an approver's grant, not the data subject's consent.
+- **The running server does not pin the log it extends.** `decern verify --anchor`, against
+  a tree head you published somewhere the operator does not control, is what detects a
+  dropped tail. The append path loads no commitment, and `--anchor` is not available for
+  `--sharded`. A chain alone proves internal consistency, not completeness.
+- **`--trust-proxy` is a complete PDP to anyone who can reach the port.** It is a statement
+  about your topology, not a mode. The quickstart uses it; the quickstart is not a
+  production posture.
+- **A bearer token issued to a workload is a PEP credential.** Only the signed-request and
+  SPIFFE postures bind a caller to the principals it may name. Bearer and `--trust-proxy`
+  deliberately do not.
+- **SPIFFE is `ES256` only.** `RS*`/`PS*` need a crate carrying an unpatched key-recovery
+  advisory that this project's supply-chain gate refuses, so an RSA-signed SVID will not
+  verify ([#117](https://github.com/anivar/decern/issues/117)).
+- **Replay of a captured credential is not prevented.** A signed request verifies again
+  inside its freshness window; a bearer or SPIFFE token until it expires. There is no nonce
+  cache, and a decision is not idempotent — a replayed allow records again.
+- **Standing tokens are the weakest JOSE path.** Unlike bearer and SPIFFE they do not
+  require a `typ`, do not refuse `crit`, do not gate `nbf`, and do not close the header set.
+  They cannot change a decision — a challenge is stripped before the kernel runs — but a
+  forged or early one can write a false challenge answer onto the record.
+- **`ReevaluateWithSubjectContext` is a label, not a re-evaluation.** The kernel is not run
+  a second time and the context is not changed; the outcome classifies the basis of a
+  challenge. The decision bit is the original one.
+- **The proofs cover the model, not the server.** Nine invariants, discharged as policy
+  subsumption over the model's symbolic input space, with two reasoning over attributes the
+  kernel derives in Rust before the prover runs. They do not see a deployment's
+  `entities.json`, the clock, the HTTP layer, the Mission lifecycle, or caller binding. See
+  [What "proven" covers](docs/CLI.md#what-proven-covers).
+
 ## [0.2.0] - 2026-08-08
 
 ### Added
