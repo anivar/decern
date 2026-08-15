@@ -6,11 +6,11 @@
 # third party can check.
 #
 # The property this demonstrates is the one a bearer token cannot give you: a leaked
-# access token is replayable against any request until it expires, but a leaked signed
-# request cannot be replayed against a DIFFERENT request — the signature covers this
-# exact request and nothing else. Verbatim replay of the same captured signature is not
-# separately prevented (no nonce cache); it verifies again within the freshness window,
-# just a much shorter one than a token's full lifetime.
+# access token is replayable against any request until it expires. A leaked signed
+# request cannot be replayed against a different path (@path is covered) or a different
+# POST body (content-digest is covered). Verbatim replay of the same captured signature
+# — same path, same body — is not separately prevented (no nonce cache); it verifies
+# again within the freshness window, just a much shorter one than a token's full lifetime.
 #
 # Needs: cargo, uv, jq, python3, curl.
 set -euo pipefail
@@ -25,18 +25,20 @@ PATH_OK=/access/v1/evaluation
 SIGN=examples/signed-request/sign.py
 BODY='{"subject":{"type":"Principal","id":"corp"},"action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"}}'
 
-# Every presentation is built by sign.py; $1 is any extra flag (--wrong-key, --stale).
-mk() { uv run "$SIGN" agent-1 "$AUD" POST "127.0.0.1:$PORT" "$PATH_OK" ${1:+"$1"}; }
+# Every presentation is built by sign.py; extra args are flags (--wrong-key, --stale).
+mk() { uv run "$SIGN" agent-1 "$AUD" POST "127.0.0.1:$PORT" "$PATH_OK" --body "$BODY" "$@"; }
 g() { jq -r ".$2" <<<"$1"; }
 
-# $1=presentation-json $2=path — prints "code body" so a beat can assert on both.
+# $1=presentation-json $2=path $3=optional body (defaults to $BODY).
 send() {
+  local payload="${3:-$BODY}"
   curl -s -o "$WORK/body" -w '%{http_code}' "$PDP$2" \
     -H 'Content-Type: application/json' \
     -H "Signature-Key: $(g "$1" token)" \
     -H "Signature-Input: $(g "$1" signature_input)" \
     -H "Signature: $(g "$1" signature)" \
-    -d "$BODY"
+    -H "Content-Digest: $(g "$1" content_digest)" \
+    -d "$payload"
 }
 
 echo "== 1. Start the PDP with ONE agent's key pinned =="
@@ -90,23 +92,35 @@ CODE=$(send "$GOOD" /decide)
 echo "   401 $(jq -r .error_description "$WORK/body") (signed for $PATH_OK)"
 
 echo
-echo "== 6. No credentials at all — refused, with no hint that guessing helps =="
+echo "== 6. The body is genuinely covered: replay the same signature with a different JSON =="
+# Same path, same headers, different body. Before content-digest was covered this
+# authenticated — the signature contributed nothing. MoveMoney is denied later by
+# the Mission requirement; /mission/v1/approve has no such backstop. The digest
+# check must refuse here, at the signature, not later.
+MOVE='{"subject":{"type":"Principal","id":"corp"},"action":{"name":"MoveMoney"},"resource":{"type":"Resource","id":"claim1"}}'
+CODE=$(send "$GOOD" "$PATH_OK" "$MOVE")
+[ "$CODE" = 401 ]
+jq -e '.error_description | contains("does not match the request body")' "$WORK/body" >/dev/null
+echo "   401 $(jq -r .error_description "$WORK/body")"
+
+echo
+echo "== 7. No credentials at all — refused, with no hint that guessing helps =="
 CODE=$(curl -s -o "$WORK/body" -w '%{http_code}' "$PDP$PATH_OK" \
   -H 'Content-Type: application/json' -d "$BODY")
 [ "$CODE" = 401 ]
 echo "   401 $(jq -r .error_description "$WORK/body")"
 
 echo
-echo "== 7. The deployment discloses its own caller posture =="
+echo "== 8. The deployment discloses its own caller posture =="
 # Read from the running configuration, not from a promise in a README.
 curl -s "$PDP/.well-known/decern-subject-side-disclosure" | jq -e '.caller.mode == "signed"' >/dev/null
 curl -s "$PDP/.well-known/decern-subject-side-disclosure" | jq -c .caller
 
 echo
-echo "== 8. The ledger says WHO asserted the one decision that was allowed =="
+echo "== 9. The ledger says WHO asserted the one decision that was allowed =="
 kill "$SRV" 2>/dev/null || true; wait "$SRV" 2>/dev/null || true
 cargo run -q -p decern-cli -- verify --ledger "$LEDGER" --pubkey "$KID"
-# Only beat 2 reached the kernel; the four refusals never became decisions, because a
+# Only beat 2 reached the kernel; the refusals never became decisions, because a
 # caller that cannot be established never gets one.
 cargo run -q -p decern-cli -- explain --ledger "$LEDGER" --seq 0 --pubkey "$KID" \
   | grep -E "decision:|asserted_by:"

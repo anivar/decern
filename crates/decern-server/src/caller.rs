@@ -18,7 +18,10 @@
 //! not be able to wait on a third party, and a signature that cannot `.await` cannot
 //! grow that dependency by accident.
 
-use axum::response::Response;
+use axum::Json;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use serde_json::json;
 
 /// How the caller is established. Chosen explicitly at startup: a server that cannot say who
 /// is asking should say so in its configuration rather than discover it in an audit.
@@ -34,14 +37,23 @@ pub(crate) enum Caller {
     TrustedProxy,
 }
 
+/// How large a request body this layer will buffer in order to verify it. Axum's own
+/// default limit is the same size; capping here too means a signed POST cannot spend
+/// unbounded memory on a digest the handler would have refused anyway.
+const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+
 /// What one posture must be able to do. Both methods are synchronous by design — see the
 /// module note on why establishing a caller must never wait on the network.
 pub(crate) trait CallerAuth: Sync {
-    /// Establish the caller from the request alone, or say why not.
+    /// Establish the caller from the request and the body bytes already buffered for
+    /// it, or say why not. The body is passed in rather than read here so a signature
+    /// over `content-digest` can be checked against the same bytes the handler will
+    /// see, without this trait growing an `.await`.
     fn authenticate(
         &self,
         req: &axum::extract::Request,
         now_secs: u64,
+        body: &[u8],
     ) -> Result<Authenticated, Denied>;
 
     /// This posture's refusal. Separate from [`Denied`] itself because the challenge a
@@ -105,21 +117,42 @@ pub(crate) struct Authenticated {
 /// and the verified identity rides the request so the record can say who asserted it.
 pub(crate) async fn guard(
     axum::extract::State(caller): axum::extract::State<std::sync::Arc<Caller>>,
-    mut req: axum::extract::Request,
+    req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
+    if matches!(caller.as_ref(), Caller::TrustedProxy) {
+        return next.run(req).await;
+    }
+
+    // Buffer once, restore onto the request, and hand the same bytes to authenticate.
+    // A signed POST covers `content-digest` of these bytes; reading the body again
+    // inside the verifier would either consume it out from under the handler or
+    // hash a different copy. Bearer ignores the slice.
+    let (parts, body) = req.into_parts();
+    let bytes = match axum::body::to_bytes(body, MAX_BODY_BYTES).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(json!({ "error": "payload too large" })),
+            )
+                .into_response();
+        }
+    };
+    let mut req = axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes.clone()));
+
     // The borrow of `caller` is confined to this block and released before any `.await`.
     // Holding a reference across the suspension point is what previously failed axum's
     // `Service` bounds here, and scoping it is cheaper than proving it safe each time a
     // posture is added.
     let established = {
         let posture: &dyn CallerAuth = match caller.as_ref() {
-            Caller::TrustedProxy => return next.run(req).await,
+            Caller::TrustedProxy => unreachable!("trusted-proxy returned above"),
             Caller::Bearer(cfg) => cfg.as_ref(),
             Caller::Signed(cfg) => cfg.as_ref(),
         };
         posture
-            .authenticate(&req, now_secs())
+            .authenticate(&req, now_secs(), &bytes)
             .map_err(|denied| posture.refuse(denied))
     };
     match established {

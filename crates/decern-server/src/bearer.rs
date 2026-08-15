@@ -66,6 +66,7 @@ impl CallerAuth for Config {
         &self,
         req: &axum::extract::Request,
         now_secs: u64,
+        _body: &[u8],
     ) -> Result<Authenticated, Denied> {
         let header = req
             .headers()

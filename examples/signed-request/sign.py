@@ -5,22 +5,27 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Builds one sender-constrained request for the walkthrough: a key-bound access token
-# (RFC 7800 `cnf`) plus the three RFC 9421 headers that prove possession of that key
-# over this exact request.
+# (RFC 7800 `cnf`) plus the RFC 9421 headers that prove possession of that key over
+# this exact request. POST also emits Content-Digest (RFC 9530, sha-256) and covers
+# it, so a captured signature over one body cannot authorize a different one.
 #
 # Like examples/mcp/mint.py, the seeds here are FIXED and PUBLIC so the walkthrough is
 # reproducible. That is the whole of its honesty: these are keys that sign, not an
 # issuer. There is no token endpoint and none will be added.
 #
-#   uv run sign.py <agent-id> <audience> <method> <authority> <path> [--wrong-key] [--stale]
+#   uv run sign.py <agent-id> <audience> <method> <authority> <path> [--body JSON]
+#                  [--wrong-key] [--stale]
 #
+# --body is required for POST (the bytes hashed into Content-Digest). GET ignores it.
 # --wrong-key signs the request with a key that is NOT the one the token confirms, which
 # is exactly what a caller who stole the token but not the private key could produce.
 # --stale backdates `created` past the acceptance window, so an otherwise perfect
 # signature is refused for age alone.
-# Prints {"token", "pub_hex", "signature_input", "signature"} on stdout.
+# Prints {"token", "pub_hex", "signature_input", "signature", "content_digest"} on stdout.
+# content_digest is null for GET.
 
 import base64
+import hashlib
 import json
 import sys
 import time
@@ -46,7 +51,8 @@ QUOTE = '"'
 # RFC 9421 uses TWO different base64 alphabets here, and reaching for the wrong one fails
 # silently with a signature that simply does not verify:
 #   - the JWS segments and the `cnf.jwk.x` key material are base64url, UNPADDED
-#   - the `Signature` header's value is STANDARD base64, PADDED, wrapped in colons
+#   - the `Signature` header's value, and RFC 9530 Content-Digest, are STANDARD base64,
+#     PADDED, wrapped in colons
 def b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
@@ -61,7 +67,13 @@ FLAGS = ("--wrong-key", "--stale")
 argv = sys.argv[1:]
 wrong_key = "--wrong-key" in argv
 stale = "--stale" in argv
-agent_id, audience, method, authority, path = [a for a in argv if a not in FLAGS]
+body = None
+if "--body" in argv:
+    i = argv.index("--body")
+    body = argv[i + 1]
+    del argv[i : i + 2]
+positional = [a for a in argv if a not in FLAGS]
+agent_id, audience, method, authority, path = positional
 
 agent = Ed25519PrivateKey.from_private_bytes(AGENT_SEED)
 issuer = Ed25519PrivateKey.from_private_bytes(ISSUER_SEED)
@@ -93,16 +105,26 @@ token = f"{h}.{p}.{b64url(issuer.sign(f'{h}.{p}'.encode()))}"
 # `"@signature-params"` line, with NO trailing newline after it. `@method` is uppercased
 # and `@authority` lowercased, per §2.2.1 and §2.2.3.
 label = "sig1"
-components = ["@method", "@authority", "@path", "signature-key"]
+method_u = method.upper()
+content_digest = None
+if method_u == "POST":
+    if body is None:
+        sys.exit("POST requires --body so Content-Digest covers the bytes that will be sent")
+    content_digest = f"sha-256=:{b64std(hashlib.sha256(body.encode()).digest())}:"
+    components = ["@method", "@authority", "@path", "content-digest", "signature-key"]
+    values = [method_u, authority.lower(), path, content_digest, token]
+else:
+    components = ["@method", "@authority", "@path", "signature-key"]
+    values = [method_u, authority.lower(), path, token]
+
 component_list = " ".join(f"{QUOTE}{c}{QUOTE}" for c in components)
 # A signature proves possession for ONE request, so it is accepted only briefly after
 # `created`. --stale backdates past that window on purpose.
 created = now - 3600 if stale else now
 params = f"({component_list});created={created}"
 
-values = [method.upper(), authority.lower(), path, token]
 lines = [f"{QUOTE}{name}{QUOTE}: {value}" for name, value in zip(components, values)]
-lines.append(f'{QUOTE}@signature-params{QUOTE}: {params}')
+lines.append(f"{QUOTE}@signature-params{QUOTE}: {params}")
 base = "\n".join(lines)
 
 signer = Ed25519PrivateKey.from_private_bytes(ATTACKER_SEED if wrong_key else AGENT_SEED)
@@ -116,6 +138,7 @@ print(
             "pub_hex": agent_pub.hex(),
             "signature_input": f"{label}={params}",
             "signature": f"{label}=:{b64std(signer.sign(base.encode()))}:",
+            "content_digest": content_digest,
         }
     )
 )
