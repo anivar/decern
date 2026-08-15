@@ -36,11 +36,18 @@ Two binaries over seven library crates. The stock build is pure Rust; the one ex
 | `decern-server` | bin → `decern-serve` | The fail-closed AuthZEN PDP: evaluate, record, serve. Also serves the Mission lifecycle over `decern-identity` (`POST /mission/v1/approve`, `GET`/`terminate`), recording each transition to the ledger. |
 
 `decern-server` is split by layer, one seam per file: `main.rs` (flags, the caller-posture
-refusal, startup), `routes.rs` (the router and the guarded/open split), `bearer.rs` (RFC 9068
-token validation), `record.rs` (the fail-closed append path), `decide.rs` (the decision handler
-and its derivations), `audit.rs` (the published reads: pubkey, tree head, subject projection,
-descendants, disclosure), `mission.rs` (the lifecycle), `challenge.rs` (the subject-side
-challenge), `testutil.rs` (shared fixtures).
+refusal, startup), `routes.rs` (the router and the guarded/open split), `caller.rs` (how the
+caller is established: the posture enum, the `CallerAuth` trait every posture implements, and
+the one guard layer over the protected routes), `bearer.rs` (RFC 9068 token validation),
+`sig.rs` (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), `record.rs` (the
+fail-closed append path), `decide.rs` (the decision handler and its derivations), `audit.rs`
+(the published reads: pubkey, tree head, subject projection, descendants, disclosure),
+`mission.rs` (the lifecycle), `challenge.rs` (the subject-side challenge), `testutil.rs`
+(shared fixtures).
+
+The two credential postures sit under `caller.rs` and know nothing of each other: each owns
+one RFC's rules and implements the same trait, so the guard dispatches once and a posture
+added later cannot skip a step by being wired in differently.
 
 `crates/decern-kernel/model/` holds the Cedar policy, schema, and entities the kernel loads. `examples/` holds the worked integrations and the quickstart — runnable and CI-tested, never published as crates. `.agent/` holds the working
 method and the standards registry. `scripts/verify.sh` is the one gate every change must pass.
