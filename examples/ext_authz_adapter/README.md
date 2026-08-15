@@ -127,8 +127,24 @@ http:
 
 ### Envoy HTTP `ext_authz` filter
 
+> **`allowed_headers` forwards what is on the request, including a copy the client sent.**
+> Unlike the NGINX example (which overwrites the header with `$remote_user`) and the Traefik
+> one (`trustForwardHeader: false`), this filter config does not strip anything by itself.
+> Something upstream of it must remove any client-supplied `x-forwarded-subject` and set the
+> value from verified identity — otherwise the adapter authorizes whatever the client claims
+> to be, and every decision it records looks perfectly well-formed.
+
 ```yaml
+# Drop any client-supplied copy before anything can read it. Confirm in your own config
+# that this applies ahead of the ext_authz filter: header mutation and filter order are
+# separate concerns in Envoy, and "configured somewhere" is not the same as "applied first".
+route_config:
+  request_headers_to_remove:
+    - "x-forwarded-subject"
+
 http_filters:
+  # ... the filter that establishes identity (e.g. envoy.filters.http.jwt_authn) runs here
+  # and writes x-forwarded-subject from a verified claim ...
   - name: envoy.filters.http.ext_authz
     typed_config:
       "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
