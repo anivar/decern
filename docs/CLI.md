@@ -170,7 +170,7 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | `--model <DIR>` | Model directory. Omit for the built-in model. |
 | `--ledger <PATH>` | Single-file ledger. The default backend. Mutually exclusive with `--sharded`. |
 | `--sharded <DIR_OR_POSTGRES_URL>` | Hosted. A directory gives a per-shard `flock` head store (several processes, one host). A `postgres://` URL gives a multi-host head store and needs `--features postgres`. |
-| `--key <PATH>` | 32-byte hex signing seed, created if absent. Omit for an ephemeral key — which means nothing you record today verifies tomorrow. |
+| `--key <PATH>` | 32-byte hex signing seed, created at `0600` if absent and never overwritten. A key readable by group or other is **refused**, not loaded — it signs every record and tree head, so a readable copy is enough to forge history that verifies. Omit for an ephemeral key, which means nothing you record today verifies tomorrow. |
 | `--missions <PATH>` | Mission registry. Default `decern-missions.json` beside the ledger. |
 | `--require-mission` | Refuse any decision that does not name a live Mission. Approval flags are then derived from the grant, never from the request body. |
 | `--standing-issuer-key <HEX>` | An issuer whose standing tokens this deployment accepts. Repeatable. Omit to accept no challenges. |

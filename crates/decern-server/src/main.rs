@@ -205,26 +205,32 @@ pub(crate) fn caller_disclosure(caller: &caller::Caller) -> Value {
     }
 }
 
+/// The ledger signing key, through `decern-crypto`'s own key discipline rather than a
+/// second implementation of it.
+///
+/// This used to write the seed with `std::fs::write`, which creates at the process umask —
+/// commonly `0644`. That is the key every record and every tree head is signed with, so a
+/// world-readable copy is enough for anyone on the host to forge history that verifies.
+/// `decern_crypto::save_signing_key` creates at `0600` and refuses to overwrite; its loader
+/// refuses a key that is group- or other-readable, so a file later `chmod`ed open fails
+/// closed instead of signing quietly. Both sides also zeroize the seed, which the local
+/// buffer here did not.
 fn load_signing_key(path: Option<&PathBuf>) -> Result<SigningKey> {
-    let mut seed = [0u8; 32];
-    match path {
-        Some(p) if p.exists() => {
-            let hex = std::fs::read_to_string(p)
-                .with_context(|| format!("reading key {}", p.display()))?;
-            seed = hex::decode(hex.trim())
-                .context("decoding key hex")?
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("key must be 32 bytes"))?;
-        }
-        other => {
-            getrandom::fill(&mut seed).map_err(|e| anyhow::anyhow!("generating key: {e}"))?;
-            if let Some(p) = other {
-                std::fs::write(p, hex::encode(seed))
-                    .with_context(|| format!("writing key {}", p.display()))?;
-            }
-        }
+    let Some(p) = path else {
+        // No `--key`: an ephemeral key, which means nothing recorded today verifies
+        // tomorrow. Nothing touches disk, so there is no file discipline to apply.
+        return decern_crypto::generate().map_err(|e| anyhow::anyhow!("generating key: {e}"));
+    };
+    if p.exists() {
+        return decern_crypto::load_signing_key(p)
+            .with_context(|| format!("reading key {}", p.display()));
     }
-    Ok(SigningKey::from_bytes(&seed))
+    let key = decern_crypto::generate().map_err(|e| anyhow::anyhow!("generating key: {e}"))?;
+    // `create_new` under the hood, so a key that appears between the check above and this
+    // write is an error rather than a silent overwrite of somebody else's key.
+    decern_crypto::save_signing_key(&key, p)
+        .with_context(|| format!("writing key {}", p.display()))?;
+    Ok(key)
 }
 
 /// The server's own wall clock in epoch seconds — the single time authority for every
@@ -511,6 +517,58 @@ mod tests {
 
     /// The startup rule: a server that cannot say how its callers are established does not
     /// start. There is no bind-address carve-out to test, because there is no carve-out.
+    /// The ledger signing key authenticates every record and every tree head, so a
+    /// world-readable copy is enough for anyone on the host to forge history that
+    /// verifies. This used to be written at the process umask (commonly 0644).
+    #[cfg(unix)]
+    #[test]
+    fn a_generated_signing_key_is_not_readable_by_group_or_other() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("decern-key-{}-a", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ledger.key");
+        let _ = load_signing_key(Some(&path)).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "signing key is readable beyond its owner: {mode:o}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Symmetric with the write side: a key placed by another tool, or opened up by a
+    /// later chmod, must fail closed rather than keep signing quietly.
+    #[cfg(unix)]
+    #[test]
+    fn a_world_readable_signing_key_is_refused_rather_than_loaded() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("decern-key-{}-b", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ledger.key");
+        let key = load_signing_key(Some(&path)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            load_signing_key(Some(&path)).is_err(),
+            "a world-readable key must not load"
+        );
+        drop(key);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The same key comes back, so routing through the crypto crate did not change what a
+    /// restart signs with — a ledger written before this change still verifies after it.
+    #[test]
+    fn a_configured_key_round_trips_across_restarts() {
+        let dir = std::env::temp_dir().join(format!("decern-key-{}-c", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ledger.key");
+        let first = load_signing_key(Some(&path)).unwrap().verifying_key();
+        let second = load_signing_key(Some(&path)).unwrap().verifying_key();
+        assert_eq!(first, second);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn with_no_posture_named_the_server_refuses_to_start() {
         let args = Args::parse_from(["decern-serve"]);

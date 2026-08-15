@@ -16,6 +16,7 @@ decern-kernel = { workspace = true }
 decern-ledger = { workspace = true }
 decern-store = { workspace = true }
 decern-identity = { workspace = true }
+decern-crypto = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
@@ -34,7 +35,6 @@ decern-store-postgres = { workspace = true, optional = true }
 postgres = ["dep:decern-store-postgres"]
 
 [dev-dependencies]
-decern-crypto = { workspace = true }
 tokio = { workspace = true }
 # Router-level integration tests drive requests through `app()` via `oneshot`.
 # Dev-only; `tower` is already in the tree via `axum`, so the shipped binary is unaffected.
