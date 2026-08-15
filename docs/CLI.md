@@ -16,9 +16,10 @@ from the [releases page](https://github.com/anivar/decern/releases). Only `decer
 
 ## `decern prove`
 
-Discharge every safety invariant over the whole input space with cvc5. Not a test run — the solver
-either shows an invariant holds for every input the model admits, or hands back the input where it
-does not.
+Discharge every safety invariant over the model's whole symbolic input space with cvc5. Not a test
+run — the solver either shows an invariant holds for every input the model admits, or hands back the
+input where it does not. What that covers is narrower than it sounds; see
+[Scope](#what-proven-covers).
 
 ```sh
 decern prove
@@ -118,8 +119,9 @@ decern explain --ledger /tmp/decern.jsonl --seq 0 --json
 | `--pubkey <HEX>` | Check the signature too. Without it the line says `not checked`. |
 | `--json` | Machine-readable instead of prose. |
 
-A denial, read back (from a live run; `asserted_by:` appears when the deployment validates
-bearer tokens and the record carries the verified caller):
+A denial, read back (from a live run; `asserted_by:` appears under any credential posture —
+bearer, signed request, or SPIFFE — and is absent under `--trust-proxy`, which verifies no
+caller of its own):
 
 ```
 seq:           1
@@ -172,7 +174,7 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | `--sharded <DIR_OR_POSTGRES_URL>` | Hosted. A directory gives a per-shard `flock` head store (several processes, one host). A `postgres://` URL gives a multi-host head store and needs `--features postgres`. |
 | `--key <PATH>` | 32-byte hex signing seed, created at `0600` if absent and never overwritten. A key readable by group or other is **refused**, not loaded — it signs every record and tree head, so a readable copy is enough to forge history that verifies. Omit for an ephemeral key, which means nothing you record today verifies tomorrow. |
 | `--missions <PATH>` | Mission registry. Default `decern-missions.json` beside the ledger. |
-| `--require-mission` | Refuse any decision that does not name a live Mission. Approval flags are then derived from the grant, never from the request body. |
+| `--require-mission` | Refuse any decision that does not name a live Mission. Client-supplied `human_approved` and `consent` are then stripped; `human_approved` is re-derived from the grant for MoveMoney. `consent` is **not** re-derived — a Mission is an approver's grant, not the resource owner's consent — so this makes on-behalf-of PII access fail closed rather than server-derived. |
 | `--standing-issuer-key <HEX>` | An issuer whose standing tokens this deployment accepts. Repeatable. Omit to accept no challenges. |
 | `--bearer-issuer <URL>` | The `iss` an access token must carry, matched exactly. Turns on bearer validation for the guarded routes; requires `--bearer-audience` and at least one `--bearer-issuer-key`. |
 | `--bearer-audience <URI>` | This deployment's resource identifier, which a token's `aud` must contain (RFC 8707 §2). |
@@ -261,10 +263,16 @@ names one posture:
   has already established who is calling. The flag is that statement. It is exactly the old
   behaviour, now a named choice rather than a default.
 
-What bearer validation establishes is **the caller, not the content**. The mission `approver` is
-still a request-body field: a verified gateway asserts it, and `--require-mission` remains what
-makes approval server-derived for decisions. The AuthZEN subject is likewise not taken from the
-token's `sub` — an enforcement point legitimately asks about parties other than itself.
+What a credential establishes is **the caller**, and how far that constrains the content depends
+on the posture. Under bearer validation and `--trust-proxy` it constrains nothing: the mission
+`approver` stays a request-body field a verified gateway asserts, and the AuthZEN subject is not
+taken from the token's `sub`, because an enforcement point legitimately asks about parties other
+than itself. Under the two **workload** postures it is the opposite — a signed-request or SPIFFE
+caller may only name itself as subject, approver, stored approver on terminate, and directory
+principal, unless listed in `--pep`, and a mismatch is `403 caller_mismatch`.
+
+So a bearer token issued to a workload is a PEP credential: it carries no such bind. If the caller
+is a workload rather than a gateway, use a workload posture.
 
 Signed-request mode is the other shape. A `--signed-agent-key` agent is a workload, not a
 gateway: it may only name itself as decide `subject`, mission `approver` (including the
@@ -315,8 +323,14 @@ tamper-is-rejected end to end.
 
 ## What "proven" covers {#what-proven-covers}
 
-The nine invariants are discharged by cvc5 over the whole input space of the kernel's decision
-function. That is the claim, and it stops there.
+The nine invariants are discharged by cvc5 over the whole **symbolic** input space the Cedar
+model admits — policy subsumption against a guard, not a sampled test. Two of them
+(`attenuation-edge`, `revocation-gate`) reason over attributes (`principal.ancestors`,
+`principal.revoked`) that `decern-kernel`'s `inject_derived` computes from the transitive
+delegation chain *before* the prover runs; cvc5 sees those as flat opaque values, so the
+derivation itself is trusted Rust covered by property tests. The proofs also do not see a
+concrete deployment's `entities.json`, the server's clock, the HTTP layer, the Mission
+lifecycle, or caller binding. That is the claim, and it stops there.
 
 Everything else in this reference is runtime enforcement: the Mission gate, the challenge surface,
 the anchoring, the projections. They are tested, not proven, and a statement that blurs the two

@@ -58,10 +58,14 @@ struct Args {
     #[arg(long, value_name = "PATH")]
     missions: Option<PathBuf>,
     /// Require every decision to name a live Mission in `context.mission`.
-    /// When set, client-supplied `human_approved` / `consent` are ignored; those
-    /// flags are derived server-side from the verified Mission (or the decision
-    /// is Denied). MoveMoney requires a Mission unconditionally regardless of this
-    /// flag; this opt-in extends the same requirement to Read and AccessPII.
+    /// When set, client-supplied `human_approved` and `consent` are stripped (or the
+    /// decision is Denied). `human_approved` is then re-derived from the verified
+    /// grant, for MoveMoney. `consent` is NOT re-derived and never has been since a
+    /// Mission stopped standing in for it: a Mission is an approver's grant, and
+    /// consent is a claim about the resource owner. So this flag makes on-behalf-of
+    /// PII access fail closed rather than server-derived — there is no server-side
+    /// consent signal today. MoveMoney requires a Mission unconditionally regardless
+    /// of this flag; this opt-in extends the same requirement to Read and AccessPII.
     #[arg(long)]
     require_mission: bool,
     /// Hex Ed25519 public key of an issuer whose standing tokens this deployment

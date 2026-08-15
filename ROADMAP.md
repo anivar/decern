@@ -63,16 +63,17 @@ UX into `decern-serve`.
 - **Bearer tokens in every SDK** — the Go, Python and TypeScript clients can present an
   access token, absent entirely when unconfigured.
 
+- **Mission transitions name who asserted them** — `Mission.Approve` and
+  `Mission.Terminate` carry `asserted_by`, the caller the server verified, exactly as
+  decisions do ([#87](https://github.com/anivar/decern/issues/87)).
+- **Approval flags are server-derived only under a Mission** — a request body can no longer
+  assert `human_approved` for MoveMoney, which requires a live Mission unconditionally
+  ([#25](https://github.com/anivar/decern/issues/25)).
+
 ## Next — the accountable-operations path
 
 Close the loop from decided to enforced to revocable to accountable.
 
-- **Record who asserted a mission transition** — Mission.Approve creates live authority
-  while `approver` is a body field; the verified caller belongs on that record exactly as
-  it now sits on decisions ([#87](https://github.com/anivar/decern/issues/87)).
-- **Approval derived at the decision point by default** — `human_approved` from the request
-  body is the compatibility posture, not the destination; make the Mission-derived path the
-  default and the body flag the opt-in ([#25](https://github.com/anivar/decern/issues/25)).
 - **Real-time revocation + a signed kill-switch feed** — runtime overlay plus a poll feed a
   gateway can hold open ([#3](https://github.com/anivar/decern/issues/3)); a complement to
   an IdP's own logout, not a replacement.

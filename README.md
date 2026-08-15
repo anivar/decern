@@ -8,9 +8,11 @@
 
 # decern
 
-A deterministic authorization kernel whose safety properties are **machine-checked over
-every possible input**, not just tested on examples — with a hash-chained, tamper-evident
-decision ledger anyone can verify without trusting the operator.
+A deterministic authorization kernel whose safety properties are **machine-checked by an
+SMT solver over the model's whole symbolic input space**, not just tested on examples —
+with a hash-chained, tamper-evident decision ledger anyone can verify without trusting the
+operator. What that covers, and what it deliberately does not, is
+[stated precisely](docs/CLI.md#what-proven-covers).
 
 <p align="center">
   <a href="https://github.com/anivar/decern/actions/workflows/ci.yml"><img alt="CI" src="https://anivar.net/badge?src=ci&repo=anivar/decern"></a>
@@ -76,9 +78,10 @@ go get github.com/anivar/decern/sdks/go    # Go
 
 A decision is a pure function of `(principal, authority graph, policy, now)` — humans,
 agents, and workloads are one principal type, decided by the same function. **9 invariants**
-over it are discharged by an SMT solver (cvc5) across the entire input space, not sampled.
-Each statement is calibrated to exactly what the solver checks, so a proof never claims more
-than the machine verified:
+over it are discharged by an SMT solver (cvc5) across the model's entire symbolic input
+space, not sampled. Each statement is calibrated to exactly what the solver checks, so a
+proof never claims more than the machine verified — two invariants reason over attributes
+the kernel derives in Rust before the prover runs, and say so:
 
 - **money-gate** — no privileged money action without explicit approval
 - **isolation** — no decision ever crosses a tenant boundary
@@ -115,9 +118,9 @@ digest-bound, and `prev` is the chain link:
 Beyond the decision itself, a record carries accountability columns. The
 **accountable-owner** is the root of the subject's delegation chain, resolved server-side —
 a delegate's record names the principal ultimately answerable for it, and none of these columns
-ever changes the allow/deny outcome. Under bearer validation, **asserted_by** names the
-caller the server verified when it took the request — token subject, client, issuer —
-and is absent under a trusted front, where the server verified nothing itself. The
+ever changes the allow/deny outcome. Under any credential posture, **asserted_by** names the
+caller the server verified when it took the request — subject, client, issuer — and is
+absent under a trusted front, where the server verified nothing itself. The
 **decision subject** is the party a decision is
 taken *upon* — a different question from who asked and who answers for it — carried as a
 pseudonymous handle per
