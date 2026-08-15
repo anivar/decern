@@ -8,13 +8,16 @@
 //! This is a second credential format alongside [`crate::bearer`], not a replacement:
 //! a bearer token proves the caller once held a secret at issuance time; a signature
 //! over this exact request proves the caller holds the private key *now*. A leaked
-//! bearer token is replayable against any request until it expires; a leaked signed
-//! request cannot be replayed against a *different* request — mint one and the signature
-//! no longer covers it. Verbatim replay of the exact same captured signature is not
+//! bearer token is replayable against any request until it expires. A leaked signed
+//! request cannot be replayed against a *different* request: `@method`, `@authority`
+//! and `@path` are always covered, and a POST also covers `content-digest` (RFC 9530)
+//! of the body bytes the handler will see — so swapping the JSON at the same path
+//! is a different request, and the captured signature does not verify. Verbatim
+//! replay of the exact same captured signature (same path, same body) is not
 //! separately prevented here (no nonce/`jti` cache): it verifies again within
 //! [`MAX_SIGNATURE_AGE_SECS`], the same as it did the first time. What shrinks is the
 //! window, from a token's full lifetime to one signature's freshness period, not the
-//! possibility.
+//! possibility of replaying that one request.
 //!
 //! Every principal's key is configured, not discovered. This deployment does not fetch a
 //! `.well-known` document for anyone: the same reason bearer tokens name issuer keys in
@@ -27,10 +30,10 @@
 //! cannot account for, decided about a principal the kernel has no policy for either.
 //!
 //! Verification only, over a fixed, small shape rather than RFC 9421's full generality:
-//! exactly one signature, exactly the covered components named below, `ed25519` only. A
-//! request naming a different component set, a different algorithm, or more than one
-//! signature is refused rather than accepted under a shape this module does not enforce
-//! everywhere else.
+//! exactly one signature, exactly the covered components named below, `ed25519` only,
+//! and `sha-256` only for `Content-Digest`. A request naming a different component set,
+//! a different algorithm, or more than one signature is refused rather than accepted
+//! under a shape this module does not enforce everywhere else.
 
 use std::collections::BTreeMap;
 
@@ -40,14 +43,23 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::caller::{Authenticated, CallerAuth, Denied};
 
-/// The exact, ordered component list this deployment requires. RFC 9421 lets a signer
-/// name any subset; decern accepts precisely this one, in this order, or refuses —
-/// the same reasoning as `bearer.rs` accepting exactly one `alg`: a fixed shape here is
-/// what makes "this passed verification" mean something specific enough to record.
-const REQUIRED_COMPONENTS: [&str; 4] = ["@method", "@authority", "@path", "signature-key"];
+/// Covered components for a request with no body that is an input (GET, HEAD).
+const UNBODIED_COMPONENTS: [&str; 4] = ["@method", "@authority", "@path", "signature-key"];
+
+/// Covered components for POST. `content-digest` sits with the request-target
+/// components, before `signature-key`, so the body is part of "this request"
+/// rather than an afterthought on the credential.
+const BODIED_COMPONENTS: [&str; 5] = [
+    "@method",
+    "@authority",
+    "@path",
+    "content-digest",
+    "signature-key",
+];
 
 /// How long after `created` a signature is still accepted. Mint-to-arrival latency plus
 /// clock skew, not a session length — a signature is proof for one request, not a grant
@@ -158,27 +170,64 @@ fn parse_signature(label: &str, raw: &str) -> Result<Vec<u8>, Denied> {
         .map_err(|_| Denied::Invalid("Signature is not valid base64".into()))
 }
 
-/// Build the RFC 9421 §2.5 signature base for exactly [`REQUIRED_COMPONENTS`], given the
-/// request line and the raw `Signature-Key` header value, then append the
-/// `@signature-params` line reconstructed from the same `Signature-Input` value that was
-/// parsed — never a value this function invents, so the base matches byte-for-byte what
-/// the signer actually covered.
+/// Which components this request must cover.
+///
+/// Driven by the body as well as the method, deliberately. Keying on `POST` alone would
+/// mean a guarded `PUT` or `PATCH` added later fell into the bodiless branch and stopped
+/// covering its body — silently, and that is precisely the defect this component list
+/// exists to close. Anything carrying bytes covers them; `POST` covers them even when
+/// empty, so an empty-bodied POST cannot be downgraded to the shorter list either.
+fn required_components(method: &str, body: &[u8]) -> &'static [&'static str] {
+    if method.eq_ignore_ascii_case("POST") || !body.is_empty() {
+        &BODIED_COMPONENTS
+    } else {
+        &UNBODIED_COMPONENTS
+    }
+}
+
+/// RFC 9530 `Content-Digest` with exactly one member, `sha-256`, as an RFC 8941
+/// byte sequence (`sha-256=:base64:`). Anything else — a second algorithm, a
+/// different hash, extra dictionary members — is refused rather than ignored.
+fn parse_sha256_content_digest(raw: &str) -> Result<[u8; 32], Denied> {
+    let rest = raw
+        .trim()
+        .strip_prefix("sha-256=:")
+        .and_then(|s| s.strip_suffix(':'))
+        .ok_or_else(|| Denied::Invalid("Content-Digest is not sha-256=:…: (RFC 9530)".into()))?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(rest)
+        .map_err(|_| Denied::Invalid("Content-Digest is not valid base64".into()))?;
+    bytes
+        .try_into()
+        .map_err(|_| Denied::Invalid("Content-Digest sha-256 value is not 32 bytes".into()))
+}
+
+fn sha256_of(body: &[u8]) -> [u8; 32] {
+    Sha256::digest(body).into()
+}
+
+/// RFC 9530 dictionary value for a `sha-256` digest of `body`. Test-only: the server
+/// verifies a digest it was sent and never produces one.
+#[cfg(test)]
+fn content_digest_header_value(body: &[u8]) -> String {
+    format!(
+        "sha-256=:{}:",
+        base64::engine::general_purpose::STANDARD.encode(sha256_of(body))
+    )
+}
+
+/// Build the RFC 9421 §2.5 signature base for the components this method requires,
+/// then append the `@signature-params` line reconstructed from the same
+/// `Signature-Input` value that was parsed — never a value this function invents,
+/// so the base matches byte-for-byte what the signer actually covered.
 fn signature_base(
-    method: &str,
-    authority: &str,
-    path: &str,
-    signature_key_header: &str,
+    components: &[&str],
+    values: &[&str],
     signature_input_label: &str,
     signature_input_raw: &str,
 ) -> String {
-    let values = [
-        method.to_ascii_uppercase(),
-        authority.to_ascii_lowercase(),
-        path.to_owned(),
-        signature_key_header.to_owned(),
-    ];
     let mut base = String::new();
-    for (component, value) in REQUIRED_COMPONENTS.iter().zip(values.iter()) {
+    for (component, value) in components.iter().zip(values.iter()) {
         base.push_str(&format!("\"{component}\": {value}\n"));
     }
     base.push_str(&format!(
@@ -227,13 +276,14 @@ fn jwk_to_verifying_key(jwk: &JwkEd25519) -> Result<VerifyingKey, Denied> {
 }
 
 impl CallerAuth for SigConfig {
-    /// The credential is spread across the request line and three headers, so unlike the
-    /// bearer posture this reads the method, authority and path too — they are covered
+    /// The credential is spread across the request line and the signature headers,
+    /// and for POST the body via `Content-Digest`. Unlike bearer, those are covered
     /// components of the signature, not incidental context.
     fn authenticate(
         &self,
         req: &axum::extract::Request,
         now_secs: u64,
+        body: &[u8],
     ) -> Result<Authenticated, Denied> {
         fn header<'a>(req: &'a axum::extract::Request, name: &str) -> Option<&'a str> {
             req.headers().get(name).and_then(|v| v.to_str().ok())
@@ -245,6 +295,8 @@ impl CallerAuth for SigConfig {
             signature_key_header: header(req, "signature-key"),
             signature_input_header: header(req, "signature-input"),
             signature_header: header(req, "signature"),
+            content_digest_header: header(req, "content-digest"),
+            body,
         };
         let signed = authenticate(&presented, self, now_secs as i64)?;
         Ok(Authenticated {
@@ -278,6 +330,8 @@ pub(crate) struct SignedRequest<'a> {
     pub(crate) signature_key_header: Option<&'a str>,
     pub(crate) signature_input_header: Option<&'a str>,
     pub(crate) signature_header: Option<&'a str>,
+    pub(crate) content_digest_header: Option<&'a str>,
+    pub(crate) body: &'a [u8],
 }
 
 /// Validate a signed request and its bound access token, in the order that keeps every
@@ -318,7 +372,8 @@ pub(crate) fn authenticate(
     let input = parse_signature_input(LABEL, input_header)?;
     let sig_bytes = parse_signature(LABEL, sig_header)?;
 
-    if input.components.as_slice() != REQUIRED_COMPONENTS {
+    let components = required_components(req.method, req.body);
+    if input.components.as_slice() != components {
         return Err(Denied::Invalid(
             "Signature-Input does not cover exactly the required components".into(),
         ));
@@ -422,19 +477,27 @@ pub(crate) fn authenticate(
         return Err(Denied::Invalid("bound token has expired".into()));
     }
 
+    // Bound and checked before it is placed in the signature base, so a POST whose
+    // body does not match its digest is refused without running Ed25519.
+    let digest_header = bind_content_digest(components, req)?;
+    let method = req.method.to_ascii_uppercase();
+    let authority = req.authority.to_ascii_lowercase();
+    let covered = Covered {
+        method: &method,
+        authority: &authority,
+        path: req.path,
+        content_digest: digest_header,
+        signature_key: key_header,
+    };
+    let values: Result<Vec<&str>, Denied> = components.iter().map(|c| covered.value(c)).collect();
+    let values = values?;
+
     // Finally, the expensive check: does the signature over this exact request verify
     // against the key this deployment already knows for the claimed identity. Every
     // check above is cheap and self-asserted; this is the one that actually proves
     // possession, so it runs last, over a key this function chose, never one the
     // request supplied for its own verification.
-    let base = signature_base(
-        req.method,
-        req.authority,
-        req.path,
-        key_header,
-        LABEL,
-        input_header,
-    );
+    let base = signature_base(components, &values, LABEL, input_header);
     let sig_arr: [u8; 64] = sig_bytes
         .try_into()
         .map_err(|_| Denied::Invalid("signature is not 64 bytes".into()))?;
@@ -452,6 +515,59 @@ pub(crate) fn authenticate(
         agent: subject,
         issuer,
     })
+}
+
+/// The values RFC 9421 §2.5 puts on the signature base, one per covered component.
+struct Covered<'a> {
+    method: &'a str,
+    authority: &'a str,
+    path: &'a str,
+    content_digest: Option<&'a str>,
+    signature_key: &'a str,
+}
+
+impl<'a> Covered<'a> {
+    fn value(&self, component: &str) -> Result<&'a str, Denied> {
+        match component {
+            "@method" => Ok(self.method),
+            "@authority" => Ok(self.authority),
+            "@path" => Ok(self.path),
+            "content-digest" => self
+                .content_digest
+                .ok_or_else(|| Denied::Invalid("POST carries no Content-Digest".into())),
+            "signature-key" => Ok(self.signature_key),
+            other => Err(Denied::Invalid(format!(
+                "internal: unexpected covered component {other}"
+            ))),
+        }
+    }
+}
+
+/// If this method covers `content-digest`, the header must be present, `sha-256` only,
+/// and equal to the hash of the body bytes the handler will see. GET has no such
+/// component, so a stray `Content-Digest` on a GET is ignored rather than checked.
+fn bind_content_digest<'a>(
+    components: &[&str],
+    req: &SignedRequest<'a>,
+) -> Result<Option<&'a str>, Denied> {
+    if !components.contains(&"content-digest") {
+        return Ok(None);
+    }
+    let raw = req
+        .content_digest_header
+        .ok_or_else(|| Denied::Invalid("POST carries no Content-Digest".into()))?;
+    if raw.len() > MAX_TOKEN_BYTES {
+        return Err(Denied::Invalid(
+            "Content-Digest exceeds the accepted size".into(),
+        ));
+    }
+    let claimed = parse_sha256_content_digest(raw)?;
+    if claimed != sha256_of(req.body) {
+        return Err(Denied::Invalid(
+            "Content-Digest does not match the request body".into(),
+        ));
+    }
+    Ok(Some(raw))
 }
 
 fn audience_contains(aud: Option<&Value>, want: &str) -> bool {
@@ -485,7 +601,6 @@ mod tests {
     const AGENT: &str = "agent-1";
     const ISS: &str = "https://agent-provider.example/";
     const AUD: &str = "https://pdp.example/access/v1/evaluation";
-    const METHOD: &str = "GET";
     const AUTHORITY: &str = "pdp.example";
     const PATH: &str = "/access/v1/evaluation";
     const CREATED: i64 = 1_000;
@@ -526,52 +641,123 @@ mod tests {
         }
     }
 
-    /// Builds the three RFC 9421 headers for a request signed with `signing_key`, whose
-    /// bound token is `token`. `components` lets a test ask for a shape other than
-    /// [`REQUIRED_COMPONENTS`]; `created` lets a test ask for a stale timestamp.
-    fn sign_request(
+    /// Signed GET headers. GET has no body that is an input, so `content-digest` is not
+    /// covered and `body` is empty.
+    fn sign_get(
         signing_key: &SigningKey,
         token: &str,
         components: &[&str],
         created: i64,
     ) -> (String, String, String) {
+        let (key, input, sig, _) = sign_at(signing_key, "GET", token, components, created, b"");
+        (key, input, sig)
+    }
+
+    /// Signed POST headers, including `Content-Digest` of `body`.
+    fn sign_post(
+        signing_key: &SigningKey,
+        token: &str,
+        components: &[&str],
+        created: i64,
+        body: &[u8],
+    ) -> (String, String, String, String) {
+        sign_at(signing_key, "POST", token, components, created, body)
+    }
+
+    fn sign_at(
+        signing_key: &SigningKey,
+        method: &str,
+        token: &str,
+        components: &[&str],
+        created: i64,
+        body: &[u8],
+    ) -> (String, String, String, String) {
+        let digest = content_digest_header_value(body);
         let component_list = components
             .iter()
             .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
             .join(" ");
         let input_value = format!("sig1=({component_list});created={created}");
-        let base = signature_base(METHOD, AUTHORITY, PATH, token, "sig1", &input_value);
+        let method_u = method.to_ascii_uppercase();
+        let covered = Covered {
+            method: &method_u,
+            authority: AUTHORITY,
+            path: PATH,
+            content_digest: Some(digest.as_str()),
+            signature_key: token,
+        };
+        let values: Vec<&str> = components
+            .iter()
+            .map(|c| covered.value(c).expect("test fixture component"))
+            .collect();
+        let base = signature_base(components, &values, "sig1", &input_value);
         let signature = signing_key.sign(base.as_bytes());
         let sig_value = format!(
             "sig1=:{}:",
             base64::engine::general_purpose::STANDARD.encode(signature.to_bytes())
         );
-        (token.to_owned(), input_value, sig_value)
+        (token.to_owned(), input_value, sig_value, digest)
     }
 
-    fn req<'a>(
+    fn get_req<'a>(
         signature_key_header: &'a str,
         signature_input_header: &'a str,
         signature_header: &'a str,
     ) -> SignedRequest<'a> {
         SignedRequest {
-            method: METHOD,
+            method: "GET",
             authority: AUTHORITY,
             path: PATH,
             signature_key_header: Some(signature_key_header),
             signature_input_header: Some(signature_input_header),
             signature_header: Some(signature_header),
+            content_digest_header: None,
+            body: b"",
         }
+    }
+
+    fn post_req<'a>(
+        signature_key_header: &'a str,
+        signature_input_header: &'a str,
+        signature_header: &'a str,
+        content_digest_header: &'a str,
+        body: &'a [u8],
+    ) -> SignedRequest<'a> {
+        SignedRequest {
+            method: "POST",
+            authority: AUTHORITY,
+            path: PATH,
+            signature_key_header: Some(signature_key_header),
+            signature_input_header: Some(signature_input_header),
+            signature_header: Some(signature_header),
+            content_digest_header: Some(content_digest_header),
+            body,
+        }
+    }
+
+    /// The component list is chosen from the body as well as the method, so a
+    /// body-carrying method nobody thought to name still covers what it carries. Keying
+    /// on POST alone would let a guarded PUT added later stop covering its body — the
+    /// same defect this list exists to close, recurring quietly.
+    #[test]
+    fn any_request_carrying_bytes_covers_them() {
+        assert_eq!(required_components("POST", b""), BODIED_COMPONENTS);
+        assert_eq!(required_components("POST", b"{}"), BODIED_COMPONENTS);
+        assert_eq!(required_components("PUT", b"{}"), BODIED_COMPONENTS);
+        assert_eq!(required_components("PATCH", b"{}"), BODIED_COMPONENTS);
+        assert_eq!(required_components("GET", b""), UNBODIED_COMPONENTS);
+        // A GET that somehow arrives with bytes covers them rather than ignoring them.
+        assert_eq!(required_components("GET", b"x"), BODIED_COMPONENTS);
     }
 
     #[test]
     fn a_well_formed_signed_request_authenticates_its_caller() {
         let k = decern_crypto::generate().unwrap();
         let token = bound_token(&k.verifying_key(), |_| {});
-        let (key_h, input_h, sig_h) = sign_request(&k, &token, &REQUIRED_COMPONENTS, CREATED);
+        let (key_h, input_h, sig_h) = sign_get(&k, &token, &UNBODIED_COMPONENTS, CREATED);
         let who = authenticate(
-            &req(&key_h, &input_h, &sig_h),
+            &get_req(&key_h, &input_h, &sig_h),
             &cfg(&k.verifying_key()),
             NOW,
         )
@@ -590,10 +776,9 @@ mod tests {
         let configured = decern_crypto::generate().unwrap();
         let attacker = decern_crypto::generate().unwrap();
         let token = bound_token(&configured.verifying_key(), |_| {});
-        let (key_h, input_h, sig_h) =
-            sign_request(&attacker, &token, &REQUIRED_COMPONENTS, CREATED);
+        let (key_h, input_h, sig_h) = sign_get(&attacker, &token, &UNBODIED_COMPONENTS, CREATED);
         let e = authenticate(
-            &req(&key_h, &input_h, &sig_h),
+            &get_req(&key_h, &input_h, &sig_h),
             &cfg(&configured.verifying_key()),
             NOW,
         )
@@ -606,9 +791,9 @@ mod tests {
         let k = decern_crypto::generate().unwrap();
         let token = bound_token(&k.verifying_key(), |_| {});
         let stale_created = NOW - MAX_SIGNATURE_AGE_SECS - 1;
-        let (key_h, input_h, sig_h) = sign_request(&k, &token, &REQUIRED_COMPONENTS, stale_created);
+        let (key_h, input_h, sig_h) = sign_get(&k, &token, &UNBODIED_COMPONENTS, stale_created);
         let e = authenticate(
-            &req(&key_h, &input_h, &sig_h),
+            &get_req(&key_h, &input_h, &sig_h),
             &cfg(&k.verifying_key()),
             NOW,
         )
@@ -623,9 +808,9 @@ mod tests {
         let k = decern_crypto::generate().unwrap();
         let token = bound_token(&k.verifying_key(), |_| {});
         let ahead_created = NOW + MAX_CLOCK_SKEW_AHEAD_SECS;
-        let (key_h, input_h, sig_h) = sign_request(&k, &token, &REQUIRED_COMPONENTS, ahead_created);
+        let (key_h, input_h, sig_h) = sign_get(&k, &token, &UNBODIED_COMPONENTS, ahead_created);
         authenticate(
-            &req(&key_h, &input_h, &sig_h),
+            &get_req(&key_h, &input_h, &sig_h),
             &cfg(&k.verifying_key()),
             NOW,
         )
@@ -638,9 +823,9 @@ mod tests {
         let k = decern_crypto::generate().unwrap();
         let token = bound_token(&k.verifying_key(), |_| {});
         let too_far_ahead = NOW + MAX_CLOCK_SKEW_AHEAD_SECS + 1;
-        let (key_h, input_h, sig_h) = sign_request(&k, &token, &REQUIRED_COMPONENTS, too_far_ahead);
+        let (key_h, input_h, sig_h) = sign_get(&k, &token, &UNBODIED_COMPONENTS, too_far_ahead);
         let e = authenticate(
-            &req(&key_h, &input_h, &sig_h),
+            &get_req(&key_h, &input_h, &sig_h),
             &cfg(&k.verifying_key()),
             NOW,
         )
@@ -653,9 +838,9 @@ mod tests {
         let k = decern_crypto::generate().unwrap();
         let token = bound_token(&k.verifying_key(), |_| {});
         let short_components = ["@method", "@authority", "@path"];
-        let (key_h, input_h, sig_h) = sign_request(&k, &token, &short_components, CREATED);
+        let (key_h, input_h, sig_h) = sign_get(&k, &token, &short_components, CREATED);
         let e = authenticate(
-            &req(&key_h, &input_h, &sig_h),
+            &get_req(&key_h, &input_h, &sig_h),
             &cfg(&k.verifying_key()),
             NOW,
         )
@@ -672,12 +857,12 @@ mod tests {
         let token = bound_token(&k.verifying_key(), |c| {
             c["sub"] = json!("someone-else");
         });
-        let (key_h, input_h, sig_h) = sign_request(&k, &token, &REQUIRED_COMPONENTS, CREATED);
+        let (key_h, input_h, sig_h) = sign_get(&k, &token, &UNBODIED_COMPONENTS, CREATED);
         // `other`'s key is what's configured here, under a different agent id — proving
         // this is refused for the identity lookup, not merely because the wrong key
         // happened to verify.
         let e = authenticate(
-            &req(&key_h, &input_h, &sig_h),
+            &get_req(&key_h, &input_h, &sig_h),
             &cfg(&other.verifying_key()),
             NOW,
         )
@@ -695,9 +880,9 @@ mod tests {
         let token = bound_token(&k.verifying_key(), |c| {
             c["exp"] = json!((NOW - 1) as f64);
         });
-        let (key_h, input_h, sig_h) = sign_request(&k, &token, &REQUIRED_COMPONENTS, CREATED);
+        let (key_h, input_h, sig_h) = sign_get(&k, &token, &UNBODIED_COMPONENTS, CREATED);
         let e = authenticate(
-            &req(&key_h, &input_h, &sig_h),
+            &get_req(&key_h, &input_h, &sig_h),
             &cfg(&k.verifying_key()),
             NOW,
         )
@@ -713,14 +898,77 @@ mod tests {
         // though the request happens to be signed by the configured key, the token's own
         // claim about which key it binds to must still match.
         let token = bound_token(&elsewhere.verifying_key(), |_| {});
-        let (key_h, input_h, sig_h) =
-            sign_request(&configured, &token, &REQUIRED_COMPONENTS, CREATED);
+        let (key_h, input_h, sig_h) = sign_get(&configured, &token, &UNBODIED_COMPONENTS, CREATED);
         let e = authenticate(
-            &req(&key_h, &input_h, &sig_h),
+            &get_req(&key_h, &input_h, &sig_h),
             &cfg(&configured.verifying_key()),
             NOW,
         )
         .unwrap_err();
         assert!(e.detail().contains("does not match"), "{}", e.detail());
+    }
+
+    #[test]
+    fn a_post_with_matching_content_digest_authenticates() {
+        let k = decern_crypto::generate().unwrap();
+        let token = bound_token(&k.verifying_key(), |_| {});
+        let body = br#"{"subject":{"id":"corp"},"action":{"name":"Read"}}"#;
+        let (key_h, input_h, sig_h, digest) =
+            sign_post(&k, &token, &BODIED_COMPONENTS, CREATED, body);
+        authenticate(
+            &post_req(&key_h, &input_h, &sig_h, &digest, body),
+            &cfg(&k.verifying_key()),
+            NOW,
+        )
+        .expect("a POST whose digest matches its body must authenticate");
+    }
+
+    /// The exploit: a captured signature over one POST body must not authorize a
+    /// different body at the same path. Before `content-digest` was covered, this
+    /// authenticated — the signature contributed nothing, and only the Mission
+    /// gate happened to stop MoveMoney. There is no such backstop on
+    /// `/mission/v1/approve`.
+    #[test]
+    fn a_captured_signature_cannot_authorize_a_different_body() {
+        let k = decern_crypto::generate().unwrap();
+        let token = bound_token(&k.verifying_key(), |_| {});
+        let read = br#"{"action":{"name":"Read"}}"#;
+        let move_money = br#"{"action":{"name":"MoveMoney"}}"#;
+        let (key_h, input_h, sig_h, digest) =
+            sign_post(&k, &token, &BODIED_COMPONENTS, CREATED, read);
+        let e = authenticate(
+            &post_req(&key_h, &input_h, &sig_h, &digest, move_money),
+            &cfg(&k.verifying_key()),
+            NOW,
+        )
+        .unwrap_err();
+        assert!(
+            e.detail().contains("does not match the request body"),
+            "{}",
+            e.detail()
+        );
+    }
+
+    #[test]
+    fn a_post_without_content_digest_is_refused() {
+        let k = decern_crypto::generate().unwrap();
+        let token = bound_token(&k.verifying_key(), |_| {});
+        let (key_h, input_h, sig_h) = sign_get(&k, &token, &UNBODIED_COMPONENTS, CREATED);
+        let e = authenticate(
+            &SignedRequest {
+                method: "POST",
+                authority: AUTHORITY,
+                path: PATH,
+                signature_key_header: Some(&key_h),
+                signature_input_header: Some(&input_h),
+                signature_header: Some(&sig_h),
+                content_digest_header: None,
+                body: b"{}",
+            },
+            &cfg(&k.verifying_key()),
+            NOW,
+        )
+        .unwrap_err();
+        assert!(e.detail().contains("required components"), "{}", e.detail());
     }
 }

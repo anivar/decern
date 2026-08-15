@@ -187,6 +187,102 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// Through the router, not just the verifier: the guard must hash the body it
+    /// restores onto the request. A unit test that passes a swapped body into
+    /// `authenticate` cannot catch a middleware that never buffered it.
+    #[tokio::test]
+    async fn a_captured_signed_post_cannot_swap_its_body_through_the_guard() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use base64::Engine as _;
+        use sha2::{Digest, Sha256};
+        use tower::ServiceExt;
+
+        let key = decern_crypto::generate().unwrap();
+        let vk = key.verifying_key();
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let mut agents = std::collections::BTreeMap::new();
+        agents.insert("agent-1".to_owned(), vk);
+        let router = app(
+            st,
+            Arc::new(caller::Caller::Signed(Box::new(crate::sig::SigConfig {
+                agents,
+                audience: "https://pdp.example/access/v1/evaluation".into(),
+            }))),
+        );
+
+        let read = br#"{"subject":{"type":"Principal","id":"corp"},"action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"}}"#;
+        let r#move = br#"{"subject":{"type":"Principal","id":"corp"},"action":{"name":"MoveMoney"},"resource":{"type":"Resource","id":"claim1"}}"#;
+
+        let token = {
+            use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+            let header = serde_json::json!({ "typ": "dpop-bound+jwt", "alg": "EdDSA" });
+            let claims = serde_json::json!({
+                "sub": "agent-1",
+                "iss": "https://agent-provider.example/",
+                "aud": "https://pdp.example/access/v1/evaluation",
+                "exp": 4_000_000_000u64,
+                "cnf": { "jwk": {
+                    "kty": "OKP", "crv": "Ed25519",
+                    "x": URL_SAFE_NO_PAD.encode(vk.to_bytes()),
+                }},
+            });
+            let h = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
+            let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+            format!("{h}.{p}.unverified")
+        };
+        let created = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let digest = format!(
+            "sha-256=:{}:",
+            base64::engine::general_purpose::STANDARD.encode(Sha256::digest(read))
+        );
+        let components =
+            "\"@method\" \"@authority\" \"@path\" \"content-digest\" \"signature-key\"";
+        let input = format!("sig1=({components});created={created}");
+        let base_str = format!(
+            "\"@method\": POST\n\"@authority\": pdp.example\n\"@path\": /access/v1/evaluation\n\"content-digest\": {digest}\n\"signature-key\": {token}\n\"@signature-params\": ({components});created={created}"
+        );
+        use ed25519_dalek::Signer as _;
+        let sig = format!(
+            "sig1=:{}:",
+            base64::engine::general_purpose::STANDARD
+                .encode(key.sign(base_str.as_bytes()).to_bytes())
+        );
+
+        let signed = |body: &'static [u8]| {
+            Request::builder()
+                .method("POST")
+                .uri("/access/v1/evaluation")
+                .header("host", "pdp.example")
+                .header("content-type", "application/json")
+                .header("signature-key", token.as_str())
+                .header("signature-input", input.as_str())
+                .header("signature", sig.as_str())
+                .header("content-digest", digest.as_str())
+                .body(Body::from(body))
+                .unwrap()
+        };
+
+        let ok = router.clone().oneshot(signed(read)).await.unwrap();
+        assert_eq!(
+            ok.status(),
+            StatusCode::OK,
+            "matching body must authenticate"
+        );
+
+        let swapped = router.oneshot(signed(r#move)).await.unwrap();
+        assert_eq!(
+            swapped.status(),
+            StatusCode::UNAUTHORIZED,
+            "a captured signature must not authorize a different body"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[tokio::test]
     async fn every_deciding_route_refuses_an_unauthenticated_caller() {
         use axum::body::Body;

@@ -219,12 +219,14 @@ names one of two postures:
   no TLS stack and no reliance on a third party being reachable.
 - **Sender-constrained validation** (`--signed-agent-key`, `--signed-audience`): the guarded routes
   require an RFC 9421 HTTP Message Signature over `@method`, `@authority`, `@path`, and
-  `signature-key`, bound to an RFC 7800 `cnf.jwk` claim matching a key configured here for the
-  claimed agent identifier. Where bearer validation accepts a token as long as it is presented
-  before it expires — a leaked bearer JWT is replayable as-is — this mode requires proof of
-  possession of the signing key on every single request. Verification is against configured keys
-  only, same no-fetch posture as bearer validation, and an agent identifier with no configured key
-  is refused before any cryptography runs.
+  `signature-key`, plus `content-digest` (RFC 9530 `sha-256`) on POST, bound to an RFC 7800
+  `cnf.jwk` claim matching a key configured here for the claimed agent identifier. Where bearer
+  validation accepts a token as long as it is presented before it expires — a leaked bearer JWT
+  is replayable as-is — this mode requires proof of possession of the signing key on every
+  single request, and a captured signature over one POST body cannot authorize a different
+  one. GET is unchanged. Verification is against configured keys only, same no-fetch posture as
+  bearer validation, and an agent identifier with no configured key is refused before any
+  cryptography runs.
   [`examples/signed-request/`](../examples/signed-request/README.md) runs this mode end to end,
   including the beat that separates it from a bearer credential: the *same* token, refused when the
   signature comes from a different key.
