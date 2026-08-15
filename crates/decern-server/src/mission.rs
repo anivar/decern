@@ -130,11 +130,16 @@ pub(crate) async fn mission_approve(
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
     Json(req): Json<MissionApproveReq>,
 ) -> Response {
-    let asserted_by = caller.map(|axum::Extension(who)| decern_ledger::AssertedBy {
-        sub: who.subject,
-        client_id: who.client_id,
-        iss: who.issuer,
-    });
+    if let Some(refusal) = crate::caller::refuse_unless_admits(&caller, &req.approver) {
+        return refusal;
+    }
+    let asserted_by = caller
+        .as_ref()
+        .map(|axum::Extension(who)| decern_ledger::AssertedBy {
+            sub: who.subject.clone(),
+            client_id: who.client_id.clone(),
+            iss: who.issuer.clone(),
+        });
     let now_s = now_secs();
     let mission = Mission {
         approver: req.approver,
@@ -267,11 +272,13 @@ pub(crate) async fn mission_terminate(
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
     UrlPath(s256): UrlPath<String>,
 ) -> Response {
-    let asserted_by = caller.map(|axum::Extension(who)| decern_ledger::AssertedBy {
-        sub: who.subject,
-        client_id: who.client_id,
-        iss: who.issuer,
-    });
+    let asserted_by = caller
+        .as_ref()
+        .map(|axum::Extension(who)| decern_ledger::AssertedBy {
+            sub: who.subject.clone(),
+            client_id: who.client_id.clone(),
+            iss: who.issuer.clone(),
+        });
     let now_s = now_secs();
     // Resolve the mission first: its approver is the subject/accountable-owner of the
     // termination record, and an unknown reference has nothing to terminate.
@@ -286,6 +293,9 @@ pub(crate) async fn mission_terminate(
         }
         Err(e) => return registry_unavailable(&e),
     };
+    if let Some(refusal) = crate::caller::refuse_unless_admits(&caller, &entry.approver) {
+        return refusal;
+    }
     // Persist the termination (monotone, no revival; an idempotent no-op if already
     // terminated) BEFORE recording. The order is deliberate and OPPOSITE to approve's:
     // approve's dangerous state is a LIVE mission, so it records first (never live without
@@ -576,11 +586,11 @@ mod tests {
         let (st, pubkey) = mission_state_at(&base);
         let ledger_path = base.join("decern-ledger.jsonl");
 
-        let auth = crate::caller::Authenticated {
-            subject: "operator-1".into(),
-            client_id: "admin-cli".into(),
-            issuer: "https://auth.example.com".into(),
-        };
+        let auth = crate::caller::Authenticated::new(
+            "operator-1",
+            "admin-cli",
+            "https://auth.example.com",
+        );
 
         let (status, body) = body_json(
             mission_approve(
@@ -639,11 +649,11 @@ mod tests {
         let (st, pubkey) = mission_state_at(&base);
         let ledger_path = base.join("decern-ledger.jsonl");
 
-        let auth_approve = crate::caller::Authenticated {
-            subject: "operator-1".into(),
-            client_id: "admin-cli".into(),
-            issuer: "https://auth.example.com".into(),
-        };
+        let auth_approve = crate::caller::Authenticated::new(
+            "operator-1",
+            "admin-cli",
+            "https://auth.example.com",
+        );
 
         let (status, body) = body_json(
             mission_approve(
@@ -657,11 +667,8 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let s256 = body["s256"].as_str().unwrap().to_owned();
 
-        let auth_term = crate::caller::Authenticated {
-            subject: "operator-2".into(),
-            client_id: "ops-tool".into(),
-            issuer: "https://auth.example.com".into(),
-        };
+        let auth_term =
+            crate::caller::Authenticated::new("operator-2", "ops-tool", "https://auth.example.com");
 
         let (status, _b) = body_json(
             mission_terminate(
@@ -757,11 +764,11 @@ mod tests {
         let (status, body_a) = body_json(
             mission_approve(
                 State(st.clone()),
-                Some(axum::Extension(crate::caller::Authenticated {
-                    subject: "caller-a".into(),
-                    client_id: "client-a".into(),
-                    issuer: "https://auth.example.com".into(),
-                })),
+                Some(axum::Extension(crate::caller::Authenticated::new(
+                    "caller-a",
+                    "client-a",
+                    "https://auth.example.com",
+                ))),
                 Json(approve_req(&["read"], corp_expiry())),
             )
             .await,
@@ -774,11 +781,11 @@ mod tests {
         let (status, body_b) = body_json(
             mission_approve(
                 State(st.clone()),
-                Some(axum::Extension(crate::caller::Authenticated {
-                    subject: "caller-b".into(),
-                    client_id: "client-b".into(),
-                    issuer: "https://auth.example.com".into(),
-                })),
+                Some(axum::Extension(crate::caller::Authenticated::new(
+                    "caller-b",
+                    "client-b",
+                    "https://auth.example.com",
+                ))),
                 Json(approve_req(&["read"], corp_expiry())),
             )
             .await,
@@ -796,6 +803,67 @@ mod tests {
         let report = decern_ledger::verify(&ledger_path, Some(&pubkey)).unwrap();
         assert!(report.signatures_checked);
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The theft: an authenticated agent minting a Mission as `corp`. Attenuation
+    /// would succeed; admission is what stops it.
+    #[tokio::test]
+    async fn a_self_only_caller_cannot_approve_as_another_principal() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let thief = crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")
+            .self_only();
+        let (status, body) = body_json(
+            mission_approve(
+                State(st),
+                Some(axum::Extension(thief)),
+                Json(approve_req(&["move_money"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "caller_mismatch");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn a_self_only_caller_cannot_terminate_anothers_mission() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                None,
+                Json(approve_req(&["read"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+
+        let thief = crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")
+            .self_only();
+        let (status, body) = body_json(
+            mission_terminate(
+                State(st.clone()),
+                Some(axum::Extension(thief)),
+                UrlPath(s256.clone()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "caller_mismatch");
+
+        let (status, body) = body_json(mission_get(State(st), UrlPath(s256)).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["state"], "active",
+            "a refused terminate must not kill the grant"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }

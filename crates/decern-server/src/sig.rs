@@ -84,6 +84,19 @@ pub(crate) struct SigConfig {
     /// This deployment's resource identifier, which the token's `aud` must contain —
     /// same role as [`crate::bearer::Config::audience`].
     pub(crate) audience: String,
+    /// Agent identifiers that remain PEPs under this posture: they may name principals
+    /// other than themselves. Empty by default — a signed-request agent is a workload.
+    pub(crate) pep: std::collections::BTreeSet<String>,
+}
+
+impl SigConfig {
+    pub(crate) fn new(agents: BTreeMap<String, VerifyingKey>, audience: impl Into<String>) -> Self {
+        Self {
+            agents,
+            audience: audience.into(),
+            pep: std::collections::BTreeSet::new(),
+        }
+    }
 }
 
 /// What a verified signed request says about its caller.
@@ -299,12 +312,13 @@ impl CallerAuth for SigConfig {
             body,
         };
         let signed = authenticate(&presented, self, now_secs as i64)?;
-        Ok(Authenticated {
-            // A signed request names one agent, which is both the party and the client
-            // acting for it — there is no separate delegating client to distinguish.
-            subject: signed.agent.clone(),
-            client_id: signed.agent,
-            issuer: signed.issuer,
+        // A signed request names one agent, which is both the party and the client
+        // acting for it — there is no separate delegating client to distinguish.
+        let who = Authenticated::new(signed.agent.clone(), signed.agent.clone(), signed.issuer);
+        Ok(if self.pep.contains(&signed.agent) {
+            who
+        } else {
+            who.self_only()
         })
     }
 
@@ -635,10 +649,7 @@ mod tests {
     fn cfg(key: &VerifyingKey) -> SigConfig {
         let mut agents = BTreeMap::new();
         agents.insert(AGENT.to_owned(), *key);
-        SigConfig {
-            agents,
-            audience: AUD.into(),
-        }
+        SigConfig::new(agents, AUD)
     }
 
     /// Signed GET headers. GET has no body that is an input, so `content-digest` is not

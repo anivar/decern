@@ -127,14 +127,19 @@ pub(crate) async fn decide(
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
     Json(req): Json<DecideReq>,
 ) -> Response {
+    if let Some(refusal) = crate::caller::refuse_unless_admits(&caller, &req.subject.id) {
+        return refusal;
+    }
     // Who asserted this request, when the guard verified a token. Under a trusted
     // front there is no extension and the column stays off the record: an assertion
     // this server did not verify itself does not belong on a permanent one.
-    let asserted_by = caller.map(|axum::Extension(who)| decern_ledger::AssertedBy {
-        sub: who.subject,
-        client_id: who.client_id,
-        iss: who.issuer,
-    });
+    let asserted_by = caller
+        .as_ref()
+        .map(|axum::Extension(who)| decern_ledger::AssertedBy {
+            sub: who.subject.clone(),
+            client_id: who.client_id.clone(),
+            iss: who.issuer.clone(),
+        });
     let now_s = now_secs();
     let mut ctx = if req.context.is_object() {
         req.context
@@ -927,6 +932,63 @@ mod tests {
             last["entry"]["context"].get("asserted_by").is_none(),
             "caller-supplied asserted_by must be stripped from context: {last}"
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn read_as(subject: &str) -> DecideReq {
+        serde_json::from_str(&format!(
+            r#"{{"subject":{{"type":"Principal","id":"{subject}"}},
+                "action":{{"name":"Read"}},
+                "resource":{{"type":"Resource","id":"claim1"}}}}"#
+        ))
+        .unwrap()
+    }
+
+    /// The remaining theft after the caller is established: an authenticated agent
+    /// naming someone else as the AuthZEN subject. Admission stops it here, before
+    /// the kernel.
+    #[tokio::test]
+    async fn a_self_only_caller_cannot_evaluate_as_another_principal() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let who = crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")
+            .self_only();
+        let (status, body) =
+            body_json(decide(State(st), Some(axum::Extension(who)), Json(read_as("corp"))).await)
+                .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "caller_mismatch");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn a_self_only_caller_may_evaluate_as_itself() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let who = crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")
+            .self_only();
+        let (status, body) = body_json(
+            decide(
+                State(st),
+                Some(axum::Extension(who)),
+                Json(read_as("agent-1")),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn a_pep_caller_may_evaluate_as_another_principal() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let who = crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/");
+        let (status, body) =
+            body_json(decide(State(st), Some(axum::Extension(who)), Json(read_as("corp"))).await)
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -110,6 +110,13 @@ struct Args {
     /// `--bearer-audience`.
     #[arg(long, value_name = "URI")]
     signed_audience: Option<String>,
+    /// An agent identifier that may name principals other than itself. Repeatable.
+    /// Signed-request mode only: a gateway that proves possession of a key on every
+    /// request is still a PEP. An identifier not also in `--signed-agent-key` cannot
+    /// authenticate, so it cannot be a PEP either. Omit to bind every signed agent
+    /// to itself.
+    #[arg(long = "pep", value_name = "ID", requires = "signed_agent_keys")]
+    pep: Vec<String>,
     /// Accept every caller, because something in front has already authenticated them.
     /// One of this or the bearer/signed flags is required to start: "no token configured"
     /// and "authentication deliberately delegated" are indistinguishable from inside this
@@ -199,9 +206,21 @@ pub(crate) struct AppState {
 /// every client must already know to mint a usable token.
 pub(crate) fn caller_disclosure(caller: &caller::Caller) -> Value {
     match caller {
-        caller::Caller::Bearer(c) => json!({ "mode": "bearer", "audience": c.audience }),
-        caller::Caller::Signed(c) => json!({ "mode": "signed", "audience": c.audience }),
-        caller::Caller::TrustedProxy => json!({ "mode": "trusted-proxy" }),
+        caller::Caller::Bearer(c) => {
+            json!({ "mode": "bearer", "audience": c.audience, "bind": "any" })
+        }
+        caller::Caller::Signed(c) => {
+            let mut o = json!({
+                "mode": "signed",
+                "audience": c.audience,
+                "bind": "self",
+            });
+            if !c.pep.is_empty() {
+                o["pep"] = json!(c.pep.iter().cloned().collect::<Vec<_>>());
+            }
+            o
+        }
+        caller::Caller::TrustedProxy => json!({ "mode": "trusted-proxy", "bind": "any" }),
     }
 }
 
@@ -268,10 +287,21 @@ fn caller_from(args: &Args) -> Result<caller::Caller> {
         let Some(audience) = args.signed_audience.clone() else {
             anyhow::bail!("--signed-agent-key requires --signed-audience");
         };
-        return Ok(caller::Caller::Signed(Box::new(sig::SigConfig {
-            agents,
-            audience,
-        })));
+        let mut pep = std::collections::BTreeSet::new();
+        for id in &args.pep {
+            if id.is_empty() {
+                anyhow::bail!("--pep names an empty agent id");
+            }
+            if !agents.contains_key(id) {
+                anyhow::bail!(
+                    "--pep {id} is not in --signed-agent-key; a PEP must be able to authenticate"
+                );
+            }
+            pep.insert(id.clone());
+        }
+        let mut cfg = sig::SigConfig::new(agents, audience);
+        cfg.pep = pep;
+        return Ok(caller::Caller::Signed(Box::new(cfg)));
     }
     let Some(issuer) = args.bearer_issuer.clone() else {
         if args.trust_proxy {
@@ -628,6 +658,62 @@ mod tests {
         assert_eq!(cfg.audience, "https://pdp.example/access/v1/evaluation");
         assert_eq!(cfg.agents.len(), 1);
         assert!(cfg.agents.contains_key("agent-1"));
+        assert!(cfg.pep.is_empty());
+    }
+
+    #[test]
+    fn pep_names_must_already_be_signed_agents() {
+        let key = SigningKey::from_bytes(&[8u8; 32]);
+        let hex_key = hex::encode(key.verifying_key().to_bytes());
+        let args = Args::parse_from([
+            "decern-serve",
+            "--signed-agent-key",
+            &format!("agent-1={hex_key}"),
+            "--signed-audience",
+            "https://pdp.example/access/v1/evaluation",
+            "--pep",
+            "corp",
+        ]);
+        assert!(caller_from(&args).is_err());
+    }
+
+    #[test]
+    fn pep_marks_a_configured_agent_as_a_gateway() {
+        let key = SigningKey::from_bytes(&[8u8; 32]);
+        let hex_key = hex::encode(key.verifying_key().to_bytes());
+        let args = Args::parse_from([
+            "decern-serve",
+            "--signed-agent-key",
+            &format!("agent-1={hex_key}"),
+            "--signed-audience",
+            "https://pdp.example/access/v1/evaluation",
+            "--pep",
+            "agent-1",
+        ]);
+        let caller::Caller::Signed(cfg) = caller_from(&args).unwrap() else {
+            panic!("--pep must configure the signed guard");
+        };
+        assert!(cfg.pep.contains("agent-1"));
+    }
+
+    #[test]
+    fn the_caller_disclosure_under_signed_request_is_self_bound() {
+        let key = SigningKey::from_bytes(&[8u8; 32]);
+        let mut agents = std::collections::BTreeMap::new();
+        agents.insert("agent-1".into(), key.verifying_key());
+        let d = caller_disclosure(&caller::Caller::Signed(Box::new(
+            crate::sig::SigConfig::new(agents, "https://pdp.example/access/v1/evaluation"),
+        )));
+        assert_eq!(d["mode"], "signed");
+        assert_eq!(d["bind"], "self");
+        assert!(d.get("pep").is_none());
+    }
+
+    #[test]
+    fn pep_without_signed_agent_key_is_a_parse_failure() {
+        assert!(
+            Args::try_parse_from(["decern-serve", "--pep", "agent-1", "--trust-proxy"]).is_err()
+        );
     }
 
     /// `requires = "signed_audience"` on the clap arg makes this a parse-time failure,
@@ -684,5 +770,6 @@ mod tests {
         })));
         assert_eq!(d["mode"], "bearer");
         assert_eq!(d["audience"], "https://pdp.example/");
+        assert_eq!(d["bind"], "any");
     }
 }

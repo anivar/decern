@@ -19,9 +19,10 @@ pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
     // guarded, and a route that should be guarded cannot become open by someone
     // forgetting to name it somewhere else.
     //
-    // `approver` on the mission mutations is still a request-body field. Under
-    // `--trust-proxy` these endpoints trust their caller exactly as they always have; what
-    // bearer validation adds is that the caller is who they claim, not that the approver is.
+    // `approver` on the mission mutations is a request-body field. Bearer and
+    // `--trust-proxy` authenticate a PEP, which may name any principal. A signed-request
+    // agent is bound to itself unless named in `--pep`: it cannot approve or terminate
+    // as someone else.
     //
     // A route added to either half must also be added to the matching list in the router
     // tests, which drive every path through this function and assert which side answered.
@@ -161,10 +162,9 @@ mod tests {
         );
         let router = app(
             st,
-            Arc::new(caller::Caller::Signed(Box::new(crate::sig::SigConfig {
-                agents,
-                audience: "https://pdp.example/".into(),
-            }))),
+            Arc::new(caller::Caller::Signed(Box::new(
+                crate::sig::SigConfig::new(agents, "https://pdp.example/"),
+            ))),
         );
         let resp = router
             .oneshot(
@@ -209,11 +209,14 @@ mod tests {
             Arc::new(caller::Caller::Signed(Box::new(crate::sig::SigConfig {
                 agents,
                 audience: "https://pdp.example/access/v1/evaluation".into(),
+                pep: std::collections::BTreeSet::new(),
             }))),
         );
 
-        let read = br#"{"subject":{"type":"Principal","id":"corp"},"action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"}}"#;
-        let r#move = br#"{"subject":{"type":"Principal","id":"corp"},"action":{"name":"MoveMoney"},"resource":{"type":"Resource","id":"claim1"}}"#;
+        // Named as itself: a subject the caller is not allowed to speak as would 403
+        // at admission, and this test is about the digest, not that check.
+        let read = br#"{"subject":{"type":"Principal","id":"agent-1"},"action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"}}"#;
+        let r#move = br#"{"subject":{"type":"Principal","id":"agent-1"},"action":{"name":"MoveMoney"},"resource":{"type":"Resource","id":"claim1"}}"#;
 
         let token = {
             use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -442,6 +445,110 @@ mod tests {
             "{rec}"
         );
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Through the router: a valid signature still cannot name a principal other
+    /// than the agent it authenticated. 403, not 401 — the credential was accepted.
+    #[tokio::test]
+    async fn a_signed_agent_cannot_evaluate_as_another_principal_through_the_guard() {
+        use tower::ServiceExt;
+
+        let (router, req, base) = signed_eval_request("corp", false);
+        let (status, body) = body_json(router.oneshot(req).await.unwrap()).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "admission is 403, not 401: {body}"
+        );
+        assert_eq!(body["error"], "caller_mismatch", "{body}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn a_pep_signed_agent_may_evaluate_as_another_principal_through_the_guard() {
+        use tower::ServiceExt;
+
+        let (router, req, base) = signed_eval_request("corp", true);
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn signed_eval_request(
+        subject: &str,
+        pep: bool,
+    ) -> (
+        axum::Router,
+        axum::http::Request<axum::body::Body>,
+        std::path::PathBuf,
+    ) {
+        use axum::body::Body;
+        use axum::http::Request;
+        use base64::Engine as _;
+        use ed25519_dalek::Signer as _;
+        use sha2::{Digest, Sha256};
+
+        let key = SigningKey::from_bytes(&[11u8; 32]);
+        let vk = key.verifying_key();
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let mut agents = std::collections::BTreeMap::new();
+        agents.insert("agent-1".to_owned(), vk);
+        let mut cfg =
+            crate::sig::SigConfig::new(agents, "https://pdp.example/access/v1/evaluation");
+        if pep {
+            cfg.pep.insert("agent-1".into());
+        }
+        let router = app(st, Arc::new(caller::Caller::Signed(Box::new(cfg))));
+        let body = format!(
+            r#"{{"subject":{{"type":"Principal","id":"{subject}"}},"action":{{"name":"Read"}},"resource":{{"type":"Resource","id":"claim1"}}}}"#
+        );
+        let token = {
+            use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+            let header = serde_json::json!({ "typ": "dpop-bound+jwt", "alg": "EdDSA" });
+            let claims = serde_json::json!({
+                "sub": "agent-1",
+                "iss": "https://agent-provider.example/",
+                "aud": "https://pdp.example/access/v1/evaluation",
+                "exp": 4_000_000_000u64,
+                "cnf": { "jwk": {
+                    "kty": "OKP", "crv": "Ed25519",
+                    "x": URL_SAFE_NO_PAD.encode(vk.to_bytes()),
+                }},
+            });
+            let h = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
+            let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+            format!("{h}.{p}.unverified")
+        };
+        let created = now_secs();
+        // Cover this body's digest, or the guard 401s before admission can 403.
+        let digest = format!(
+            "sha-256=:{}:",
+            base64::engine::general_purpose::STANDARD.encode(Sha256::digest(body.as_bytes()))
+        );
+        let components =
+            "\"@method\" \"@authority\" \"@path\" \"content-digest\" \"signature-key\"";
+        let input = format!("sig1=({components});created={created}");
+        let base_str = format!(
+            "\"@method\": POST\n\"@authority\": pdp.example\n\"@path\": /access/v1/evaluation\n\"content-digest\": {digest}\n\"signature-key\": {token}\n\"@signature-params\": ({components});created={created}"
+        );
+        let sig = format!(
+            "sig1=:{}:",
+            base64::engine::general_purpose::STANDARD
+                .encode(key.sign(base_str.as_bytes()).to_bytes())
+        );
+        let req = Request::builder()
+            .method("POST")
+            .uri("/access/v1/evaluation")
+            .header("host", "pdp.example")
+            .header("content-type", "application/json")
+            .header("signature-key", token)
+            .header("signature-input", input)
+            .header("signature", sig)
+            .header("content-digest", digest)
+            .body(Body::from(body))
+            .unwrap();
+        (router, req, base)
     }
 
     /// Under a trusted front the server verified nothing itself, so the record carries
@@ -910,6 +1017,7 @@ mod tests {
             d["caller"]["mode"], "trusted-proxy",
             "the disclosure must state how this deployment establishes callers: {d}"
         );
+        assert_eq!(d["caller"]["bind"], "any", "{d}");
         let _ = std::fs::remove_dir_all(&base);
     }
 

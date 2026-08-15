@@ -38,16 +38,20 @@ prevented — no nonce cache — and verifies again within the freshness window.
 examples/signed-request/run.sh      # needs cargo, uv, jq, python3, curl
 ```
 
-Nine beats: a correctly signed request allowed and recorded; **the same token refused when
-the signature comes from a different key**; a signature refused for age alone; the same
-signature refused when replayed against a different path; **the same signature refused when
-replayed against a different body**; no credentials refused; the deployment disclosing its
-own caller posture; and the ledger naming the caller the server verified.
+Eleven beats: a correctly signed request allowed **as itself** and recorded; **the same
+agent refused when asking as `corp`**; **the same agent refused when approving a Mission as
+`corp`**; **the same token refused when the signature comes from a different key**; a
+signature refused for age alone; the same signature refused when replayed against a
+different path; **the same signature refused when replayed against a different body**; no
+credentials refused; the deployment disclosing `bind: self`; and the ledger naming
+the caller the server verified.
 
-Beat 3 is the one worth reading twice. The token there is byte-identical to the one that
-just succeeded — same `sub`, same `aud`, same `cnf`, unexpired. Only the signature differs,
-because the caller holds the token but not the private key it confirms. A bearer credential
-would accept that request. This mode refuses it, and that difference is the entire point.
+Beat 5 is the one worth reading twice for possession. The token there is byte-identical
+to the one that just succeeded — same `sub`, same `aud`, same `cnf`, unexpired. Only the
+signature differs, because the caller holds the token but not the private key it
+confirms. A bearer credential would accept that request. This mode refuses it, and that
+difference is the entire point of the signature. Beats 3 and 4 are the other half: proving
+possession of `agent-1`'s key is not a licence to speak as `corp`.
 
 ## What the keys here are
 
@@ -59,8 +63,10 @@ is no metadata document, no token endpoint, and none will be added.
 ## What this shows, and what it does not
 
 It shows that on the one request that was allowed, the caller proved possession of a
-configured key, and that the record says so — `asserted_by` carries the identity the
-server itself verified, not one the request asserted about itself.
+configured key, named only itself, and that the record says so — `asserted_by` carries
+the identity the server itself verified, not one the request asserted about itself. The
+walkthrough uses a small model (`model/entities.json`) so `agent-1` can Allow as itself
+at wall-clock; the builtin `agent1` is decayed (`expiry: 200`) and cannot.
 
 It does not show that `agent-1` is who its operator believes it is. decern accepts an
 identifier only if that identifier already has a key in `--signed-agent-key`; keys are
