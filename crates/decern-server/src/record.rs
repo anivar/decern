@@ -20,12 +20,13 @@ use crate::LedgerBackend;
 ///   - subject is a known principal with a non-empty tenant → that tenant.
 ///   - subject unknown, or known with an empty tenant → [`UNATTRIBUTED_SHARD`].
 ///   - subject's tenant literally equals the reserved [`UNATTRIBUTED_SHARD`]
-///     name → `Err`. The kernel does NOT reject such a tenant at load (see
-///     report), so a REAL tenant named `__system__` reaching here would silently
-///     co-mingle with the unattributed shard. We fail closed instead: the caller
-///     turns this into a 503, never a quietly-misfiled Allow. (`serve` also
-///     refuses to boot a `--sharded` deployment whose directory contains such a
-///     tenant — this per-decision guard is defense in depth.)
+///     name → `Err`. The kernel already refuses such a tenant at load
+///     (`Directory::validate`, covered by `reserved_tenant_rejected_at_load`),
+///     and `serve` refuses to boot a `--sharded` deployment whose directory
+///     contains one. This per-decision guard is defense in depth behind both:
+///     were a tenant named `__system__` ever to reach here, it would otherwise
+///     co-mingle with the unattributed shard, so we fail closed and the caller
+///     turns it into a 503 rather than a quietly-misfiled Allow.
 fn resolve_shard(dir: &Directory, subject_id: &str) -> Result<String, String> {
     match dir.principals.get(subject_id) {
         Some(p) if !p.tenant.is_empty() => {
