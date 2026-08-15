@@ -49,6 +49,11 @@ serde_json = "1"
 # and the Boa JavaScript engine use.
 ryu-js = "1"
 ed25519-dalek = "2"
+# ECDSA P-256, for the one credential format whose spec forbids EdDSA (SPIFFE
+# JWT-SVID). Pure Rust, and the only ES/RS family member that can enter this tree:
+# RS*/PS* need the `rsa` crate, which carries an unpatched RUSTSEC-2023-0071, and
+# deny.toml runs with `ignore = []`.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 sha2 = "0.10"
 base64 = "0.22"
 hex = "0.4"

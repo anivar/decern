@@ -11,6 +11,7 @@ mod mission;
 mod record;
 mod routes;
 mod sig;
+mod spiffe;
 #[cfg(test)]
 mod testutil;
 
@@ -31,6 +32,7 @@ use crate::routes::app;
 
 #[derive(Parser)]
 #[command(
+    group(clap::ArgGroup::new("posture").required(false).multiple(false)),
     name = "decern-serve",
     version,
     about = "Thin proven-decision PDP with a tamper-evident ledger"
@@ -71,7 +73,7 @@ struct Args {
     /// The `iss` an access token must carry, matched exactly (RFC 9068 §4). Given with
     /// `--bearer-audience` and at least one `--bearer-issuer-key`, this turns on bearer
     /// validation for the decision and mission-mutation endpoints.
-    #[arg(long, value_name = "URL", requires_all = ["bearer_audience", "bearer_issuer_keys"])]
+    #[arg(long, value_name = "URL", group = "posture", requires_all = ["bearer_audience", "bearer_issuer_keys"])]
     bearer_issuer: Option<String>,
     /// This deployment's resource identifier, which a token's `aud` must contain
     /// (RFC 8707 §2). Without it a token minted for any other service the same issuer
@@ -103,7 +105,12 @@ struct Args {
     /// authentication") for the decision and mission-mutation endpoints. An identifier
     /// with no entry here cannot authenticate under this mode, by design: keys are
     /// configured, never fetched.
-    #[arg(long = "signed-agent-key", value_name = "ID=HEX", requires = "signed_audience", conflicts_with_all = ["bearer_issuer", "trust_proxy"])]
+    #[arg(
+        long = "signed-agent-key",
+        value_name = "ID=HEX",
+        group = "posture",
+        requires = "signed_audience"
+    )]
     signed_agent_keys: Vec<String>,
     /// This deployment's resource identifier, which a signed request's bound token's
     /// `aud` must contain. Required with `--signed-agent-key`, same role as
@@ -111,17 +118,35 @@ struct Args {
     #[arg(long, value_name = "URI")]
     signed_audience: Option<String>,
     /// An agent identifier that may name principals other than itself. Repeatable.
-    /// Signed-request mode only: a gateway that proves possession of a key on every
-    /// request is still a PEP. An identifier not also in `--signed-agent-key` cannot
-    /// authenticate, so it cannot be a PEP either. Omit to bind every signed agent
-    /// to itself.
-    #[arg(long = "pep", value_name = "ID", requires = "signed_agent_keys")]
+    /// Workload postures only (`--signed-agent-key`, `--spiffe-trust-domain`): a gateway
+    /// that proves possession of a key on every request, or presents an SVID, is still a
+    /// PEP. An identifier that cannot authenticate cannot be a PEP either. Omit to bind
+    /// every workload caller to itself.
+    #[arg(long = "pep", value_name = "ID")]
     pep: Vec<String>,
+    /// A SPIFFE trust domain this deployment accepts, and the JWK Set holding its
+    /// JWT-SVID signing keys, as `TRUST_DOMAIN=PATH`. Repeatable: one entry per federated
+    /// domain. The file is read once at startup and refused there if it carries no
+    /// `use: jwt-svid` key, an entry without a `kid`, or a key this deployment cannot
+    /// verify with — a bundle problem should surface on boot, not when a caller arrives.
+    /// Keys are configured, never fetched. Turns on JWT-SVID validation (see `docs/CLI.md`
+    /// "SPIFFE JWT-SVID validation") for the decision and mission-mutation endpoints.
+    #[arg(
+        long = "spiffe-trust-domain",
+        value_name = "TRUST_DOMAIN=PATH",
+        group = "posture",
+        requires = "spiffe_audience"
+    )]
+    spiffe_trust_domains: Vec<String>,
+    /// This deployment's resource identifier, which an SVID's `aud` must contain. Required
+    /// with `--spiffe-trust-domain`, same role as `--bearer-audience`.
+    #[arg(long, value_name = "URI")]
+    spiffe_audience: Option<String>,
     /// Accept every caller, because something in front has already authenticated them.
     /// One of this or the bearer/signed flags is required to start: "no token configured"
     /// and "authentication deliberately delegated" are indistinguishable from inside this
     /// process and mean very different things outside it.
-    #[arg(long, conflicts_with_all = ["bearer_issuer", "signed_agent_keys"])]
+    #[arg(long, group = "posture")]
     trust_proxy: bool,
     /// Address to bind. Default loopback.
     #[arg(long, value_name = "ADDR", default_value = "127.0.0.1:8080")]
@@ -220,6 +245,18 @@ pub(crate) fn caller_disclosure(caller: &caller::Caller) -> Value {
             }
             o
         }
+        caller::Caller::Spiffe(c) => {
+            let mut o = json!({
+                "mode": "spiffe",
+                "audience": c.audience,
+                "trust_domains": c.trust_domains.keys().collect::<Vec<_>>(),
+                "bind": "self",
+            });
+            if !c.pep.is_empty() {
+                o["pep"] = json!(c.pep.iter().cloned().collect::<Vec<_>>());
+            }
+            o
+        }
         caller::Caller::TrustedProxy => json!({ "mode": "trusted-proxy", "bind": "any" }),
     }
 }
@@ -267,6 +304,16 @@ pub(crate) fn now_secs() -> u64 {
 /// trust boundary on a shared host or inside a container's network namespace, and nothing
 /// here checks peer credentials.
 fn caller_from(args: &Args) -> Result<caller::Caller> {
+    if !args.pep.is_empty()
+        && args.signed_agent_keys.is_empty()
+        && args.spiffe_trust_domains.is_empty()
+    {
+        anyhow::bail!(
+            "--pep names a caller exempt from the self-only bind, which only the workload \
+             postures apply: pass --signed-agent-key or --spiffe-trust-domain, or drop --pep. \
+             Bearer and --trust-proxy already authenticate a PEP that may name other parties"
+        );
+    }
     if !args.signed_agent_keys.is_empty() {
         let mut agents = std::collections::BTreeMap::new();
         for entry in &args.signed_agent_keys {
@@ -302,6 +349,56 @@ fn caller_from(args: &Args) -> Result<caller::Caller> {
         let mut cfg = sig::SigConfig::new(agents, audience);
         cfg.pep = pep;
         return Ok(caller::Caller::Signed(Box::new(cfg)));
+    }
+    if !args.spiffe_trust_domains.is_empty() {
+        let mut trust_domains = std::collections::BTreeMap::new();
+        for entry in &args.spiffe_trust_domains {
+            let (domain, path) = entry.split_once('=').ok_or_else(|| {
+                anyhow::anyhow!("--spiffe-trust-domain {entry} is not TRUST_DOMAIN=PATH")
+            })?;
+            if domain.is_empty() {
+                anyhow::bail!("--spiffe-trust-domain {entry} names an empty trust domain");
+            }
+            let raw = std::fs::read_to_string(path)
+                .with_context(|| format!("reading the trust bundle for {domain} at {path}"))?;
+            // Refused here rather than at request time: an operator should learn a bundle
+            // is unusable when the process starts, not when the first caller arrives.
+            let keys = spiffe::load_bundle(&raw)
+                .map_err(|e| anyhow::anyhow!("trust bundle for {domain} at {path}: {e}"))?;
+            if trust_domains.insert(domain.to_owned(), keys).is_some() {
+                anyhow::bail!("--spiffe-trust-domain names {domain} more than once");
+            }
+        }
+        let Some(audience) = args.spiffe_audience.clone() else {
+            anyhow::bail!("--spiffe-trust-domain requires --spiffe-audience");
+        };
+        // A PEP still has to authenticate, so it must name a trust domain this deployment
+        // accepts. Unlike the signed posture there is no per-agent list to check against —
+        // an SVID's identity is minted by its issuer — so the check is on the domain.
+        let mut pep = std::collections::BTreeSet::new();
+        for id in &args.pep {
+            if id.is_empty() {
+                anyhow::bail!("--pep names an empty workload id");
+            }
+            let domain = id
+                .strip_prefix("spiffe://")
+                .and_then(|r| r.split_once('/'))
+                .map(|(d, _)| d)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("--pep {id} is not a SPIFFE ID under this posture")
+                })?;
+            if !trust_domains.contains_key(domain) {
+                anyhow::bail!(
+                    "--pep {id} is in no configured trust domain; a PEP must be able to authenticate"
+                );
+            }
+            pep.insert(id.clone());
+        }
+        return Ok(caller::Caller::Spiffe(Box::new(spiffe::SpiffeConfig {
+            trust_domains,
+            audience,
+            pep,
+        })));
     }
     let Some(issuer) = args.bearer_issuer.clone() else {
         if args.trust_proxy {
@@ -357,6 +454,11 @@ async fn main() -> Result<()> {
     let caller_desc = match caller.as_ref() {
         caller::Caller::Bearer(c) => format!("bearer for {}", c.audience),
         caller::Caller::Signed(c) => format!("signed-request for {}", c.audience),
+        caller::Caller::Spiffe(c) => format!(
+            "SPIFFE JWT-SVID for {} across {} trust domain(s)",
+            c.audience,
+            c.trust_domains.len()
+        ),
         caller::Caller::TrustedProxy => "caller trusted (--trust-proxy)".to_owned(),
     };
     let model = match &args.model {
@@ -709,11 +811,34 @@ mod tests {
         assert!(d.get("pep").is_none());
     }
 
+    /// `--pep` exempts a caller from the self-only bind, so a posture that has no such
+    /// bind has nothing to exempt. Refused at startup rather than ignored: a
+    /// security-relevant flag that silently does nothing is worse than one that is
+    /// refused. Not a clap `requires`, because it must accept either workload posture.
     #[test]
-    fn pep_without_signed_agent_key_is_a_parse_failure() {
-        assert!(
-            Args::try_parse_from(["decern-serve", "--pep", "agent-1", "--trust-proxy"]).is_err()
-        );
+    fn pep_without_a_workload_posture_is_a_startup_failure() {
+        for argv in [
+            vec!["decern-serve", "--pep", "agent-1", "--trust-proxy"],
+            vec![
+                "decern-serve",
+                "--pep",
+                "agent-1",
+                "--bearer-issuer",
+                "https://issuer.example/",
+                "--bearer-audience",
+                "https://pdp.example/",
+                "--bearer-issuer-key",
+                &"11",
+            ],
+        ] {
+            let Ok(args) = Args::try_parse_from(&argv) else {
+                continue; // clap refused it first, which is also fine
+            };
+            match caller_from(&args) {
+                Ok(_) => panic!("{argv:?} accepted --pep for a posture with no self-only bind"),
+                Err(e) => assert!(e.to_string().contains("--pep"), "{argv:?}: {e}"),
+            }
+        }
     }
 
     /// `requires = "signed_audience"` on the clap arg makes this a parse-time failure,
@@ -742,6 +867,87 @@ mod tests {
             "https://pdp.example/access/v1/evaluation",
         ]);
         assert!(caller_from(&args).is_err());
+    }
+
+    /// A trust bundle is read and validated at startup, so a deployment learns its bundle
+    /// is unusable when the process starts rather than when the first caller arrives.
+    #[test]
+    fn the_spiffe_flags_load_a_bundle_and_configure_the_guard() {
+        let dir = std::env::temp_dir().join(format!("decern-spiffe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bundle.json");
+        // A real P-256 point, so the loader's validation is exercised rather than bypassed.
+        let mut scalar = [0u8; 32];
+        scalar[31] = 7;
+        let sk = p256::ecdsa::SigningKey::from_bytes(&scalar.into()).unwrap();
+        let pt = sk.verifying_key().to_encoded_point(false);
+        let b64 = |b: &[u8]| {
+            use base64::Engine as _;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
+        };
+        std::fs::write(
+            &path,
+            json!({"keys":[{"kty":"EC","crv":"P-256","kid":"k1","use":"jwt-svid",
+                            "x": b64(pt.x().unwrap()), "y": b64(pt.y().unwrap())}]})
+            .to_string(),
+        )
+        .unwrap();
+
+        let args = Args::parse_from([
+            "decern-serve",
+            "--spiffe-trust-domain",
+            &format!("example.org={}", path.display()),
+            "--spiffe-audience",
+            "https://pdp.example/",
+        ]);
+        let caller::Caller::Spiffe(cfg) = caller_from(&args).unwrap() else {
+            panic!("--spiffe-trust-domain must configure the spiffe guard");
+        };
+        assert_eq!(cfg.audience, "https://pdp.example/");
+        assert!(cfg.trust_domains.contains_key("example.org"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_malformed_spiffe_trust_domain_entry_is_a_startup_failure() {
+        let args = Args::parse_from([
+            "decern-serve",
+            "--spiffe-trust-domain",
+            "no-equals-sign",
+            "--spiffe-audience",
+            "https://pdp.example/",
+        ]);
+        assert!(caller_from(&args).is_err());
+    }
+
+    #[test]
+    fn a_missing_spiffe_bundle_file_is_a_startup_failure() {
+        let args = Args::parse_from([
+            "decern-serve",
+            "--spiffe-trust-domain",
+            "example.org=/nonexistent/bundle.json",
+            "--spiffe-audience",
+            "https://pdp.example/",
+        ]);
+        assert!(caller_from(&args).is_err());
+    }
+
+    /// Four postures, one ArgGroup: naming two is a parse-time refusal, so the binary
+    /// cannot start holding an ambiguous answer to "how is the caller established".
+    #[test]
+    fn two_postures_at_once_is_a_startup_failure() {
+        for pair in [
+            vec!["--trust-proxy", "--spiffe-trust-domain", "e=x"],
+            vec!["--trust-proxy", "--signed-agent-key", "a=b"],
+            vec!["--spiffe-trust-domain", "e=x", "--signed-agent-key", "a=b"],
+        ] {
+            let mut argv = vec!["decern-serve"];
+            argv.extend(pair.iter().copied());
+            assert!(
+                Args::try_parse_from(&argv).is_err(),
+                "{argv:?} named two postures and was accepted"
+            );
+        }
     }
 
     #[test]

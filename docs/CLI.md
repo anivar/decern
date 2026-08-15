@@ -180,8 +180,10 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | `--bearer-scope <SCOPE>` | A scope every token must carry. Repeatable; all are required, and a verified token missing one is refused `403 insufficient_scope`. Omit for no scope check. |
 | `--signed-agent-key <ID=HEX>` | An agent identifier this deployment recognizes and the one Ed25519 key it may sign requests with. Repeatable: one entry per agent, and a key rollover is a second entry rather than an atomic swap. Turns on RFC 9421 + RFC 7800 sender-constrained request validation for the guarded routes; requires `--signed-audience`. Conflicts with `--bearer-issuer`/`--trust-proxy`. An identifier with no entry here cannot authenticate under this mode, by design: keys are configured, never fetched. |
 | `--signed-audience <URI>` | This deployment's resource identifier, which a signed request's bound token's `aud` must contain. Required with `--signed-agent-key`, same role as `--bearer-audience`. |
-| `--pep <ID>` | A signed-request agent that may name principals other than itself. Repeatable. Requires `--signed-agent-key`, and the id must already be one of those entries — a PEP still has to authenticate. Omit to bind every signed agent to itself. |
-| `--trust-proxy` | Accept every caller, because something in front already authenticates them. Conflicts with `--bearer-issuer` and `--signed-agent-key`; one posture is required to start. |
+| `--pep <ID>` | A workload caller that may name principals other than itself. Repeatable. Applies to `--signed-agent-key` and `--spiffe-trust-domain`; the id must be one this deployment can already authenticate, since a PEP still has to prove who it is. Omit to bind every workload caller to itself. |
+| `--spiffe-trust-domain <TRUST_DOMAIN=PATH>` | A SPIFFE trust domain this deployment accepts, and the JWK Set holding its JWT-SVID signing keys. Repeatable: one entry per federated domain. Read once at startup and refused there if it carries no `use: jwt-svid` key, an entry without a `kid`, or a key this deployment cannot verify with. Turns on JWT-SVID validation; requires `--spiffe-audience`. |
+| `--spiffe-audience <URI>` | This deployment's resource identifier, which an SVID's `aud` must contain. Required with `--spiffe-trust-domain`, same role as `--bearer-audience`. |
+| `--trust-proxy` | Accept every caller, because something in front already authenticates them. One posture is required to start; naming two is a startup failure. |
 | `--addr <ADDR>` | Default `127.0.0.1:8080`. |
 
 **A decision is served only if its record was written.** An append that cannot be committed returns
@@ -236,6 +238,24 @@ names one posture:
   including the beat that separates it from a bearer credential: the *same* token, refused when the
   signature comes from a different key, and the beats that refuse an authenticated agent asking
   or approving as someone else.
+- **SPIFFE JWT-SVID validation** (`--spiffe-trust-domain`, `--spiffe-audience`): the guarded
+  routes require a SPIFFE JWT-SVID, presented as a `Bearer` credential per JWT-SVID §5.2 and
+  verified against a trust bundle configured for the trust domain its `sub` names. Trust domains
+  are matched **exactly** — a prefix comparison would let `example.org.evil` present as
+  `example.org`. Bundles are read at startup and never fetched, so this adds no TLS stack and no
+  reliance on a third party being reachable; SPIFFE's own Federation spec leaves bundle
+  distribution out of scope and makes polling a `SHOULD`, so a pinned bundle is an ordinary
+  deployment rather than a degraded one.
+  **`ES256` only.** JWT-SVID permits nine algorithms; `RS*`/`PS*` require the `rsa` crate, which
+  carries an unpatched RUSTSEC-2023-0071 timing side-channel that this project's supply-chain gate
+  refuses. A SPIRE deployment issuing RSA SVIDs is therefore **not** interoperable here — a real
+  limit, stated rather than softened.
+  A verified `spiffe://…` identity is recorded as the caller on the decision. Like a
+  signed-request agent it is a **workload**, so unless it is listed in `--pep` it may only name
+  itself as AuthZEN `subject`, mission `approver`, stored approver on terminate, and directory
+  principal; a mismatch is `403 caller_mismatch`. It is never minted into the authority graph
+  either: what a decision may be *about* is unchanged, and stays closed-world exactly as under
+  every other posture.
 - **`--trust-proxy`**: every caller is accepted, because the operator states that something in
   front — an authenticating proxy, a service mesh, the OS boundary around a local walkthrough —
   has already established who is calling. The flag is that statement. It is exactly the old
