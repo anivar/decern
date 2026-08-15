@@ -184,6 +184,41 @@ mod tests {
                 .is_none(),
             "a signed-request refusal must not advertise a scheme it does not accept"
         );
+
+        // ...and the SPIFFE posture is the opposite, for the same reason. JWT-SVID §5.2
+        // presents an SVID as a `Bearer` credential, so a refusal owes the RFC 6750
+        // challenge naming that scheme. Asserted alongside the signed case on purpose:
+        // the two are easy to conflate, and copying either one onto the other is wrong.
+        let (st2, _pk2) = mission_state_at(&base);
+        let router = app(
+            st2,
+            Arc::new(caller::Caller::Spiffe(Box::new(
+                crate::spiffe::SpiffeConfig {
+                    trust_domains: std::collections::BTreeMap::new(),
+                    audience: "https://pdp.example/".into(),
+                    pep: std::collections::BTreeSet::new(),
+                },
+            ))),
+        );
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/access/v1/evaluation")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            resp.headers()
+                .get(axum::http::header::WWW_AUTHENTICATE)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.starts_with("Bearer ")),
+            "a JWT-SVID refusal must carry the RFC 6750 challenge for the scheme it accepts"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

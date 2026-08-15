@@ -37,6 +37,9 @@ pub(crate) enum Caller {
     /// A signature over the request itself is required, verified against a configured
     /// per-agent key, and the bound token verified and bound to this server as audience.
     Signed(Box<crate::sig::SigConfig>),
+    /// A SPIFFE JWT-SVID is required, verified against a trust bundle configured for the
+    /// trust domain its `sub` names. See [`crate::spiffe`].
+    Spiffe(Box<crate::spiffe::SpiffeConfig>),
     /// Something in front has already authenticated the caller. Named rather than defaulted,
     /// because "no token configured" and "authentication deliberately delegated" look identical
     /// from inside the process and mean very different things outside it.
@@ -249,6 +252,7 @@ pub(crate) async fn guard(
             Caller::TrustedProxy => unreachable!("trusted-proxy returned above"),
             Caller::Bearer(cfg) => cfg.as_ref(),
             Caller::Signed(cfg) => cfg.as_ref(),
+            Caller::Spiffe(cfg) => cfg.as_ref(),
         };
         posture
             .authenticate(&req, now_secs(), &bytes)

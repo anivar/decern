@@ -1,0 +1,15 @@
+[
+  { "uid": {"type":"Principal","id":"spiffe://example.org/ns/api/sa/web"},
+    "attrs": {"kind":"Agent","tenant":"A","expiry":32503680000,
+              "scopes":["read"]},
+    "parents": [] },
+
+  { "uid": {"type":"Principal","id":"corp"},
+    "attrs": {"kind":"Human","tenant":"A","expiry":32503680000,
+              "scopes":["read","move_money"]},
+    "parents": [] },
+
+  { "uid": {"type":"Resource","id":"claim1"},
+    "attrs": {"owner":{"__entity":{"type":"Principal","id":"spiffe://example.org/ns/api/sa/web"}},"tenant":"A"},
+    "parents": [] }
+]
