@@ -338,11 +338,7 @@ pub(crate) fn authenticate(
         }
     }
 
-    Ok(Authenticated {
-        subject,
-        client_id,
-        issuer: iss,
-    })
+    Ok(Authenticated::new(subject, client_id, iss))
 }
 
 /// `aud` is a string or an array of strings (RFC 7519 §4.1.3). Compared exactly: a resource
