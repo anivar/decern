@@ -9,6 +9,7 @@
 //!   - PDP decision == true   => 200 OK
 //!   - PDP decision == false  => 403 Forbidden
 //!   - Missing subject header => 403 Forbidden (refuse unauthenticated callers by default)
+//!   - Duplicated subject header => 403 Forbidden (no copy can be trusted; see `refused_duplicated`)
 //!   - PDP error / timeout / unreachable / malformed response => 503 Service Unavailable
 
 use std::net::SocketAddr;
@@ -317,11 +318,43 @@ fn refused_missing(name: &HeaderName) -> Response {
         .into_response()
 }
 
+/// The 403 for a request carrying more than one copy of the subject header.
+///
+/// A duplicate is the signature of the misconfiguration the README warns about: the
+/// gateway set its own copy and a client-supplied one survived alongside it. The adapter
+/// cannot tell the two apart — `HeaderMap::get` would return whichever arrived first —
+/// so there is no correct value to choose and choosing one silently is the worst
+/// available outcome. Refused before the PDP, like a missing header: nothing was
+/// evaluated, so nothing is recorded.
+///
+/// This does not catch a client copy that REPLACES the gateway's rather than sitting
+/// beside it. Nothing at this layer can. The gateway remains responsible for stripping
+/// client-supplied copies; this only makes the common way of forgetting it loud.
+fn refused_duplicated(name: &HeaderName, count: usize) -> Response {
+    eprintln!(
+        "check: status=403 decision=deny error=\"forwarded header '{name}' present {count} times; \
+         gateway must strip client-supplied copies\""
+    );
+    let mut res_headers = HeaderMap::new();
+    res_headers.insert("x-decern-decision", HeaderValue::from_static("deny"));
+    (
+        StatusCode::FORBIDDEN,
+        res_headers,
+        "Duplicated forwarded header",
+    )
+        .into_response()
+}
+
 /// Axum handler for `POST /check` (and `GET /check`).
 pub async fn check_handler(State(st): State<AppState>, headers: HeaderMap) -> Response {
     let start_time = Instant::now();
 
-    // 1. Extract subject identity header
+    // 1. Extract subject identity header. Checked for duplicates first: a second copy
+    // makes every copy untrustworthy, so it has to be refused before one is read.
+    let subject_copies = headers.get_all(&st.subject_header).iter().count();
+    if subject_copies > 1 {
+        return refused_duplicated(&st.subject_header, subject_copies);
+    }
     let subject_id = match forwarded(&headers, &st.subject_header) {
         Some(v) => v,
         None => return refused_missing(&st.subject_header),

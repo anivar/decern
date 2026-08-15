@@ -511,3 +511,109 @@ async fn test_pdp_timeout_fails_closed_503() {
         "unavailable"
     );
 }
+
+#[tokio::test]
+async fn test_duplicated_subject_header_refused() {
+    // Two copies is the signature of a gateway that set its own header without stripping
+    // the client's. Either copy could be the client's, so neither can be trusted and the
+    // adapter must not pick one — the values differ here to make that concrete.
+    let (pdp_url, mode, last_auth) = spawn_mock_pdp().await;
+    mode.store(0, Ordering::SeqCst); // PDP would ALLOW, so a pass-through would return 200
+
+    let app = build_adapter_router_full(
+        &pdp_url,
+        "x-forwarded-subject",
+        Some("secret_access_token_123"),
+    );
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/check")
+        .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-subject", "attacker")
+        .header("x-forwarded-method", "Read")
+        .header("x-forwarded-uri", "/claims/claim1")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        resp.headers()
+            .get("x-decern-decision")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "deny"
+    );
+
+    // Refused locally, before evaluation: nothing reached the PDP, so nothing is recorded.
+    // The bearer token is what makes this observable — the mock only records a call that
+    // carried an authorization header.
+    assert!(
+        last_auth.lock().await.is_none(),
+        "a duplicated subject header must be refused before the PDP is consulted"
+    );
+}
+
+#[tokio::test]
+async fn test_duplicated_subject_header_refused_even_when_copies_agree() {
+    // Identical copies are refused too. The adapter cannot tell which copy the gateway
+    // set, so "they agree" is not evidence that the client did not supply one.
+    let (pdp_url, mode, _) = spawn_mock_pdp().await;
+    mode.store(0, Ordering::SeqCst);
+
+    let app = build_adapter_router(&pdp_url);
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/check")
+        .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-method", "Read")
+        .header("x-forwarded-uri", "/claims/claim1")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_duplicated_subject_header_honours_custom_header_name() {
+    // The check follows --subject-header, not the default name.
+    let (pdp_url, mode, _) = spawn_mock_pdp().await;
+    mode.store(0, Ordering::SeqCst);
+
+    let app = build_adapter_router_with_subject_header(&pdp_url, "X-Forwarded-User");
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/check")
+        .header("X-Forwarded-User", "corp")
+        .header("X-Forwarded-User", "attacker")
+        .header("X-Forwarded-Method", "Read")
+        .header("X-Forwarded-Uri", "/claims/claim1")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_single_subject_header_still_allowed() {
+    // Guards the guard: the duplicate check must not refuse the ordinary one-copy request.
+    let (pdp_url, mode, _) = spawn_mock_pdp().await;
+    mode.store(0, Ordering::SeqCst);
+
+    let app = build_adapter_router(&pdp_url);
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/check")
+        .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-method", "Read")
+        .header("x-forwarded-uri", "/claims/claim1")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
