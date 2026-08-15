@@ -210,7 +210,7 @@ ask about.
 ### The trust boundary, stated plainly
 
 **A server that cannot say how its callers are established does not start.** Every deployment
-names one of two postures:
+names one posture:
 
 - **Bearer validation** (`--bearer-issuer`, `--bearer-audience`, `--bearer-issuer-key`, optionally
   `--bearer-scope`): the guarded routes require an RFC 9068 `at+jwt` access token — EdDSA over a
