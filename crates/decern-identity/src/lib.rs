@@ -12,14 +12,14 @@
 //!
 //! Verification order (all fail-closed):
 //!   structure → alg allowlist (EdDSA, nothing else — no `none`, no HMAC
-//!   confusion) → issuer pin → signature over the exact JWS signing input →
+//!   confusion) → issuer pin → `verify_strict` over the exact JWS signing input →
 //!   only then parse the payload → time window → subject shape.
 //!
 //! Time is injected (`now`, epoch seconds) — never read from a clock here.
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
-use decern_crypto::{Signer, SigningKey, Verifier, VerifyingKey};
+use decern_crypto::{Signer, SigningKey, VerifyingKey};
 use decern_kernel::{Kernel, KernelError, Model};
 use serde::{Deserialize, Serialize};
 
@@ -256,7 +256,7 @@ pub fn verify_signature(jws: &str, pinned: &VerifyingKey) -> Result<Badge, Ident
 
     let signing_input = format!("{h64}.{p64}");
     pinned
-        .verify(signing_input.as_bytes(), &sig)
+        .verify_strict(signing_input.as_bytes(), &sig)
         .map_err(|_| IdentityError::BadSignature)?;
 
     // Only now is the payload authenticated — parse it.
@@ -408,6 +408,45 @@ mod tests {
                 aud: None,
             },
         }
+    }
+
+    /// The Ed25519 identity point plus `R = identity, S = 0` satisfies the
+    /// cofactorless equation for every message. `verify` accepts that pair;
+    /// `verify_strict` does not. This is the one path that admits a principal
+    /// into the graph, so it must use the stricter check — the same one the
+    /// ledger already uses.
+    #[test]
+    fn a_small_order_key_cannot_authenticate_a_badge() {
+        use decern_crypto::Verifier;
+
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let key = VerifyingKey::from_bytes(&identity).expect("identity is a valid encoding");
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes[0] = 1;
+        let sig = decern_crypto::Signature::from_bytes(&sig_bytes);
+
+        let payload = serde_json::to_vec(&badge("forged", &["read", "move_money"], 200)).unwrap();
+        let header = json!({
+            "alg": JWS_ALG,
+            "typ": JWS_TYP,
+            "kid": hex_encode(&key),
+        });
+        let h64 = B64URL.encode(serde_json::to_vec(&header).unwrap());
+        let p64 = B64URL.encode(payload);
+        let signing_input = format!("{h64}.{p64}");
+        assert!(
+            key.verify(signing_input.as_bytes(), &sig).is_ok(),
+            "the forgery must pass the cofactorless check, or this test proves nothing"
+        );
+        let jws = format!("{signing_input}.{}", B64URL.encode(sig_bytes));
+        assert!(
+            matches!(
+                verify(&jws, &key, 100).unwrap_err(),
+                IdentityError::BadSignature
+            ),
+            "a small-order key must not admit a badge"
+        );
     }
 
     #[test]
