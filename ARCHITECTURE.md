@@ -39,15 +39,16 @@ Two binaries over seven library crates. The stock build is pure Rust; the one ex
 refusal, startup), `routes.rs` (the router and the guarded/open split), `caller.rs` (how the
 caller is established: the posture enum, the `CallerAuth` trait every posture implements, and
 the one guard layer over the protected routes), `bearer.rs` (RFC 9068 token validation),
-`sig.rs` (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), `record.rs` (the
+`sig.rs` (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), `spiffe.rs`
+(SPIFFE JWT-SVID validation against pinned trust bundles), `record.rs` (the
 fail-closed append path), `decide.rs` (the decision handler and its derivations), `audit.rs`
 (the published reads: pubkey, tree head, subject projection, descendants, disclosure),
 `mission.rs` (the lifecycle), `challenge.rs` (the subject-side challenge), `testutil.rs`
 (shared fixtures).
 
-The two credential postures sit under `caller.rs` and know nothing of each other: each owns
-one RFC's rules and implements the same trait, so the guard dispatches once and a posture
-added later cannot skip a step by being wired in differently.
+The three credential postures sit under `caller.rs` and know nothing of each other: each
+owns one spec's rules and implements the same trait, so the guard dispatches once and a
+posture added later cannot skip a step by being wired in differently.
 
 `crates/decern-kernel/model/` holds the Cedar policy, schema, and entities the kernel loads. `examples/` holds the worked integrations and the quickstart — runnable and CI-tested, never published as crates. `.agent/` holds the working
 method and the standards registry. `scripts/verify.sh` is the one gate every change must pass.
@@ -55,14 +56,18 @@ method and the standards registry. `scripts/verify.sh` is the one gate every cha
 ## How a decision flows
 
 1. A request reaches `decern-serve` (`POST /access/v1/evaluation`, AuthZEN-shaped), and the
-   caller is established first: an RFC 9068 bearer token validated against configured keys, or
-   the declared front under `--trust-proxy`. A server with neither posture named refuses to
-   start; under bearer mode a request with no verified caller is refused before anything is
-   evaluated or recorded.
+   caller is established first, by one of four named postures: an RFC 9068 bearer token, an
+   RFC 9421 signed request, a SPIFFE JWT-SVID, or the declared front under `--trust-proxy`.
+   All three credential postures verify against keys configured at startup — nothing is
+   fetched. A server with no posture named refuses to start, and naming two is a startup
+   failure; under any credential posture a request with no verified caller is refused before
+   anything is evaluated or recorded. The two *workload* postures (signed request, SPIFFE)
+   additionally bind the caller to the principals it may name, unless it is listed in
+   `--pep`.
 2. `decern-kernel` evaluates the pure decision function over the loaded authority graph and policy.
    The server supplies `now` from its own clock (never the request body).
 3. The decision, plus a server-derived **accountable-owner** (the root of the subject's
-   delegation chain) and — under bearer validation — the **asserting caller** exactly as
+   delegation chain) and — under any credential posture — the **asserting caller** exactly as
    verified, is appended to the `decern-ledger` — Ed25519-signed and hash-chained, the exact
    request digest-bound (`digests.parameters`).
 4. The decision is returned **only if that record was written**. If it couldn't be, the server
