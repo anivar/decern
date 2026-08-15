@@ -290,11 +290,17 @@ pub(crate) async fn pubkey(State(st): State<AppState>) -> Json<Value> {
 /// Guarded, though it is a read: it discloses more than a single decision does — the
 /// delegation shape of a tenant, and who acts for whom. Under `--trust-proxy` that
 /// disclosure is the fronting proxy's to control, as every route is; under bearer
-/// validation an org chart is not something an unverified caller gets to read.
+/// validation an org chart is not something an unverified caller gets to read. Under
+/// signed-request mode, a workload may only inspect its own blast radius unless it is
+/// named in `--pep`.
 pub(crate) async fn descendants(
     State(st): State<AppState>,
+    caller: Option<axum::Extension<crate::caller::Authenticated>>,
     UrlPath(id): UrlPath<String>,
 ) -> Response {
+    if let Some(refusal) = crate::caller::refuse_unless_admits(&caller, &id) {
+        return refusal;
+    }
     let dir = st.kernel.directory();
     let descendants = dir.descendants_of(&id);
     (
@@ -302,4 +308,52 @@ pub(crate) async fn descendants(
         Json(json!({ "principal": id, "descendants": descendants })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::extract::{Path as UrlPath, State};
+    use axum::http::StatusCode;
+
+    use super::*;
+    use crate::testutil::{body_json, mission_base, mission_state_at};
+
+    #[tokio::test]
+    async fn a_self_only_caller_cannot_read_anothers_blast_radius() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let who = crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")
+            .self_only();
+        let (status, body) = body_json(
+            descendants(
+                State(st),
+                Some(axum::Extension(who)),
+                UrlPath("corp".into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "caller_mismatch");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn a_pep_caller_may_read_anothers_blast_radius() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let who = crate::caller::Authenticated::new("gateway-1", "gw", "https://iss.example/");
+        let (status, body) = body_json(
+            descendants(
+                State(st),
+                Some(axum::Extension(who)),
+                UrlPath("corp".into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["principal"], "corp");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

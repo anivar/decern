@@ -180,6 +180,7 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | `--bearer-scope <SCOPE>` | A scope every token must carry. Repeatable; all are required, and a verified token missing one is refused `403 insufficient_scope`. Omit for no scope check. |
 | `--signed-agent-key <ID=HEX>` | An agent identifier this deployment recognizes and the one Ed25519 key it may sign requests with. Repeatable: one entry per agent, and a key rollover is a second entry rather than an atomic swap. Turns on RFC 9421 + RFC 7800 sender-constrained request validation for the guarded routes; requires `--signed-audience`. Conflicts with `--bearer-issuer`/`--trust-proxy`. An identifier with no entry here cannot authenticate under this mode, by design: keys are configured, never fetched. |
 | `--signed-audience <URI>` | This deployment's resource identifier, which a signed request's bound token's `aud` must contain. Required with `--signed-agent-key`, same role as `--bearer-audience`. |
+| `--pep <ID>` | A signed-request agent that may name principals other than itself. Repeatable. Requires `--signed-agent-key`, and the id must already be one of those entries — a PEP still has to authenticate. Omit to bind every signed agent to itself. |
 | `--trust-proxy` | Accept every caller, because something in front already authenticates them. Conflicts with `--bearer-issuer` and `--signed-agent-key`; one posture is required to start. |
 | `--addr <ADDR>` | Default `127.0.0.1:8080`. |
 
@@ -224,12 +225,17 @@ names one of two postures:
   validation accepts a token as long as it is presented before it expires — a leaked bearer JWT
   is replayable as-is — this mode requires proof of possession of the signing key on every
   single request, and a captured signature over one POST body cannot authorize a different
-  one. GET is unchanged. Verification is against configured keys only, same no-fetch posture as
+  one. GET is unchanged. A signed agent may additionally only *name itself*: the authenticated
+  agent must equal the AuthZEN `subject`, the mission `approver`, the stored approver on
+  terminate, and the principal id on `/directory/v1/principals/{id}/descendants`, unless it is
+  listed in `--pep`. A mismatch is `403 caller_mismatch` — the credential was accepted, the
+  name is not theirs. Verification is against configured keys only, same no-fetch posture as
   bearer validation, and an agent identifier with no configured key is refused before any
   cryptography runs.
   [`examples/signed-request/`](../examples/signed-request/README.md) runs this mode end to end,
   including the beat that separates it from a bearer credential: the *same* token, refused when the
-  signature comes from a different key.
+  signature comes from a different key, and the beats that refuse an authenticated agent asking
+  or approving as someone else.
 - **`--trust-proxy`**: every caller is accepted, because the operator states that something in
   front — an authenticating proxy, a service mesh, the OS boundary around a local walkthrough —
   has already established who is calling. The flag is that statement. It is exactly the old
@@ -237,9 +243,14 @@ names one of two postures:
 
 What bearer validation establishes is **the caller, not the content**. The mission `approver` is
 still a request-body field: a verified gateway asserts it, and `--require-mission` remains what
-makes approval server-derived for decisions. The AuthZEN subject is likewise deliberately not
-taken from the token's `sub` — an enforcement point legitimately asks about parties other than
-itself.
+makes approval server-derived for decisions. The AuthZEN subject is likewise not taken from the
+token's `sub` — an enforcement point legitimately asks about parties other than itself.
+
+Signed-request mode is the other shape. A `--signed-agent-key` agent is a workload, not a
+gateway: it may only name itself as decide `subject`, mission `approver` (including the
+stored approver on terminate), and directory principal. A mismatch is `403 caller_mismatch`.
+`--pep <ID>` names agents that remain PEPs.
+`--trust-proxy` has no verified identity to bind and does not.
 
 `/audit/v1/subject` deserves its own sentence: it returns records *about a person*, and it stays
 **outside the guard on purpose** — the party a decision was about will not hold a credential for

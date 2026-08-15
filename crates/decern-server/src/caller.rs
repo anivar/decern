@@ -17,6 +17,12 @@
 //! [`CallerAuth::authenticate`] is deliberately synchronous: establishing a caller must
 //! not be able to wait on a third party, and a signature that cannot `.await` cannot
 //! grow that dependency by accident.
+//!
+//! Establishing the caller is not the same as admitting the name the request speaks as.
+//! Bearer and `--trust-proxy` authenticate a PEP, which legitimately asks about other
+//! parties. A signed-request agent is a workload: unless it is named in `--pep`, it may
+//! only name itself as AuthZEN `subject`, mission `approver`, or directory principal.
+//! That check lives in the handlers, not here — the guard does not parse bodies.
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -103,6 +109,99 @@ pub(crate) struct Authenticated {
     pub(crate) subject: String,
     pub(crate) client_id: String,
     pub(crate) issuer: String,
+    /// Whether this caller may name principals other than itself. Set by the posture
+    /// that established it, so a handler cannot pick the wrong default by omission.
+    pub(crate) bind: Bind,
+}
+
+/// How tightly a verified caller is bound to the principals a request names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Bind {
+    /// A PEP: may ask about, approve as, and inspect any principal.
+    Any,
+    /// A workload: may only name itself.
+    SelfOnly,
+}
+
+impl Authenticated {
+    /// A PEP caller. Handler tests that inject an identity without going through a
+    /// posture use this, matching bearer and `--trust-proxy`.
+    pub(crate) fn new(
+        subject: impl Into<String>,
+        client_id: impl Into<String>,
+        issuer: impl Into<String>,
+    ) -> Self {
+        Self {
+            subject: subject.into(),
+            client_id: client_id.into(),
+            issuer: issuer.into(),
+            bind: Bind::Any,
+        }
+    }
+
+    /// Restrict this caller to naming itself. Signed-request agents that are not
+    /// in `--pep` are this shape.
+    pub(crate) fn self_only(mut self) -> Self {
+        self.bind = Bind::SelfOnly;
+        self
+    }
+
+    fn admits(&self, named: &str) -> bool {
+        match self.bind {
+            Bind::Any => true,
+            Bind::SelfOnly => self.subject == named,
+        }
+    }
+}
+
+/// How much of an attacker-chosen principal id may be echoed in a 403. Enough to
+/// recognise a mismatch; not enough to use the error channel as a reflector.
+const MAX_ECHO: usize = 64;
+
+fn brief(s: &str) -> String {
+    // Bounded by characters, never by bytes. `&t[..MAX_ECHO]` panics when the cut lands
+    // inside a multi-byte character, and the string being cut here is an attacker-chosen
+    // principal id — so a byte bound turns this refusal into a downed request. Control
+    // characters are dropped as well: the value lands in a JSON body, which escapes them,
+    // but an id is not a place they belong.
+    let t = s.trim();
+    let kept: Vec<char> = t.chars().filter(|c| !c.is_control()).collect();
+    let mut out: String = kept.iter().take(MAX_ECHO).collect();
+    if kept.len() > MAX_ECHO {
+        out.push('…');
+    }
+    out
+}
+
+/// Refuse a principal this caller is not allowed to speak as. No extension means
+/// `--trust-proxy`: the operator said the front is the PEP, and there is no verified
+/// identity here to compare.
+///
+/// 403, not 401: the credential was accepted. The name in the request is not theirs.
+/// A distinct error from `insufficient_scope`, which is about what the token carries,
+/// not about who it is.
+pub(crate) fn refuse_unless_admits(
+    caller: &Option<axum::Extension<Authenticated>>,
+    named: &str,
+) -> Option<Response> {
+    match caller {
+        None => None,
+        Some(axum::Extension(who)) if who.admits(named) => None,
+        Some(axum::Extension(who)) => Some(
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "caller_mismatch",
+                    "detail": format!(
+                        "caller {} cannot name principal {}",
+                        brief(&who.subject),
+                        brief(named)
+                    ),
+                })),
+            )
+                .into_response(),
+        ),
+    }
 }
 
 /// The layer over the protected routes.
@@ -169,4 +268,42 @@ pub(crate) fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A refused principal id is attacker-chosen, and it is echoed back through
+    /// `brief`. Truncating it by byte index panics when the cut lands inside a
+    /// multi-byte character, which turns a 403 into a downed request — so the
+    /// echo must be bounded by characters, not bytes.
+    #[test]
+    fn a_refused_multibyte_principal_id_does_not_panic() {
+        // 22 x 3 bytes = 66: over the echo bound, and byte 64 is mid-character.
+        let hostile = "\u{3042}".repeat(22);
+        assert!(hostile.len() > MAX_ECHO && !hostile.is_char_boundary(MAX_ECHO));
+        let who = axum::Extension(Authenticated::new("agent-1", "agent-1", "iss").self_only());
+        assert!(refuse_unless_admits(&Some(who), &hostile).is_some());
+    }
+
+    #[test]
+    fn a_pep_admits_any_principal() {
+        let who = Authenticated::new("gateway-1", "gw", "https://issuer.example/");
+        assert!(refuse_unless_admits(&Some(axum::Extension(who.clone())), "corp").is_none());
+        assert!(refuse_unless_admits(&Some(axum::Extension(who)), "anyone").is_none());
+    }
+
+    #[test]
+    fn a_self_only_caller_admits_only_itself() {
+        let who = Authenticated::new("agent-1", "agent-1", "https://issuer.example/").self_only();
+        assert!(refuse_unless_admits(&Some(axum::Extension(who.clone())), "agent-1").is_none());
+        let refusal = refuse_unless_admits(&Some(axum::Extension(who)), "corp").unwrap();
+        assert_eq!(refusal.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn a_trusted_proxy_has_no_caller_to_bind() {
+        assert!(refuse_unless_admits(&None, "corp").is_none());
+    }
 }
