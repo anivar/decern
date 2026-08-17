@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Publishes the nine crates to crates.io on a release tag, authenticating by OIDC. No token
+# is stored anywhere: crates.io is configured to trust this repository and THIS FILENAME,
+# and mints a short-lived credential that the auth action revokes when the job ends.
+#
+# The filename is part of the trust configuration, once per crate — nine publisher entries.
+# Renaming this file revokes its ability to publish until every entry is updated to match.
+#
+# Why this exists rather than a `cargo login`: the 0.2.0 release stopped mid-publish on
+# `403 this token does not have the required permissions` — a long-lived token scoped
+# `publish-new`, which does not cover new versions of crates that already exist. Valid
+# enough to look configured, wrong enough to stop a release. A minted token cannot drift
+# out of scope because it does not outlive the run.
+name: Publish crates
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to publish, without the leading v (e.g. 0.3.1)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Same gate as publish-sdks.yml, and for the same reason: the tag is the only statement of
+  # what is being released. Nine crates half-published under a version nobody asked for is a
+  # worse state than none published, and it cannot be undone — crates.io has no delete, only
+  # yank. So disagreement stops the run before the registry is touched at all.
+  version:
+    name: the tag and the manifests agree
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - id: v
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+          ws=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "tag=${version}  workspace=${ws}"
+
+          fail=0
+          [ "${ws}" = "${version}" ] || { echo "::error::Cargo.toml says ${ws}, tag says ${version}"; fail=1; }
+
+          # The inter-crate pins are what a consumer resolves against, so a stale one
+          # publishes a crate that cannot build from the registry.
+          while read -r pin; do
+            [ "${pin}" = "${version}" ] && continue
+            echo "::error::an inter-crate pin says ${pin}, tag says ${version}"
+            fail=1
+          done < <(grep -oE 'path = "crates/[^"]+", version = "[^"]+"' Cargo.toml | sed 's/.*version = "//; s/"//')
+
+          exit "${fail}"
+
+  crates:
+    name: crates.io
+    needs: version
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      id-token: write # mint the OIDC token crates.io trusts; nothing else is needed
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install Rust toolchain (honors rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+
+      - name: Publish in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -uo pipefail
+
+          # A crate that is already on the registry at this version is a SUCCESS, not a
+          # failure. `cargo publish` has no --skip-existing, and re-running a tag after a
+          # partial failure is exactly when that matters: the alternative is a workflow
+          # that can never be retried once any crate has landed.
+          publish() {
+            local crate="$1"
+            local out rc
+            for attempt in 1 2 3 4 5; do
+              out="$(cargo publish -p "${crate}" --no-verify 2>&1)"; rc=$?
+              if [ "${rc}" -eq 0 ]; then
+                echo "  ${crate}: published"
+                return 0
+              fi
+              if grep -qiE "already (exists|uploaded)|crate version .* is already" <<<"${out}"; then
+                echo "  ${crate}: already on the registry at ${VERSION} — treating as done"
+                return 0
+              fi
+              # A sibling published seconds ago may not be in the index yet. That is a
+              # timing artifact of publishing a dependency graph, not a broken manifest,
+              # so it retries rather than aborting a half-finished release.
+              if grep -qiE "no matching package|failed to select a version|failed to get" <<<"${out}"; then
+                echo "  ${crate}: dependency not in the index yet (attempt ${attempt}), waiting"
+                sleep 30
+                continue
+              fi
+              echo "::error::${crate} failed to publish"
+              echo "${out}"
+              return 1
+            done
+            echo "::error::${crate} still could not resolve its dependencies after 5 attempts"
+            echo "${out}"
+            return 1
+          }
+
+          # --no-verify: the tag already passed the full gate on this commit, and a rebuild
+          # here would only re-prove it against a registry state that is mid-change.
+          for tier in "decern-crypto decern-kernel decern-store" \
+                      "decern-ledger decern-proof decern-store-postgres decern-identity" \
+                      "decern-cli decern-server"; do
+            echo "tier: ${tier}"
+            for crate in ${tier}; do
+              publish "${crate}" || exit 1
+            done
+            # Let the index settle before the tier that depends on this one.
+            sleep 20
+          done

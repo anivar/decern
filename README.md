@@ -46,7 +46,7 @@ signed binaries for Linux (x64/arm64), macOS (Apple Silicon) and Windows (x64) a
 **cvc5** solver on `PATH`; serving answers does not.
 
 ```sh
-# 1. Prove all invariants hold over every input (cvc5)
+# 1. Prove every invariant over the model's input space (cvc5)
 decern prove
 
 # 2. Run the PDP (writes a tamper-evident ledger); this walkthrough is its own caller
