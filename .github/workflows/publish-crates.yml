@@ -1,0 +1,181 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Publishes the nine crates to crates.io on a release tag, authenticating by OIDC.
+#
+# No token is stored anywhere. Each crate has a trusted-publishing entry on crates.io naming
+# this repository, THIS FILENAME, and the `crates-io` environment; the registry mints a
+# credential for the run and the auth action revokes it when the job ends.
+#
+# The filename is part of the trust configuration, nine times over. Renaming this file
+# revokes its ability to publish until every entry is updated to match.
+#
+# Why not a stored token: the 0.2.0 release stopped mid-publish on `403 this token does not
+# have the required permissions` — a long-lived token scoped `publish-new`, which does not
+# cover new versions of crates that already exist. Valid enough to look configured, wrong
+# enough to stop a release. A minted credential cannot drift out of scope because it does
+# not outlive the run.
+name: Publish crates
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to publish, without the leading v (e.g. 0.3.1)
+        required: true
+      dry_run:
+        description: Resolve and package every crate, publish nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  # Publishing is not atomic across nine crates, and crates.io has no delete — only yank.
+  # Every guard here exists to fail before the first upload rather than midway through.
+  CRATES: >-
+    decern-crypto decern-kernel decern-store
+    decern-ledger decern-proof decern-store-postgres decern-identity
+    decern-cli decern-server
+
+jobs:
+  preflight:
+    name: the tag and the manifests agree
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - id: v
+        name: Resolve the version and check every manifest against it
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+          fail=0
+          note() { echo "::error::$1"; fail=1; }
+
+          ws=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          [ "${ws}" = "${version}" ] || note "Cargo.toml is ${ws}, the tag says ${version}"
+
+          # The inter-crate pins are what a consumer resolves against. A stale one publishes
+          # a crate that cannot build from the registry even though it builds from this tree.
+          while read -r pin; do
+            [ "${pin}" = "${version}" ] || note "an inter-crate pin is ${pin}, the tag says ${version}"
+          done < <(grep -oE 'path = "crates/[^"]+", version = "[^"]+"' Cargo.toml \
+                   | sed 's/.*version = "//; s/"//')
+
+          # A release section is what the GitHub release body is drawn from, and its absence
+          # has failed a release before — cheaper to catch here than after nine uploads.
+          grep -q "^## \[${version}\]" CHANGELOG.md \
+            || note "CHANGELOG.md has no [${version}] section"
+
+          exit "${fail}"
+
+  publish:
+    name: crates.io
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      id-token: write # mint the OIDC credential crates.io trusts; nothing else is needed
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install Rust toolchain (honors rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      # Packaging every crate before uploading any of them. `cargo package` builds the
+      # packaged artifact, not the working tree, so it catches an include/exclude rule that
+      # ships something that cannot compile. Nine crates cannot be un-published, so this
+      # runs first for all of them rather than per-crate as we go.
+      #
+      # Crates that depend on a sibling at a version not yet on the index cannot resolve
+      # here, which is expected and not a failure — those are verified by `cargo publish`
+      # itself, after their dependency lands.
+      - name: Package what can be packaged
+        run: |
+          set -uo pipefail
+          for crate in ${CRATES}; do
+            if out=$(cargo package -p "${crate}" --allow-dirty 2>&1); then
+              echo "  ${crate}: packages clean"
+            elif grep -qiE "no matching package|failed to select a version" <<<"${out}"; then
+              echo "  ${crate}: defers to publish time (depends on a sibling not yet on the index)"
+            else
+              echo "::error::${crate} does not package"
+              echo "${out}" | tail -30
+              exit 1
+            fi
+          done
+
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+        if: ${{ !inputs.dry_run }}
+
+      - name: Publish in dependency order
+        if: ${{ !inputs.dry_run }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -uo pipefail
+
+          # crates.io serves the index through a CDN, so a crate published seconds ago may
+          # not resolve yet for the one that depends on it. Waiting on the index to actually
+          # report the version beats sleeping a guessed interval and hoping.
+          await_index() {
+            local crate="$1"
+            for _ in $(seq 1 30); do
+              if curl -sf -H "User-Agent: decern-release" \
+                   "https://crates.io/api/v1/crates/${crate}/${VERSION}" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 10
+            done
+            echo "::error::${crate} ${VERSION} never appeared on the index"
+            return 1
+          }
+
+          # Already published at this version is SUCCESS. `cargo publish` has no
+          # --skip-existing, and re-running a tag after a partial failure is exactly when
+          # that matters: without this, a workflow can never be retried once any crate has
+          # landed, which is the state a partial failure leaves you in.
+          publish_one() {
+            local crate="$1" out
+            if out=$(cargo publish -p "${crate}" 2>&1); then
+              echo "  ${crate}: published"
+              return 0
+            fi
+            if grep -qiE "already (exists|uploaded)|crate version .* is already" <<<"${out}"; then
+              echo "  ${crate}: already on the index at ${VERSION}"
+              return 0
+            fi
+            echo "::error::${crate} failed to publish"
+            echo "${out}" | tail -30
+            return 1
+          }
+
+          for tier in "decern-crypto decern-kernel decern-store" \
+                      "decern-ledger decern-proof decern-store-postgres decern-identity" \
+                      "decern-cli decern-server"; do
+            echo "── tier: ${tier}"
+            for crate in ${tier}; do publish_one "${crate}" || exit 1; done
+            for crate in ${tier}; do await_index "${crate}" || exit 1; done
+          done
+
+          echo "all nine crates are on the index at ${VERSION}"
+
+      - name: Dry run summary
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "Dry run: every crate that could resolve was packaged. Nothing was published."
