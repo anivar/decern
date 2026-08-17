@@ -12,7 +12,7 @@ A map of decern for contributors — human or agent. If you're here to pick some
 per-crate table below tells you *where* things live, and [CONTRIBUTING.md](CONTRIBUTING.md) tells
 you *how* to land a change.
 
-<p align="center"><img src="docs/img/architecture.png" alt="decern architecture: the decern and decern-serve binaries over the kernel, identity, proof, ledger, store, and crypto crates" width="860"></p>
+<p align="center"><img src="docs/img/architecture.png" alt="decern architecture: decern and decern-serve (four postures) over the kernel, identity, proof, ledger, store, and crypto crates" width="860"></p>
 
 ## The shape
 
