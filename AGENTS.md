@@ -10,7 +10,20 @@ guarantees are the product — a change that weakens one is a regression, even i
   `decern-server` (binary `decern-serve`: a thin, AuthZEN-shaped, fail-closed PDP).
   See [ARCHITECTURE.md](ARCHITECTURE.md) for the crate map and where each contribution area lives.
 - `crates/decern-kernel/model/` — the Cedar policy, schema, and entities the kernel loads.
-- `.agent/` — how agents and contributors work here (method only, no project history).
+- [`.agent/`](.agent/README.md) — how work is done here. Method only; no project history,
+  so nothing in it goes stale when the code moves. Which part you want depends on what you
+  are about to do:
+  - Shaping a change: [`methods/`](.agent/methods/README.md), and
+    [`graph-orchestration.md`](.agent/methods/graph-orchestration.md) if it is wide enough to
+    need more than one loop ([`workflow-template.js`](.agent/methods/workflow-template.js) is
+    that shape, runnable).
+  - Touching anything a spec governs:
+    [`standards/registry.yaml`](.agent/standards/registry.yaml). Look up the file with
+    `python3 scripts/standards.py for <path>` (or `brief`) — that is the shared grounding
+    brief for parallel review, not a fragile grep. How it plugs into graph-shaped work:
+    [`.agent/methods/standards-graph.md`](.agent/methods/standards-graph.md).
+  - Writing a comment: [`standards/comments.md`](.agent/standards/comments.md).
+    `scripts/verify.sh` enforces the half a grep can reach.
 
 ## Conventions
 - Rust 2024, toolchain pinned in `rust-toolchain.toml`. Don't bump it casually.
@@ -30,7 +43,8 @@ Run the canonical script (the same gates CI runs) and keep it green:
 ./scripts/verify.sh
 ```
 
-Needs the pinned toolchain, `cargo-deny`, and **cvc5** for the proofs. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Needs the pinned toolchain, `cargo-deny`, `python3` for the standards check, and **cvc5**
+for the proofs. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 `--skip-proofs` runs every gate except the proofs, for iterating on a change that cannot reach
 authorization semantics. It exits non-zero regardless, so it can never stand in for a passing
@@ -80,6 +94,14 @@ still cost a guarantee:
   it sits on, and testing the answer.
 - **The record is written before the answer is served.** An unrecordable decision is a `503`,
   never a bare allow. Any new path that answers must append first.
+- **A standard-facing change starts by re-reading the spec.** Specs move, and memory does
+  not. [`.agent/standards/registry.yaml`](.agent/standards/registry.yaml) maps each spec to
+  the files that implement it and records when its text was last read (`verified:`). Look
+  the file up with `python3 scripts/standards.py for <path>`, fetch the url, and update the
+  entry in the same change. A new posture, header or wire format needs a new entry. An entry
+  that no longer matches the code is the same defect as a doc that overstates.
+  `scripts/standards.py check` (in `verify.sh`) catches missing paths and missing dates; it
+  does not catch a stale reading — that is still on the author.
 - **A claim in a doc is part of the product.** The project's whole pitch is that it is
   checkable, so a sentence that overstates is a defect the same way a wrong return value is.
   Say what the code does, name the limit in the same breath, and when two files state the same
