@@ -171,17 +171,20 @@ POST /mission/v1/{s256}/terminate   -> {reference, state: terminated}
 
 ## Deployment
 
-`decern-serve` refuses to start unless told how its callers are established: it validates
-RFC 9068 bearer tokens itself (`--bearer-issuer`, `--bearer-audience`,
-`--bearer-issuer-key`, optionally `--bearer-scope`), or `--trust-proxy` states that
-something in front already authenticates them. Which routes are guarded, which stay open
-on purpose, and why is in [docs/CLI.md](docs/CLI.md)'s trust-boundary section.
+`decern-serve` refuses to start unless told how its callers are established, and naming two
+postures is also a startup failure. It validates RFC 9068 bearer tokens (`--bearer-issuer`),
+RFC 9421 signed requests (`--signed-agent-key`) or SPIFFE JWT-SVIDs
+(`--spiffe-trust-domain`) itself — all against keys configured at startup, never fetched —
+or `--trust-proxy` states that something in front already authenticates them. The two
+workload postures additionally bind a caller to the principals it may name. Which routes are
+guarded, which stay open on purpose, and why is in [docs/CLI.md](docs/CLI.md)'s
+trust-boundary section.
 
-Two worked integrations ship, as a pair: [`examples/mcp/`](examples/mcp/) — an MCP server
-that validates its caller and consults decern before every tool call — and
-[`examples/ext_authz_adapter/`](examples/ext_authz_adapter/) — a forward-auth shim that puts
-decern behind NGINX, Traefik or Envoy, failing closed. Both live deliberately outside the
-workspace: runnable and CI-tested, never published as crates.
+Four worked examples ship, all runnable and CI-tested and none published as crates:
+[`mcp/`](examples/mcp/) consults decern before every tool call,
+[`ext_authz_adapter/`](examples/ext_authz_adapter/) puts it behind NGINX, Traefik or Envoy,
+and [`signed-request/`](examples/signed-request/) and [`spiffe/`](examples/spiffe/) each run
+a workload posture end to end, minting their own credentials.
 
 `--sharded <dir>` replaces the single file with a per-tenant sharded ledger several
 processes on one host extend safely (`flock` head store); `--sharded postgres://…` does the
