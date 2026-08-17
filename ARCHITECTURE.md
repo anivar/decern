@@ -72,13 +72,12 @@ method and the standards registry. `scripts/verify.sh` is the one gate every cha
    request digest-bound (`digests.parameters`).
 4. The decision is returned **only if that record was written**. If it couldn't be, the server
    returns `503`, never a bare allow. This fail-closed contract is the whole point of the PDP.
-5. Anyone can later run `decern verify` over the ledger: signatures prove each record
-   authentic and the chain proves the log is internally consistent. That alone does **not**
-   prove nothing was dropped — whoever wrote the log can rewrite and re-chain it. Detecting
-   a dropped tail needs `--anchor`, checked against a tree head published somewhere the
-   operator does not control; that is the step that removes trust in them, and it is not
-   available for `--sharded`. See
-   [docs/CLI.md](docs/CLI.md#why---anchor-is-the-one-that-matters).
+5. Anyone can run `decern verify` over the ledger afterwards. The signatures prove each
+   record is authentic, and the chain proves the log hangs together. Neither proves nothing
+   was dropped — whoever wrote the log can rewrite it and re-chain it, and it will still
+   pass. Catching a dropped tail takes `--anchor`, checked against a tree head published
+   somewhere the operator cannot reach. That is the step that stops requiring trust in them,
+   and it does not work for `--sharded` yet. See [`decern verify`](docs/CLI.md#decern-verify).
 
 The same binary also reaches `decern-identity` for the **Mission lifecycle**: `POST /mission/v1/approve`
 grants an agent a scoped, fail-closed-attenuated authorization context (refused, and nothing recorded,
