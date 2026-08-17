@@ -18,4 +18,5 @@
   assertion about which key the agent holds. A verified agent is a **workload** and may name
   only itself unless listed in `--pep`. `jti` is required and shape-checked but not used for
   replay detection — there is no nonce cache — and `parent_agent` is shape-checked and never
-  reaches the kernel. Authored by @anivar.
+  reaches the kernel. `examples/aauth/` runs the whole posture with no agent
+  provider and no network, and asserts both profile refusals. Authored by @anivar.

@@ -1,0 +1,49 @@
+[
+  {
+    "uid": {
+      "type": "Principal",
+      "id": "https://agent-provider.example/agents/agent-1"
+    },
+    "attrs": {
+      "kind": "Agent",
+      "tenant": "A",
+      "expiry": 32503680000,
+      "scopes": [
+        "read"
+      ]
+    },
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "Principal",
+      "id": "corp"
+    },
+    "attrs": {
+      "kind": "Human",
+      "tenant": "A",
+      "expiry": 32503680000,
+      "scopes": [
+        "read",
+        "move_money"
+      ]
+    },
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "Resource",
+      "id": "claim1"
+    },
+    "attrs": {
+      "owner": {
+        "__entity": {
+          "type": "Principal",
+          "id": "https://agent-provider.example/agents/agent-1"
+        }
+      },
+      "tenant": "A"
+    },
+    "parents": []
+  }
+]
