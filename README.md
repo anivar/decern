@@ -46,7 +46,7 @@ signed binaries for Linux (x64/arm64), macOS (Apple Silicon) and Windows (x64) a
 **cvc5** solver on `PATH`; serving answers does not.
 
 ```sh
-# 1. Prove all invariants hold over every input (cvc5)
+# 1. Prove every invariant over the model's input space (cvc5)
 decern prove
 
 # 2. Run the PDP (writes a tamper-evident ledger); this walkthrough is its own caller
@@ -97,7 +97,7 @@ Every decision lands in an append-only, Ed25519-signed, hash-chained ledger, and
 **only if its record was written** — an unrecordable decision returns 503, never a bare
 allow. A crash-torn tail heals; truncating committed history is detected.
 
-<p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: the caller is established, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p> Here an
+<p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: one of four postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p> Here an
 unrecognized caller is refused a `MoveMoney` — the money-gate forbid fires by name, no
 `sponsor` is derived for a caller the directory does not know, the exact request is
 digest-bound, and `prev` is the chain link:
@@ -192,15 +192,24 @@ with `decern verify --sharded`.
 Two binaries over seven small crates: a proven decision core, an SMT proof harness, a
 tamper-evident ledger, and pure-Rust persistence and primitives.
 
-<p align="center"><img src="docs/img/architecture.png" alt="decern architecture: decern and decern-serve binaries over the kernel, identity, proof, ledger, store, and crypto crates" width="860"></p>
+<p align="center"><img src="docs/img/architecture.png" alt="decern architecture: decern and decern-serve (four postures) over the kernel, identity, proof, ledger, store, and crypto crates" width="860"></p>
 
 ## Known limitations
 
-- **Bearer validation establishes the caller, not the content.** The mission `approver` is
-  a request-body field the verified caller vouches for; `--require-mission` is what makes
-  decision approval server-derived. `/audit/v1/subject` stays outside the guard on purpose
-  — the party a decision was about holds no credential here — so treat handles as secrets
-  and rate-limit that route at whatever fronts the server.
+The list below is the standing set. Each release also states what it does **not** claim —
+see [Known limits in 0.3.0](CHANGELOG.md#known-limits-in-this-release), which covers
+consent, log pinning, `--trust-proxy`, replay, and what the proofs actually cover.
+
+- **How far a credential constrains the content depends on the posture.** Under bearer
+  validation and `--trust-proxy` it does not: the mission `approver` is a request-body
+  field the verified caller vouches for, and the decision subject is not taken from the
+  credential, because a gateway legitimately asks about other parties. Under the two
+  *workload* postures (`--signed-agent-key`, `--spiffe-trust-domain`) the caller may only
+  name itself, unless listed in `--pep`. So a bearer token issued to a workload carries no
+  such bind. `--require-mission` is what makes decision approval server-derived.
+  `/audit/v1/subject` stays outside the guard on purpose — the party a decision was about
+  holds no credential here — so treat handles as secrets and rate-limit that route at
+  whatever fronts the server.
 - **`FileLedgerHeadStore` is single-host.** The sharded ledger's reference backend uses an
   exclusive `flock` per shard: correct multi-process exclusion on one host (Unix only), not
   a distributed store. Multi-host deployments use the Postgres head store instead.

@@ -12,7 +12,7 @@
   gtag('config', 'G-RZ3DJS6EF5');
 </script>
 <title>decern — proven authorization for agents</title>
-<meta name="description" content="A deterministic authorization kernel for agents, people and services. Nine safety invariants are machine-checked by cvc5 over every possible input; every decision is recorded in a tamper-evident, verifiable ledger. Pure Rust, Apache-2.0.">
+<meta name="description" content="A deterministic authorization kernel for agents, people and services. Nine safety invariants are machine-checked by cvc5 over the model's whole symbolic input space; every decision is recorded in a signed, hash-chained ledger anyone can verify. Pure Rust, Apache-2.0.">
 <meta name="author" content="Anivar A. Aravind">
 <link rel="canonical" href="https://decern.anivar.net/">
 <link rel="icon" type="image/svg+xml" href="img/decern-mark.svg">
@@ -185,7 +185,7 @@
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
         <h1 style="font:600 clamp(52px,8.5vw,82px)/0.98 'IBM Plex Mono',monospace;letter-spacing:-0.03em;color:#0C0F0E;margin:24px 0 0">decern</h1>
         <p style="font:500 clamp(25px,3.2vw,35px)/1.18 Newsreader,serif;letter-spacing:-0.01em;color:#0C0F0E;margin:24px 0 0;max-width:28ch;text-wrap:pretty">Decide what an agent, a person or a service is allowed to do. Keep proof of every answer.</p>
-        <p style="font:400 17px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:22px 0 0;max-width:60ch;text-wrap:pretty">Three things set it apart. A solver checks the safety rules against every possible input, instead of the handful a test file covers. Every answer goes into a signed, linked log, so anyone can check later that nothing was changed or removed — including people who don't trust whoever ran the server. And nothing gets decided for an unverified caller: the server refuses to start until it can name who is asking.</p>
+        <p style="font:400 17px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:22px 0 0;max-width:60ch;text-wrap:pretty">Three things set it apart. A solver checks the safety rules across the model's symbolic input space, instead of the handful a test file covers. Every answer goes into a signed, linked log, so anyone can check later that no record was altered — and, against a commitment you published elsewhere, that none was dropped. And nothing gets decided for an unverified caller: the server refuses to start until one of four postures can name who is asking.</p>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:34px">
           <a href="https://github.com/anivar/decern" style="display:inline-flex;align-items:center;gap:10px;background:#0E7C6B;color:#FFFFFF;border:1px solid #0E7C6B;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="background:#0A5B4E;border-color:#0A5B4E"><svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="display:block"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>Contribute on GitHub</a>
           <a href="#contribute" style="display:inline-flex;align-items:center;background:transparent;color:#0C0F0E;border:1px solid #0C0F0E;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="background:#0C0F0E;color:#F5F7F6">Where to start</a>
@@ -258,7 +258,7 @@
           <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:32px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">01 · Proven, not tested</p>
             <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">A solver checks every case, not a few</h3>
-            <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">An answer depends on four things only: who is asking, what authority exists, the policy, and the time. Because it is that contained, cvc5 can search every possible input for one that breaks a rule. Nine rules are checked this way. Green means it found nothing.</p>
+            <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">An answer depends on four things only: who is asking, what authority exists, the policy, and the time. Because it is that contained, cvc5 can search the model's symbolic input space for one that breaks a rule. Nine rules are checked this way, over the policy rather than the running server. Green means it found nothing.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:26px 0 0">
             <p style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-proof · runs in <span style="color:#5E6B67">decern prove</span> and CI only, never on the request path</p>
           </article>
@@ -272,7 +272,7 @@
           <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:32px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">03 · Known, not assumed</p>
             <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">Refuses to answer an unverified caller</h3>
-            <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Before evaluating anything, decern-serve establishes who is asking — a valid bearer token, or a declared, authenticated front taking responsibility for what it asserts. There is no default identity, and no way to start the server without naming one. The verified caller is written onto the decision record itself, not inferred afterwards.</p>
+            <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Before evaluating anything, decern-serve establishes who is asking — a bearer token, a signed request, a SPIFFE identity, or a declared authenticated front taking responsibility for what it asserts. There is no default identity, and no way to start the server without naming one. The two workload postures go further: unless exempted, such a caller may only name itself. The verified caller is written onto the decision record itself, not inferred afterwards.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:26px 0 0">
             <p style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-server · RFC 9068 bearer validation · asserted_by on every record</p>
           </article>
@@ -356,7 +356,7 @@
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
         <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Rules</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Nine rules, checked against every possible input.</h2>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Nine rules, checked across the model's symbolic input space.</h2>
         <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">Each line says exactly what the solver checked — never more.</p>
 
         <table style="width:100%;margin-top:34px;border-top:1px solid #0C0F0E">
@@ -416,7 +416,7 @@
           </div>
           <div style="border:1px solid #E1E7E4;background:#EDF3F1;padding:26px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">What it does not prove</p>
-            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">cvc5 proves the kernel's rules. It cannot tell whether your policy says what you meant, and it is never a claim that a deployment is secure — the deciding endpoints validate RFC 9068 bearer tokens when configured, or run behind a declared authenticating front; the server refuses to start with neither stated. Where a rule leans on a derived value, that part is ordinary tested Rust and is written up as such. The full boundary lives in the repository, under <a href="https://github.com/anivar/decern#known-limitations">known limitations ↗</a>.</p>
+            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">cvc5 proves the kernel's rules. It cannot tell whether your policy says what you meant, and it is never a claim that a deployment is secure — the deciding endpoints validate RFC 9068 bearer tokens, signed requests or SPIFFE identities when configured, or run behind a declared authenticating front; the server refuses to start with none stated. Where a rule leans on a derived value, that part is ordinary tested Rust and is written up as such. The full boundary lives in the repository, under <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md#known-limits-in-this-release">known limits in this release ↗</a>.</p>
           </div>
         </div>
       </div>
@@ -435,7 +435,7 @@
           <div style="padding:24px 20px;border-right:1px solid #0C0F0E;background:#FFFFFF">
             <p style="font:400 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">01</p>
             <p style="font:600 15px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Ask</p>
-            <p style="font:400 13px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:8px 0 0">A request arrives at <span style="font-family:'IBM Plex Mono',monospace;font-size:12px">decern-serve</span>, and the caller is established first — a verified token, or the declared front.</p>
+            <p style="font:400 13px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:8px 0 0">A request arrives at <span style="font-family:'IBM Plex Mono',monospace;font-size:12px">decern-serve</span>, and the caller is established first — bearer, signed request, SPIFFE, or a declared front.</p>
           </div>
           <div style="padding:24px 20px;border-right:1px solid #0C0F0E;background:#FFFFFF">
             <p style="font:400 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">02</p>
@@ -455,14 +455,14 @@
           <div style="padding:24px 20px;background:#EDF3F1">
             <p style="font:400 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">05</p>
             <p style="font:600 15px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Verify</p>
-            <p style="font:400 13px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:8px 0 0">Anyone can re-check the links and signatures later, offline.</p>
+            <p style="font:400 13px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:8px 0 0">Anyone can re-check the links and signatures later, offline — and, with <span style="font-family:'IBM Plex Mono',monospace;font-size:12px">--anchor</span>, that nothing was dropped.</p>
           </div>
         </div>
 
         <div style="display:grid;grid-template-columns:minmax(0,1fr) 296px;gap:44px;margin-top:28px;align-items:start">
           
             <figure style="margin:0;border:1px solid #0C0F0E;background:#FFFFFF;padding:24px">
-              <img src="img/decision-flow.png" alt="decern decision flow: the caller is established, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" style="display:block;width:100%;height:auto">
+              <img src="img/decision-flow.png" alt="decern decision flow: one of four postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" style="display:block;width:100%;height:auto">
             </figure>
           
           <div>
@@ -623,7 +623,7 @@
 
         
           <figure style="margin:34px 0 0;border:1px solid #0C0F0E;background:#FFFFFF;padding:30px">
-            <img src="img/architecture.png" alt="decern architecture: the decern and decern-serve binaries over the kernel, identity, proof, ledger, store, and crypto crates" style="display:block;width:100%;height:auto">
+            <img src="img/architecture.png" alt="decern architecture: decern and decern-serve (four postures) over the kernel, identity, proof, ledger, store, and crypto crates" style="display:block;width:100%;height:auto">
             <figcaption style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:22px 0 0">Crate topology, as shipped in the repository.</figcaption>
           </figure>
         
@@ -717,7 +717,7 @@
         </div>
 
         <div style="background:#0E1513;border:1px solid #0E1513;padding:28px 30px;margin-top:28px;overflow-x:auto;font:400 13px/1.95 'IBM Plex Mono',monospace;color:#EAF0ED">
-          <div style="color:#5F8F83">&#35; 1 · prove all invariants hold over every input (cvc5)</div>
+          <div style="color:#5F8F83">&#35; 1 · prove every invariant over the model's input space (cvc5)</div>
           <div><span style="color:#34C6AB">decern</span> prove</div>
           <div style="height:19px"></div>
           <div style="color:#5F8F83">&#35; 2 · run the PDP (writes a tamper-evident ledger)</div>
@@ -739,7 +739,7 @@
           <div style="padding:24px;border-right:1px solid #0C0F0E;background:#FFFFFF">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Sovereign · one process</p>
             <p style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;margin:14px 0 0">--ledger &lt;PATH&gt;</p>
-            <p style="font:400 13.5px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0">One ledger file. Binds loopback by default; starting requires the caller posture to be named — bearer validation, or a declared front.</p>
+            <p style="font:400 13.5px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0">One ledger file. Binds loopback by default; starting requires the caller posture to be named — bearer, signed request, SPIFFE, or a declared front.</p>
           </div>
           <div style="padding:24px;border-right:1px solid #0C0F0E;background:#FFFFFF">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Hosted · one host</p>
@@ -804,7 +804,7 @@
         <a href="https://github.com/anivar/decern/blob/main/ROADMAP.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Roadmap</a>
         <a href="https://github.com/anivar/decern/blob/main/ADOPTERS.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Adopters</a>
         <a href="https://github.com/anivar/decern/blob/main/GOVERNANCE.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Governance</a>
-        <a href="https://github.com/anivar/decern#known-limitations" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Limitations</a>
+        <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md#known-limits-in-this-release" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Limitations</a>
         <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Changelog</a>
       </div>
     </div>

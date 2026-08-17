@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1384" height="360" viewBox="0 0 1384 360" role="img" aria-label="decern architecture">
+  <rect width="1384" height="360" fill="#F5F7F6"/>
+  <style><![CDATA[
+    .t { font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; }
+  ]]></style>
+
+  <text x="40" y="36" class="t" font-size="11" font-weight="600" fill="#849490">BINARIES</text>
+  <rect x="40" y="52" width="200" height="100" rx="6" fill="#D7E8E3" stroke="#0E7C6B" stroke-width="1.5"/>
+  <text x="140" y="88" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern</text>
+  <text x="140" y="110" text-anchor="middle" class="t" font-size="11" fill="#5E6B67">CLI</text>
+  <text x="140" y="130" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">prove / decide / verify</text>
+
+  <rect x="40" y="172" width="200" height="100" rx="6" fill="#D7E8E3" stroke="#0E7C6B" stroke-width="1.5"/>
+  <text x="140" y="208" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-serve</text>
+  <text x="140" y="230" text-anchor="middle" class="t" font-size="11" fill="#5E6B67">AuthZEN PDP</text>
+  <text x="140" y="248" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">fail-closed / 4 postures</text>
+
+  <text x="280" y="36" class="t" font-size="11" font-weight="600" fill="#849490">PROOF</text>
+  <rect x="280" y="52" width="240" height="88" rx="6" fill="#E4F3EF" stroke="#0E7C6B" stroke-width="1.5"/>
+  <text x="400" y="88" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-proof</text>
+  <text x="400" y="110" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Cedar to cvc5 / 9 invariants</text>
+  <text x="400" y="126" text-anchor="middle" class="t" font-size="10" fill="#849490">symbolic input space</text>
+
+  <text x="560" y="36" class="t" font-size="11" font-weight="600" fill="#849490">DECISION CORE</text>
+  <rect x="560" y="52" width="240" height="88" rx="6" fill="#EEF0F8" stroke="#4A5480" stroke-width="1.5"/>
+  <text x="680" y="88" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-kernel</text>
+  <text x="680" y="110" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Cedar authority graph</text>
+  <text x="680" y="126" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">+ decision fn</text>
+
+  <rect x="560" y="160" width="240" height="88" rx="6" fill="#EEF0F8" stroke="#4A5480" stroke-width="1.5"/>
+  <text x="680" y="196" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-identity</text>
+  <text x="680" y="218" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Mission: approval</text>
+  <text x="680" y="234" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">+ attenuation</text>
+
+  <text x="840" y="36" class="t" font-size="11" font-weight="600" fill="#849490">PERSISTENCE + PRIMITIVES</text>
+  <rect x="840" y="52" width="240" height="72" rx="6" fill="#FFFFFF" stroke="#849490" stroke-width="1.25" stroke-dasharray="5 3"/>
+  <text x="960" y="82" text-anchor="middle" class="t" font-size="12" font-weight="600" fill="#5E6B67">decern-store-postgres</text>
+  <text x="960" y="102" text-anchor="middle" class="t" font-size="10" fill="#849490">multi-host (optional)</text>
+
+  <rect x="840" y="140" width="240" height="72" rx="6" fill="#E8EAE9" stroke="#5E6B67" stroke-width="1.5"/>
+  <text x="960" y="170" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-crypto</text>
+  <text x="960" y="190" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Ed25519 / SHA-256</text>
+
+  <rect x="840" y="228" width="240" height="72" rx="6" fill="#E8EAE9" stroke="#5E6B67" stroke-width="1.5"/>
+  <text x="960" y="258" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-store</text>
+  <text x="960" y="278" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">ledger head + MissionRegistry</text>
+
+  <text x="1120" y="36" class="t" font-size="11" font-weight="600" fill="#849490">AUDIT</text>
+  <rect x="1120" y="120" width="220" height="100" rx="6" fill="#F3EDE4" stroke="#A67C2A" stroke-width="1.5"/>
+  <text x="1230" y="162" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-ledger</text>
+  <text x="1230" y="184" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Ed25519 hash-chain</text>
+  <text x="1230" y="200" text-anchor="middle" class="t" font-size="10" fill="#849490">anchor for completeness</text>
+
+  <path d="M240 102 H280" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <path d="M240 222 H560" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <path d="M520 96 H560" stroke="#0E7C6B" stroke-width="1.25" stroke-dasharray="4 3" fill="none"/>
+  <text x="540" y="88" class="t" font-size="9" fill="#0E7C6B">proves</text>
+  <path d="M800 96 H840" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <path d="M800 204 H840" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <path d="M960 124 V140" stroke="#849490" stroke-width="1.25" stroke-dasharray="4 3" fill="none"/>
+  <path d="M960 212 V228" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <path d="M1080 264 H1120" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <path d="M140 272 H1230" stroke="#849490" stroke-width="1" stroke-dasharray="3 3" fill="none"/>
+  <path d="M1230 272 V220" stroke="#849490" stroke-width="1" stroke-dasharray="3 3" fill="none"/>
+</svg>

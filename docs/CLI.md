@@ -291,7 +291,7 @@ secrets, and rate-limit this route at whatever fronts the server.
 ## A full loop
 
 ```sh
-# 1. prove the invariants hold over every input
+# 1. prove every invariant over the model's input space
 decern prove
 
 # 2. run the PDP; this walkthrough is its own caller, so say so
