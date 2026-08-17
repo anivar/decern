@@ -54,9 +54,43 @@ verbatim. CI fails a change under `crates/` or `sdks/` that has neither a fragme
 `no-changelog` label. Check it renders with `./scripts/changelog.sh --preview`.
 
 Write it for whoever reads the release notes, not for the reviewer of the diff: what it does, and
-where the guarantee stops. Never describe it as breaking, and never write migration guidance —
-state the change plainly and keep migration prose proportionate to the pre-1.0 audience. End it with `Authored by @handle`, naming the human
-whose work it is, and `reported by @handle` where someone else found the defect.
+where the guarantee stops. Don't label it breaking, and don't write a migration guide — this is a
+pre-1.0 audience, so state the change plainly and let that be the migration. End it with
+`Authored by @handle`, naming the human whose work it is, and `reported by @handle` where someone
+else found the defect.
+
+## What a change can break without failing
+
+The gates catch a red proof and a broken test. These are the ones that compile, pass, and
+still cost a guarantee:
+
+- **A caller posture is a `CallerAuth` implementation, never a parallel guard.** The trait and
+  the single guard live in `crates/decern-server/src/caller.rs`; each credential posture
+  implements it in its own module (`bearer.rs`, `sig.rs`, `spiffe.rs`) and knows nothing of the
+  others, so the guard dispatches once and a posture added later cannot skip a step by being
+  wired in differently. Adding one means implementing the trait and joining the `ArgGroup` in
+  `main.rs` — not a second `guard()`. The two *workload* postures additionally bind a caller to
+  the principals it may name; a posture that authenticates a workload and does not bind it is a
+  hole.
+- **Some fields must never reach the kernel.** `asserted_by`, the decision subject, and a
+  subject-side challenge are recorded or answered, and are removed from the context before the
+  decision function runs — so a forged one can neither escalate nor deny (`decide.rs`,
+  `mission.rs`; `forged_context_asserted_by_is_stripped_from_ledger_entry` is the pattern to
+  copy). Adding a field a request can set means deciding, explicitly, which side of that line
+  it sits on, and testing the answer.
+- **The record is written before the answer is served.** An unrecordable decision is a `503`,
+  never a bare allow. Any new path that answers must append first.
+- **A claim in a doc is part of the product.** The project's whole pitch is that it is
+  checkable, so a sentence that overstates is a defect the same way a wrong return value is.
+  Say what the code does, name the limit in the same breath, and when two files state the same
+  claim, change both. Prefer deleting a claim to softening it.
+
+## Where not to go
+
+decern decides and records; it does not enforce, issue credentials, or run approval UX. See
+[ROADMAP.md](ROADMAP.md)'s non-goals before starting something large — an OAuth server, a
+gateway, or an approval product inside `decern-serve` will be declined on scope, however good
+the code is.
 
 ## Sign-off (DCO)
 Sign off every commit (`git commit -s`) — see [CONTRIBUTING.md](CONTRIBUTING.md).
