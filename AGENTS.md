@@ -10,16 +10,19 @@ guarantees are the product — a change that weakens one is a regression, even i
   `decern-server` (binary `decern-serve`: a thin, AuthZEN-shaped, fail-closed PDP).
   See [ARCHITECTURE.md](ARCHITECTURE.md) for the crate map and where each contribution area lives.
 - `crates/decern-kernel/model/` — the Cedar policy, schema, and entities the kernel loads.
-- [`.agent/`](.agent/README.md) — how work is done here, method only, no project history:
-  - [`.agent/methods/`](.agent/methods/README.md) — proof-first, small diffs, adversarial
-    review, and how to decompose a change too big for one diff.
-  - [`.agent/methods/graph-orchestration.md`](.agent/methods/graph-orchestration.md) — shaping
-    work that needs more than one loop, with [`workflow-template.js`](.agent/methods/workflow-template.js)
-    as the runnable form.
-  - [`.agent/standards/registry.yaml`](.agent/standards/registry.yaml) — every external spec
-    decern implements, what conformance means for each, and when it was last read.
-  - [`.agent/standards/comments.md`](.agent/standards/comments.md) — the comment standard,
-    enforced by `scripts/verify.sh` wherever a grep can enforce it.
+- [`.agent/`](.agent/README.md) — how work is done here. Method only; no project history,
+  so nothing in it goes stale when the code moves. Which part you want depends on what you
+  are about to do:
+  - Shaping a change: [`methods/`](.agent/methods/README.md), and
+    [`graph-orchestration.md`](.agent/methods/graph-orchestration.md) if it is wide enough to
+    need more than one loop ([`workflow-template.js`](.agent/methods/workflow-template.js) is
+    that shape, runnable).
+  - Touching anything a spec governs:
+    [`standards/registry.yaml`](.agent/standards/registry.yaml). Each entry lists the files
+    that implement it, so `grep -B14 src/sig.rs .agent/standards/registry.yaml` tells you
+    which spec to re-read before you edit.
+  - Writing a comment: [`standards/comments.md`](.agent/standards/comments.md).
+    `scripts/verify.sh` enforces the half a grep can reach.
 
 ## Conventions
 - Rust 2024, toolchain pinned in `rust-toolchain.toml`. Don't bump it casually.
@@ -89,13 +92,12 @@ still cost a guarantee:
   it sits on, and testing the answer.
 - **The record is written before the answer is served.** An unrecordable decision is a `503`,
   never a bare allow. Any new path that answers must append first.
-- **A standard-facing change starts by re-reading the standard.**
-  [`.agent/standards/registry.yaml`](.agent/standards/registry.yaml) lists every spec decern
-  implements, what conformance means here, and the date the text was last read. Specs move,
-  and memory does not track them: fetch the current text before changing the surface, then
-  update that entry — a new caller posture, wire format or header means a new entry, not a
-  silent one. An entry that no longer matches the code is the same defect as a doc that
-  overstates.
+- **A standard-facing change starts by re-reading the spec.** Specs move, and memory does
+  not. [`.agent/standards/registry.yaml`](.agent/standards/registry.yaml) maps each spec to
+  the files that implement it and records when its text was last read: find your file, fetch
+  the url, and update the entry in the same change. A new posture, header or wire format
+  needs a new entry. An entry that no longer matches the code is the same defect as a doc
+  that overstates.
 - **A claim in a doc is part of the product.** The project's whole pitch is that it is
   checkable, so a sentence that overstates is a defect the same way a wrong return value is.
   Say what the code does, name the limit in the same breath, and when two files state the same

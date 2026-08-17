@@ -8,6 +8,9 @@ rule: >-
 standards:
   - name: AuthZEN Authorization API 1.0
     url: https://openid.net/specs/authorization-api-1_0.html
+    surface:
+      - crates/decern-server/src/decide.rs
+      - crates/decern-server/src/routes.rs
     conformance: >-
       decern-serve exposes POST /access/v1/evaluation (and /decide as an alias): AuthZEN 1.0
       request (subject/resource {type,id}, action {name}, optional context) and response
@@ -19,6 +22,8 @@ standards:
 
   - name: OAuth 2.0 Token Exchange (RFC 8693)
     url: https://www.rfc-editor.org/rfc/rfc8693
+    surface:
+      - crates/decern-identity/src/exchange.rs
     conformance: >-
       `decern_identity::exchange` mints an attenuated child credential from a delegator's,
       following §1.1's delegation semantics: `clamp_delegation` narrows the requested scopes
@@ -30,6 +35,9 @@ standards:
 
   - name: OAuth Decision Subject (draft-aravind-oauth-decision-subject-00)
     url: https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/
+    surface:
+      - crates/decern-server/src/decide.rs
+      - crates/decern-ledger/src/lib.rs
     conformance: >-
       A decision records the party it was taken upon as a pseudonymous handle, with an optional
       scheme and purpose, distinct from the requesting subject and from the accountable owner.
@@ -40,12 +48,17 @@ standards:
 
   - name: Cedar policy language
     url: https://docs.cedarpolicy.com/
+    surface:
+      - crates/decern-kernel/src/
+      - crates/decern-kernel/model/
     conformance: >-
       The policy, schema, and entities in model/ are Cedar; the engine is pinned
       to cedar-policy =4.11.2 in Cargo.toml.
 
   - name: Cedar symbolic compiler (cedar-policy-symcc)
     url: https://github.com/cedar-policy/cedar-spec
+    surface:
+      - crates/decern-proof/src/
     conformance: >-
       decern-proof compiles the Cedar model to SMT with cedar-policy-symcc — the
       Lean-verified symbolic compiler — and discharges the nine invariants as policy
@@ -54,6 +67,8 @@ standards:
 
   - name: cvc5 SMT solver
     url: https://cvc5.github.io/
+    surface:
+      - crates/decern-proof/src/
     conformance: >-
       The proof obligations from cedar-policy-symcc are discharged by the cvc5 binary
       on PATH (or $CVC5); the proofs are developed and run against cvc5 1.3.1. An
@@ -62,6 +77,8 @@ standards:
 
   - name: Ed25519 (RFC 8032)
     url: https://www.rfc-editor.org/rfc/rfc8032
+    surface:
+      - crates/decern-crypto/src/
     conformance: >-
       Ledger records, checkpoints and tree heads are signed with Ed25519 (EdDSA over
       edwards25519). Every verification path uses the strict check, which rejects the
@@ -73,6 +90,9 @@ standards:
 
   - name: Certificate Transparency 2.0 (RFC 9162)
     url: https://www.rfc-editor.org/rfc/rfc9162
+    surface:
+      - crates/decern-ledger/src/merkle.rs
+      - crates/decern-ledger/src/sharded.rs
     conformance: >-
       `decern_ledger::merkle` implements MTH, PATH and PROOF/SUBPROOF from §2.1 and the
       verifiers from §2.1.3, over leaves that are the per-record chain hashes, with the
@@ -82,6 +102,10 @@ standards:
 
   - name: JSON Web Signature (RFC 7515)
     url: https://www.rfc-editor.org/rfc/rfc7515
+    surface:
+      - crates/decern-server/src/bearer.rs
+      - crates/decern-server/src/spiffe.rs
+      - crates/decern-server/src/challenge.rs
     conformance: >-
       Standing tokens are compact-serialization JWS verified in `decern-server`:
       `alg` must be `EdDSA` (RFC 8037) and is checked before the signature, per the
@@ -91,6 +115,8 @@ standards:
 
   - name: JSON Canonicalization Scheme (RFC 8785)
     url: https://www.rfc-editor.org/rfc/rfc8785
+    surface:
+      - crates/decern-ledger/src/jcs.rs
     conformance: >-
       `decern_ledger::jcs` implements JCS, and every entry in `Entry::digests` is a
       SHA-256 over a JCS canonical form — so a party holding the same value computes
@@ -102,6 +128,8 @@ standards:
 
   - name: JWT Profile for OAuth 2.0 Access Tokens (RFC 9068)
     url: https://www.rfc-editor.org/rfc/rfc9068
+    surface:
+      - crates/decern-server/src/bearer.rs
     conformance: >-
       `decern-server::bearer` validates access tokens in the §4 order: `typ` is
       `at+jwt`/`application/at+jwt` (case-insensitive per RFC 9110 §8.3.1), `alg`
@@ -114,6 +142,9 @@ standards:
 
   - name: OAuth 2.0 Bearer Token Usage (RFC 6750)
     url: https://www.rfc-editor.org/rfc/rfc6750
+    surface:
+      - crates/decern-server/src/bearer.rs
+      - crates/decern-server/src/spiffe.rs
     conformance: >-
       The `Authorization: Bearer` header field (§2.1) is the only accepted
       presentation; the form-encoded and query-parameter carriers are deliberately
@@ -126,6 +157,8 @@ standards:
 
   - name: Resource Indicators for OAuth 2.0 (RFC 8707)
     url: https://www.rfc-editor.org/rfc/rfc8707
+    surface:
+      - crates/decern-server/src/bearer.rs
     conformance: >-
       `--bearer-audience` names this deployment's resource identifier and a token's
       `aud` must contain it (§2), exactly — no prefix matching, string and array
@@ -134,6 +167,9 @@ standards:
 
   - name: OAuth 2.1 (draft-ietf-oauth-v2-1-15)
     url: https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/
+    surface:
+      - crates/decern-server/src/caller.rs
+      - crates/decern-server/src/bearer.rs
     conformance: >-
       The protected-resource half only: bearer presentation per §5.1.1 (header
       field, scheme case-insensitive) and §5.3 error responses (401 for absent or
@@ -144,6 +180,8 @@ standards:
 
   - name: HTTP Message Signatures (RFC 9421)
     url: https://www.rfc-editor.org/rfc/rfc9421
+    surface:
+      - crates/decern-server/src/sig.rs
     conformance: >-
       `decern-server::sig` verifies only, over a fixed profile rather than the RFC's full
       generality: covered components are `@method`, `@authority`, `@path` and
@@ -157,6 +195,8 @@ standards:
 
   - name: Proof-of-Possession Key Semantics for JWTs (RFC 7800)
     url: https://www.rfc-editor.org/rfc/rfc7800
+    surface:
+      - crates/decern-server/src/sig.rs
     conformance: >-
       The token presented in `Signature-Key` carries a `cnf` claim in its claims set, and its
       `jwk` member names the key the request signature must be made with — so holding the
@@ -168,6 +208,8 @@ standards:
 
   - name: Digest Fields (RFC 9530)
     url: https://www.rfc-editor.org/rfc/rfc9530
+    surface:
+      - crates/decern-server/src/sig.rs
     conformance: >-
       `Content-Digest` is parsed as an RFC 8941 Dictionary and only `sha-256` is accepted;
       the registry's deprecated entries (`md5`, `sha`, `unixsum`, `unixcksum`, `adler`,
@@ -180,6 +222,8 @@ standards:
 
   - name: SPIFFE JWT-SVID
     url: https://github.com/spiffe/spiffe/blob/main/standards/JWT-SVID.md
+    surface:
+      - crates/decern-server/src/spiffe.rs
     conformance: >-
       `decern-server::spiffe` verifies against a JWK Set pinned at startup; bundles are
       configured, never fetched, and SPIFFE Federation and the Workload API are not
@@ -196,6 +240,8 @@ standards:
 
   - name: Signature-Key HTTP header (draft-hardt-httpbis-signature-key)
     url: https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/
+    surface:
+      - crates/decern-server/src/sig.rs
     conformance: >-
       The token binding the signing key travels in `Signature-Key`, and that header is itself
       one of the covered components — so tampering with any claim inside it invalidates the
@@ -205,6 +251,8 @@ standards:
 
   - name: Model Context Protocol (revision 2026-07-28)
     url: https://modelcontextprotocol.io/specification/2026-07-28
+    surface:
+      - examples/mcp/
     conformance: >-
       Implemented ONLY in examples/mcp/server.py — decern's crates carry no MCP
       surface, deliberately. The example is a Streamable HTTP server for the
@@ -226,6 +274,8 @@ standards:
 
   - name: Forward-auth gateway contracts (NGINX auth_request / Traefik forwardAuth / Envoy ext_authz HTTP)
     url: https://nginx.org/en/docs/http/ngx_http_auth_request_module.html
+    surface:
+      - examples/ext_authz_adapter/
     conformance: >-
       Implemented ONLY in examples/ext_authz_adapter — decern's crates carry no
       gateway surface. The adapter answers the shared subrequest contract: 200
