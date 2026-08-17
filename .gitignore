@@ -6,6 +6,11 @@ target/
 *.ledger
 # proptest failure corpus (local)
 **/proptest-regressions/
+# Local working notes, drafts and captures. Same reasoning as the agent tooling below:
+# a scratch directory inside the tree is one `git add -A` away from becoming repository
+# content, and a reviewer should not have to tell a draft from a document.
+scratchpad/
+
 # Local agent tooling. Kept out of the tree deliberately: a contributor should not
 # inherit hooks that shell out to a binary they did not install, and a reviewer
 # auditing this repository should not have to reason about one.
