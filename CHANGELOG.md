@@ -9,22 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.1] - 2026-08-17
 
 The first release published to crates.io since 0.2.0. `cargo install decern-cli decern-server`
-now installs the four-posture server: 0.3.0 was tagged, signed and released on GitHub but never
-reached the registry, so its caller-authentication work — RFC 9421 signed requests, SPIFFE
-JWT-SVIDs, and the bind that stops a workload speaking for anyone else — arrives here for anyone
-installing the usual way. See the [0.3.0 notes](https://github.com/anivar/decern/releases/tag/v0.3.0) for that work
-and its limits.
+now installs the server that establishes its own callers: 0.3.0 was tagged, signed and released
+on GitHub but never reached the registry, so its caller-authentication work — RFC 9421 signed
+requests, SPIFFE JWT-SVIDs, and the bind that stops a workload speaking for anyone else —
+arrives here for anyone installing the usual way. See the
+[0.3.0 notes](https://github.com/anivar/decern/releases/tag/v0.3.0) for that work and its limits.
 
 ### Changed
 
-- **crates.io publishes by OIDC, with no stored token.** The nine crates authenticate the way
+- **crates.io publishes by OIDC, with no stored token.** The crates authenticate the way
   the PyPI and npm packages already do: the registry mints a credential for the run, and the job
   revokes it at the end. Trust is pinned per crate to this repository, the workflow filename and
   the `crates-io` environment. The 0.2.0 release stopped mid-publish on a token scoped
   `publish-new`, which does not cover new versions of crates that already exist; a minted
   credential cannot fall out of scope, because it does not outlive the run. Authored by @anivar.
-- **The diagrams and the website describe the four-posture server.** The decision-flow and
-  architecture diagrams name all four caller postures, the workload bind and `caller_mismatch`,
+- **The diagrams and the website describe the caller postures.** The decision-flow and
+  architecture diagrams name every posture, the workload bind and `caller_mismatch`,
   proofs taken over the model rather than the deployment, and `--anchor` rather than the chain
   alone as what detects a dropped tail. Editable SVG sources ship beside the PNGs.
   Authored by @anivar.
