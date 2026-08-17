@@ -6,10 +6,11 @@
      discussed in an issue first (see CONTRIBUTING.md). -->
 
 ## Checklist
-- [ ] `./scripts/verify.sh` passes (build · test · cvc5 proofs · clippy `-D warnings` · fmt · docs · cargo-deny · standards guard)
+- [ ] `./scripts/verify.sh` passes (build · test · cvc5 proofs · clippy `-D warnings` · fmt · docs · cargo-deny · no-lineage · standards)
 - [ ] If this touches authorization semantics (kernel decision, model, invariants), `decern prove` stays green — and a new guarantee ships with its negative control
 - [ ] A user-visible change carries an entry in [`changelog.d/`](../changelog.d/README.md) — or the `no-changelog` label, if a reader would notice nothing
 - [ ] Commits are DCO signed off (`git commit -s`)
 - [ ] Comments follow [`.agent/standards/comments.md`](../.agent/standards/comments.md)
+- [ ] If this touches a standard-facing surface, `python3 scripts/standards.py for <path>` was used to ground the change and the entry's `verified` date was updated
 
 <!-- Agent-authored PRs are welcome under the same rules — a human sponsors the change and signs off the DCO. -->
