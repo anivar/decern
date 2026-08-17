@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1384" height="360" viewBox="0 0 1384 360" role="img" aria-label="decern decision flow">
+  <rect width="1384" height="360" fill="#F5F7F6"/>
+  <style><![CDATA[
+    .t { font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; }
+  ]]></style>
+
+  <circle cx="70" cy="160" r="36" fill="#D7E8E3" stroke="#0E7C6B" stroke-width="2"/>
+  <text x="70" y="156" text-anchor="middle" class="t" font-size="12" font-weight="600" fill="#0C0F0E">Agent</text>
+  <text x="70" y="172" text-anchor="middle" class="t" font-size="11" fill="#5E6B67">/ PEP</text>
+
+  <path d="M106 160 H148" stroke="#5E6B67" stroke-width="1.5" fill="none"/>
+
+  <rect x="148" y="118" width="150" height="84" rx="6" fill="#FFFFFF" stroke="#0C0F0E" stroke-width="1.5"/>
+  <text x="223" y="145" text-anchor="middle" class="t" font-size="12" font-weight="600" fill="#0C0F0E">decern-serve</text>
+  <text x="223" y="165" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">POST</text>
+  <text x="223" y="180" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">/access/v1/evaluation</text>
+
+  <path d="M298 160 H340" stroke="#5E6B67" stroke-width="1.5" fill="none"/>
+
+  <rect x="340" y="88" width="220" height="144" rx="6" fill="#FFFFFF" stroke="#0C0F0E" stroke-width="1.5"/>
+  <text x="450" y="112" text-anchor="middle" class="t" font-size="12" font-weight="600" fill="#0C0F0E">Caller established</text>
+  <text x="450" y="134" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">bearer / signed-request</text>
+  <text x="450" y="150" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">SPIFFE / --trust-proxy</text>
+  <text x="450" y="172" text-anchor="middle" class="t" font-size="9" fill="#849490">workload postures bind names</text>
+  <text x="450" y="188" text-anchor="middle" class="t" font-size="9" fill="#849490">unless listed in --pep</text>
+  <text x="450" y="210" text-anchor="middle" class="t" font-size="9" fill="#0E7C6B">one posture required to start</text>
+
+  <path d="M450 232 V268" stroke="#B85C5C" stroke-width="1.5" fill="none"/>
+  <rect x="330" y="268" width="240" height="52" rx="4" fill="#F8EAEA" stroke="#B85C5C" stroke-width="1.25"/>
+  <text x="450" y="288" text-anchor="middle" class="t" font-size="10" fill="#8B3A3A">401 / 403</text>
+  <text x="450" y="304" text-anchor="middle" class="t" font-size="9" fill="#8B3A3A">no verified caller, or caller_mismatch</text>
+
+  <path d="M560 160 H602" stroke="#5E6B67" stroke-width="1.5" fill="none"/>
+
+  <rect x="602" y="118" width="168" height="84" rx="6" fill="#EEF0F8" stroke="#4A5480" stroke-width="1.5"/>
+  <text x="686" y="148" text-anchor="middle" class="t" font-size="12" font-weight="600" fill="#0C0F0E">Proven kernel</text>
+  <text x="686" y="168" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Cedar + 9 cvc5</text>
+  <text x="686" y="184" text-anchor="middle" class="t" font-size="9" fill="#849490">invariants (model)</text>
+
+  <path d="M770 160 H802" stroke="#5E6B67" stroke-width="1.5" fill="none"/>
+
+  <polygon points="862,112 922,160 862,208 802,160" fill="#FFF8E8" stroke="#A67C2A" stroke-width="1.5"/>
+  <text x="862" y="156" text-anchor="middle" class="t" font-size="11" font-weight="600" fill="#0C0F0E">Decision</text>
+  <text x="862" y="172" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">allow/deny</text>
+
+  <path d="M922 160 H954" stroke="#5E6B67" stroke-width="1.5" fill="none"/>
+  <text x="938" y="150" text-anchor="middle" class="t" font-size="9" fill="#5E6B67">record</text>
+
+  <rect x="954" y="118" width="150" height="84" rx="6" fill="#FFFFFF" stroke="#0C0F0E" stroke-width="1.5"/>
+  <text x="1029" y="145" text-anchor="middle" class="t" font-size="12" font-weight="600" fill="#0C0F0E">Ledger</text>
+  <text x="1029" y="165" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Ed25519 hash-chain</text>
+  <text x="1029" y="181" text-anchor="middle" class="t" font-size="9" fill="#849490">anchor detects drops</text>
+
+  <path d="M1104 140 H1140" stroke="#0E7C6B" stroke-width="1.5" fill="none"/>
+  <rect x="1140" y="118" width="200" height="40" rx="4" fill="#E4F3EF" stroke="#0E7C6B" stroke-width="1.25"/>
+  <text x="1240" y="143" text-anchor="middle" class="t" font-size="10" fill="#0A5B4E">200 - served + recorded</text>
+
+  <path d="M1104 180 H1140" stroke="#B85C5C" stroke-width="1.5" fill="none"/>
+  <rect x="1140" y="168" width="200" height="40" rx="4" fill="#F8EAEA" stroke="#B85C5C" stroke-width="1.25"/>
+  <text x="1240" y="193" text-anchor="middle" class="t" font-size="10" fill="#8B3A3A">503 - never a bare allow</text>
+
+  <path d="M1029 202 V248" stroke="#849490" stroke-width="1.25" stroke-dasharray="4 3" fill="none"/>
+  <ellipse cx="1029" cy="278" rx="118" ry="28" fill="#FFFFFF" stroke="#849490" stroke-width="1.25" stroke-dasharray="4 3"/>
+  <text x="1029" y="274" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">decern verify</text>
+  <text x="1029" y="288" text-anchor="middle" class="t" font-size="9" fill="#849490">chain + optional --anchor</text>
+</svg>
