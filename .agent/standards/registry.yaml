@@ -12,8 +12,8 @@ standards:
       decern-serve exposes POST /access/v1/evaluation (and /decide as an alias): AuthZEN 1.0
       request (subject/resource {type,id}, action {name}, optional context) and response
       (boolean decision; any reasons under context). Reasons carry named policy ids on the
-      builtin model, and the endpoint sits behind the caller posture (bearer
-      validation or a declared front), which AuthZEN leaves to the deployment.
+      builtin model, and the endpoint sits behind whichever caller posture the
+      deployment names, which AuthZEN leaves to the deployment.
       Metadata discovery (access_evaluation_endpoint) is tracked as an open
       issue. Verified against the spec 2026-08-09.
 
@@ -141,6 +141,67 @@ standards:
       decern is not an authorization server and implements none of the grant
       machinery. Draft revision -15 read 2026-08-08; the draft moves, so re-read it
       before touching this surface.
+
+  - name: HTTP Message Signatures (RFC 9421)
+    url: https://www.rfc-editor.org/rfc/rfc9421
+    conformance: >-
+      `decern-server::sig` verifies only, over a fixed profile rather than the RFC's full
+      generality: covered components are `@method`, `@authority`, `@path` and
+      `signature-key`, with `content-digest` added on any request carrying a body. An
+      unrecognised `Signature-Input` parameter is refused rather than ignored (§2.3), so a
+      signer cannot claim a property — `nonce`, `tag` — that nothing checked. `created` must
+      fall inside a 60s freshness window with 5s of permitted skew ahead. §7.2.2 raises
+      signature replay and §1.4 assigns replay handling to the application profile; this
+      profile does not keep a nonce cache, so a verbatim replay verifies again inside the
+      window (tracked as an open issue). Verified against the spec 2026-08-17.
+
+  - name: Proof-of-Possession Key Semantics for JWTs (RFC 7800)
+    url: https://www.rfc-editor.org/rfc/rfc7800
+    conformance: >-
+      The token presented in `Signature-Key` carries a `cnf` claim in its claims set, and its
+      `jwk` member names the key the request signature must be made with — so holding the
+      token is not sufficient. Only the `jwk` confirmation member is implemented; `jwe`,
+      `kid` and `jku` are not, and `jku` in particular would mean fetching key material,
+      which no posture here does. The RFC leaves the proof mechanism to the protocol, and the
+      mechanism here is the RFC 9421 signature over the request. Verified against the spec
+      2026-08-17.
+
+  - name: Digest Fields (RFC 9530)
+    url: https://www.rfc-editor.org/rfc/rfc9530
+    conformance: >-
+      `Content-Digest` is parsed as an RFC 8941 Dictionary and only `sha-256` is accepted;
+      the registry's deprecated entries (`md5`, `sha`, `unixsum`, `unixcksum`, `adler`,
+      `crc32c`) are not. The field covers content bytes as transmitted, and decern checks it
+      against the same buffered bytes the handler will see rather than a re-serialization.
+      The RFC allows a recipient to ignore digests and leaves stricter policy to the
+      application: here the digest is a required covered component on a bodied request, so a
+      captured signature cannot authorize a different body at the same path. Verified against
+      the spec 2026-08-17.
+
+  - name: SPIFFE JWT-SVID
+    url: https://github.com/spiffe/spiffe/blob/main/standards/JWT-SVID.md
+    conformance: >-
+      `decern-server::spiffe` verifies against a JWK Set pinned at startup; bundles are
+      configured, never fetched, and SPIFFE Federation and the Workload API are not
+      implemented. §2.1 permits nine algorithms and requires a validator to reject any other
+      `alg`; of those, only `ES256` is accepted, because `RS*`/`PS*` need a crate carrying
+      an unpatched key-recovery advisory this workspace's supply-chain gate refuses. EdDSA is
+      not an option: it is outside §2.1's closed set, so accepting it would mean accepting a
+      token every conformant validator must reject. The JOSE header set is closed to
+      `alg`/`kid`/`typ` per §2, anything else refused rather than ignored. §3 requires only
+      `sub`, `aud` and `exp`, so the issuer recorded is derived from the trust domain inside
+      the verified `sub` rather than read from a claim. Trust domains match exactly; `kid` is
+      mandatory on bundle entries (§6.1) even though optional on the token, and an ambiguous
+      selection is refused rather than guessed. Verified against the spec 2026-08-17.
+
+  - name: Signature-Key HTTP header (draft-hardt-httpbis-signature-key)
+    url: https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/
+    conformance: >-
+      The token binding the signing key travels in `Signature-Key`, and that header is itself
+      one of the covered components — so tampering with any claim inside it invalidates the
+      outer signature. That is why the token's own JWS signature is not separately verified:
+      the outer signature already covers it, and a second check would establish nothing the
+      first does not. A draft, so re-read it before touching this surface.
 
   - name: Model Context Protocol (revision 2026-07-28)
     url: https://modelcontextprotocol.io/specification/2026-07-28
