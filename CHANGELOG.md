@@ -12,7 +12,8 @@ The first release published to crates.io since 0.2.0. `cargo install decern-cli 
 now installs the four-posture server: 0.3.0 was tagged, signed and released on GitHub but never
 reached the registry, so its caller-authentication work — RFC 9421 signed requests, SPIFFE
 JWT-SVIDs, and the bind that stops a workload speaking for anyone else — arrives here for anyone
-installing the usual way. See the 0.3.0 notes below for that work and its limits.
+installing the usual way. See the [0.3.0 notes](https://github.com/anivar/decern/releases/tag/v0.3.0) for that work
+and its limits.
 
 ### Changed
 
