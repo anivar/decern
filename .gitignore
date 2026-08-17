@@ -6,6 +6,11 @@ target/
 *.ledger
 # proptest failure corpus (local)
 **/proptest-regressions/
+# Bytecode from scripts/standards.py, which verify.sh runs and agents import. Regenerable,
+# and one `git add -A` away from being committed.
+__pycache__/
+*.pyc
+
 # Local working notes, drafts and captures. Same reasoning as the agent tooling below:
 # a scratch directory inside the tree is one `git add -A` away from becoming repository
 # content, and a reviewer should not have to tell a draft from a document.

@@ -6,6 +6,7 @@ has been changed. Method only: no project knowledge, no history, no accumulated 
 in this tree.
 
 Today that is `methods/` — how to make a change, and how to shape one wide enough to need
-shaping — and `standards/`, the registry of external specs decern implements and the rule for
-staying conformant. Read the current spec before you touch its surface, and verify before you
-commit (see `../AGENTS.md`).
+shaping (including grounding parallel work from the standards registry) — and `standards/`,
+the registry of external specs decern implements and the rule for staying conformant. Read
+the current spec before you touch its surface, and verify before you commit (see
+`../AGENTS.md`). Lookup and integrity: `python3 scripts/standards.py`.

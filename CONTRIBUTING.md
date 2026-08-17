@@ -13,7 +13,9 @@ Every change must pass the canonical verify script before you open a PR:
 
 It runs build, test, the cvc5 proofs, clippy, fmt, docs, cargo-deny, and the no-lineage / standards guard — the
 same gates CI runs. Prerequisites: the pinned toolchain (`rust-toolchain.toml`), **cargo-deny**
-(`cargo install cargo-deny`), and **cvc5** on `PATH` (or `$CVC5`) for the proof tests.
+(`cargo install cargo-deny`), **python3** for the standards-registry check, and **cvc5** on
+`PATH` (or `$CVC5`) for the proof tests. Only cvc5 is proof-specific — the rest are needed
+even with `--skip-proofs`.
 
 While iterating on a change that cannot reach authorization semantics — an SDK, a doc, CLI
 output — you can run every other gate without installing a solver first:

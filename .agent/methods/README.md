@@ -28,3 +28,8 @@ before the first edit than after. [`graph-orchestration.md`](graph-orchestration
 which dependencies are real, grounding parallel work once instead of per-branch, keeping concurrent
 edits from overwriting each other, and the difference between a gate that ran and a gate that
 checked anything. [`workflow-template.js`](workflow-template.js) is that shape, runnable.
+
+When the change set intersects a standard-facing surface, ground from the registry first —
+[`standards-graph.md`](standards-graph.md) and
+[`workflow-template-standards.js`](workflow-template-standards.js). 
+`python3 scripts/standards.py for <path>…` builds the shared brief and dimensions once.

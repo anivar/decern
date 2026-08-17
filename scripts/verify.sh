@@ -78,6 +78,10 @@ step "fmt"            cargo fmt --all -- --check
 step "docs"           env RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps
 step "supply-chain"   cargo deny check
 step "no-lineage"     no_lineage
+# Spec registry integrity: every surface path exists, every watched server module is
+# listed or explicitly non_surface, every entry carries a machine-readable verified date.
+# This is what turns `.agent/standards/registry.yaml` into something an agent graph can ground on.
+step "standards"      python3 scripts/standards.py check
 
 echo
 if [ "${skip_proofs}" -eq 1 ]; then

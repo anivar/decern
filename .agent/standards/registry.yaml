@@ -1,13 +1,30 @@
 # SPDX-License-Identifier: Apache-2.0
 # External standards decern implements or aligns with.
+#
+# Machine interface: python3 scripts/standards.py {check|for|brief|graph}
+# Graph shape:       .agent/methods/standards-graph.md
+#
+# Every entry needs verified: YYYY-MM-DD (last read of the url) or pinned (version
+# pin in Cargo / tool version is the claim). Update it in the same change that
+# touches a surface.
 
 rule: >-
   Before implementing or changing any standard-facing surface, fetch and READ
   the current spec at its url. Never work from memory — specs move.
 
+# Deliberately not mapped to an external spec. A new file under a watched tree that
+# is neither here nor in a surface list fails scripts/standards.py check.
+non_surface:
+  - crates/decern-server/src/main.rs
+  - crates/decern-server/src/mission.rs
+  - crates/decern-server/src/record.rs
+  - crates/decern-server/src/audit.rs
+  - crates/decern-server/src/testutil.rs
+
 standards:
   - name: AuthZEN Authorization API 1.0
     url: https://openid.net/specs/authorization-api-1_0.html
+    verified: 2026-08-09
     surface:
       - crates/decern-server/src/decide.rs
       - crates/decern-server/src/routes.rs
@@ -22,6 +39,7 @@ standards:
 
   - name: OAuth 2.0 Token Exchange (RFC 8693)
     url: https://www.rfc-editor.org/rfc/rfc8693
+    verified: 2026-08-08
     surface:
       - crates/decern-identity/src/exchange.rs
     conformance: >-
@@ -35,6 +53,7 @@ standards:
 
   - name: OAuth Decision Subject (draft-aravind-oauth-decision-subject-00)
     url: https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/
+    verified: 2026-08-08
     surface:
       - crates/decern-server/src/decide.rs
       - crates/decern-ledger/src/lib.rs
@@ -48,6 +67,7 @@ standards:
 
   - name: Cedar policy language
     url: https://docs.cedarpolicy.com/
+    verified: pinned
     surface:
       - crates/decern-kernel/src/
       - crates/decern-kernel/model/
@@ -57,6 +77,7 @@ standards:
 
   - name: Cedar symbolic compiler (cedar-policy-symcc)
     url: https://github.com/cedar-policy/cedar-spec
+    verified: pinned
     surface:
       - crates/decern-proof/src/
     conformance: >-
@@ -67,6 +88,7 @@ standards:
 
   - name: cvc5 SMT solver
     url: https://cvc5.github.io/
+    verified: pinned
     surface:
       - crates/decern-proof/src/
     conformance: >-
@@ -77,6 +99,7 @@ standards:
 
   - name: Ed25519 (RFC 8032)
     url: https://www.rfc-editor.org/rfc/rfc8032
+    verified: 2026-08-08
     surface:
       - crates/decern-crypto/src/
     conformance: >-
@@ -90,6 +113,7 @@ standards:
 
   - name: Certificate Transparency 2.0 (RFC 9162)
     url: https://www.rfc-editor.org/rfc/rfc9162
+    verified: 2026-08-08
     surface:
       - crates/decern-ledger/src/merkle.rs
       - crates/decern-ledger/src/sharded.rs
@@ -102,6 +126,7 @@ standards:
 
   - name: JSON Web Signature (RFC 7515)
     url: https://www.rfc-editor.org/rfc/rfc7515
+    verified: 2026-08-08
     surface:
       - crates/decern-server/src/bearer.rs
       - crates/decern-server/src/spiffe.rs
@@ -115,6 +140,7 @@ standards:
 
   - name: JSON Canonicalization Scheme (RFC 8785)
     url: https://www.rfc-editor.org/rfc/rfc8785
+    verified: 2026-08-08
     surface:
       - crates/decern-ledger/src/jcs.rs
     conformance: >-
@@ -128,6 +154,7 @@ standards:
 
   - name: JWT Profile for OAuth 2.0 Access Tokens (RFC 9068)
     url: https://www.rfc-editor.org/rfc/rfc9068
+    verified: 2026-08-08
     surface:
       - crates/decern-server/src/bearer.rs
     conformance: >-
@@ -142,6 +169,7 @@ standards:
 
   - name: OAuth 2.0 Bearer Token Usage (RFC 6750)
     url: https://www.rfc-editor.org/rfc/rfc6750
+    verified: 2026-08-08
     surface:
       - crates/decern-server/src/bearer.rs
       - crates/decern-server/src/spiffe.rs
@@ -157,6 +185,7 @@ standards:
 
   - name: Resource Indicators for OAuth 2.0 (RFC 8707)
     url: https://www.rfc-editor.org/rfc/rfc8707
+    verified: 2026-08-08
     surface:
       - crates/decern-server/src/bearer.rs
     conformance: >-
@@ -167,6 +196,7 @@ standards:
 
   - name: OAuth 2.1 (draft-ietf-oauth-v2-1-15)
     url: https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/
+    verified: 2026-08-08
     surface:
       - crates/decern-server/src/caller.rs
       - crates/decern-server/src/bearer.rs
@@ -180,6 +210,7 @@ standards:
 
   - name: HTTP Message Signatures (RFC 9421)
     url: https://www.rfc-editor.org/rfc/rfc9421
+    verified: 2026-08-17
     surface:
       - crates/decern-server/src/sig.rs
     conformance: >-
@@ -195,6 +226,7 @@ standards:
 
   - name: Proof-of-Possession Key Semantics for JWTs (RFC 7800)
     url: https://www.rfc-editor.org/rfc/rfc7800
+    verified: 2026-08-17
     surface:
       - crates/decern-server/src/sig.rs
     conformance: >-
@@ -208,6 +240,7 @@ standards:
 
   - name: Digest Fields (RFC 9530)
     url: https://www.rfc-editor.org/rfc/rfc9530
+    verified: 2026-08-17
     surface:
       - crates/decern-server/src/sig.rs
     conformance: >-
@@ -222,6 +255,7 @@ standards:
 
   - name: SPIFFE JWT-SVID
     url: https://github.com/spiffe/spiffe/blob/main/standards/JWT-SVID.md
+    verified: 2026-08-17
     surface:
       - crates/decern-server/src/spiffe.rs
     conformance: >-
@@ -240,6 +274,7 @@ standards:
 
   - name: Signature-Key HTTP header (draft-hardt-httpbis-signature-key)
     url: https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/
+    verified: 2026-08-17
     surface:
       - crates/decern-server/src/sig.rs
     conformance: >-
@@ -251,6 +286,7 @@ standards:
 
   - name: Model Context Protocol (revision 2026-07-28)
     url: https://modelcontextprotocol.io/specification/2026-07-28
+    verified: 2026-08-09
     surface:
       - examples/mcp/
     conformance: >-
@@ -274,6 +310,7 @@ standards:
 
   - name: Forward-auth gateway contracts (NGINX auth_request / Traefik forwardAuth / Envoy ext_authz HTTP)
     url: https://nginx.org/en/docs/http/ngx_http_auth_request_module.html
+    verified: 2026-08-09
     surface:
       - examples/ext_authz_adapter/
     conformance: >-
