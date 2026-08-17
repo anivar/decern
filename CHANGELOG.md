@@ -76,8 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validation, a leaked token alone is not enough here: it must also be signed, per
   request, by the key it is bound to. Verification is against configured keys only —
   no live key discovery, no outbound HTTP client — and an agent identifier with no
-  configured key is refused before any cryptography runs. Conflicts with
-  `--bearer-issuer`/`--trust-proxy`; one posture is required to start. Authored by
+  configured key is refused before any cryptography runs. One posture per deployment:
+  one is required to start, and naming a second is a startup failure. Authored by
   @anivar.
 - **`decern-serve` can establish its caller from a SPIFFE JWT-SVID.**
   `--spiffe-trust-domain TRUST_DOMAIN=PATH` (repeatable) and `--spiffe-audience` make the
