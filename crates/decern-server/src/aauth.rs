@@ -405,6 +405,17 @@ pub(crate) fn authenticate(
             "agent token is issued in the future".into(),
         ));
     }
+    // The draft lists `exp` and `iat` among its required claims and does not name `nbf`, but
+    // a JWT may carry registered claims beyond a profile's required set, and there an `nbf`
+    // keeps its RFC 7519 meaning. A provider staging activation would otherwise have its
+    // token honoured before the window it chose. Refused rather than skipped when malformed,
+    // for the reason both sibling postures give: silently ignoring it admits a token that is
+    // not yet valid.
+    if let Some(nbf) = numeric_date(&claims, "nbf")?
+        && (now_secs as f64) < nbf
+    {
+        return Err(Denied::Invalid("agent token is not yet valid".into()));
+    }
     // Shape only. A `ps` names a Person Server, which this deployment does not consult:
     // identity-based access applies local policy and never asks a third party.
     if let Some(ps) = claims.get("ps").and_then(Value::as_str)
@@ -433,9 +444,13 @@ pub(crate) fn authenticate(
     let confirmed = sig::jwk_to_verifying_key(&cnf.jwk)?;
 
     let content_digest = sig::bind_content_digest(components, req)?;
+    // Normalized the same way `sig.rs` does, per RFC 9421 §2.2.1 and §2.2.3. A client that
+    // signed an uppercase method would otherwise get an opaque verification failure on a
+    // stack that presented the method in another casing.
+    let method = req.method.to_ascii_uppercase();
     let authority = req.authority.to_ascii_lowercase();
     let covered = sig::Covered {
-        method: req.method,
+        method: &method,
         authority: &authority,
         path: req.path,
         content_digest,
@@ -862,6 +877,55 @@ mod tests {
         let err = authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
             .expect_err("should refuse");
         assert!(matches!(err, Denied::Invalid(ref d) if d.contains("issued in the future")));
+    }
+
+    #[test]
+    fn a_token_that_is_not_yet_valid_is_refused() {
+        let (provider, agent) = keys();
+        let f = fixture_with(
+            &provider,
+            &agent,
+            |_| {},
+            |c| c["nbf"] = json!((NOW + 60) as f64),
+        );
+        let err = authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
+            .expect_err("should refuse");
+        assert!(matches!(err, Denied::Invalid(ref d) if d.contains("not yet valid")));
+    }
+
+    #[test]
+    fn a_past_nbf_is_accepted() {
+        let (provider, agent) = keys();
+        let f = fixture_with(
+            &provider,
+            &agent,
+            |_| {},
+            |c| c["nbf"] = json!((NOW - 60) as f64),
+        );
+        authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
+            .expect("a past nbf is valid");
+    }
+
+    /// Refused, not skipped: a malformed `nbf` that read as absent would admit a token its
+    /// provider staged for later.
+    #[test]
+    fn a_non_numeric_nbf_is_refused_rather_than_ignored() {
+        let (provider, agent) = keys();
+        let f = fixture_with(&provider, &agent, |_| {}, |c| c["nbf"] = json!("soon"));
+        let err = authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
+            .expect_err("should refuse");
+        assert!(matches!(err, Denied::Invalid(ref d) if d.contains("nbf is not a number")));
+    }
+
+    /// A lowercase method must still verify: the signature base normalizes it the way
+    /// `sig.rs` does, so signer and verifier agree.
+    #[test]
+    fn a_lowercase_method_still_verifies() {
+        let (provider, agent) = keys();
+        let f = post_fixture(&provider, &agent);
+        let mut r = req(&f, AUTHORITY);
+        r.method = "post";
+        authenticate(&r, &cfg(&provider.verifying_key()), NOW).expect("should authenticate");
     }
 
     #[test]

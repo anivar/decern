@@ -182,7 +182,7 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | `--bearer-scope <SCOPE>` | A scope every token must carry. Repeatable; all are required, and a verified token missing one is refused `403 insufficient_scope`. Omit for no scope check. |
 | `--signed-agent-key <ID=HEX>` | An agent identifier this deployment recognizes and the one Ed25519 key it may sign requests with. Repeatable: one entry per agent, and a key rollover is a second entry rather than an atomic swap. Turns on RFC 9421 + RFC 7800 sender-constrained request validation for the guarded routes; requires `--signed-audience`. One posture per deployment: naming a second is a startup failure. An identifier with no entry here cannot authenticate under this mode, by design: keys are configured, never fetched. |
 | `--signed-audience <URI>` | This deployment's resource identifier, which a signed request's bound token's `aud` must contain. Required with `--signed-agent-key`, same role as `--bearer-audience`. |
-| `--pep <ID>` | A workload caller that may name principals other than itself. Repeatable. Applies to `--signed-agent-key` and `--spiffe-trust-domain`; the id must be one this deployment can already authenticate, since a PEP still has to prove who it is. Omit to bind every workload caller to itself. |
+| `--pep <ID>` | A workload caller that may name principals other than itself. Repeatable. Applies to every workload posture — `--signed-agent-key`, `--spiffe-trust-domain` and `--aauth-provider`; the id must be one this deployment can already authenticate, since a PEP still has to prove who it is. Omit to bind every workload caller to itself. |
 | `--aauth-provider <ISS=PATH>` | An AAuth agent provider this deployment accepts, and the JWK Set holding the Ed25519 keys it signs agent tokens with. Repeatable: one entry per provider. Read once at startup and refused there if it carries no usable signing key or an entry without a `kid`. Turns on AAuth agent-token validation; requires `--aauth-audience`. Keys are configured, never fetched: the draft's `dwk` discovery is deliberately not performed, so an agent whose provider is not named here is refused before any cryptography runs. |
 | `--aauth-audience <AUTHORITY>` | This deployment's authority, which a request's `Host` must equal. Required with `--aauth-provider`, and not optional — an agent token carries no `aud`, so without it a request signed for one deployment would verify at another pinning the same provider. |
 | `--spiffe-trust-domain <TRUST_DOMAIN=PATH>` | A SPIFFE trust domain this deployment accepts, and the JWK Set holding its JWT-SVID signing keys. Repeatable: one entry per federated domain. Read once at startup and refused there if it carries no `use: jwt-svid` key, an entry without a `kid`, or a key this deployment cannot verify with. Turns on JWT-SVID validation; requires `--spiffe-audience`. |
@@ -273,9 +273,10 @@ field the gateway asserts, and the AuthZEN subject is not read from the token's 
 enforcement point asking about other parties is the entire job. `--trust-proxy` has no verified
 identity to bind in the first place.
 
-The two workload postures are the opposite. A signed-request or SPIFFE caller may only name
-itself as subject, approver, stored approver on terminate, and directory principal; a mismatch
-is `403 caller_mismatch`. `--pep` is the way out for a workload that genuinely is a gateway.
+The workload postures are the opposite. A signed-request, SPIFFE or AAuth caller may only
+name itself as subject, approver, stored approver on terminate, and directory principal; a
+mismatch is `403 caller_mismatch`. `--pep` is the way out for a workload that genuinely is
+a gateway.
 
 The corollary is easy to miss: a bearer token issued to a workload is a PEP credential, and
 carries no bind at all. If your caller is a workload, give it a workload posture.
