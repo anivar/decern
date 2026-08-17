@@ -16,7 +16,11 @@ Runnable end to end, tested in CI, never published as crates.
   same token refused when the signature comes from a different key.
 - [`spiffe/`](spiffe/) — a caller identified by a SPIFFE JWT-SVID, verified against a trust
   bundle pinned at startup. No SPIRE daemon: the example mints its own ES256 SVIDs.
+- [`aauth/`](aauth/) — an AAuth agent token verified against provider keys pinned at startup,
+  with the request signed by the key the token's `cnf` confirms. Identity-based access only,
+  and it shows the two places decern's profile is stricter than the draft: providers are never
+  discovered, and a request with a body must cover its digest.
 
 The first two integrations are a pair: same decision point, consulted from inside the tool
-server or from the gateway in front of it. The last two are about the other axis — not where
-the decision point sits, but how much a caller has to prove to reach it.
+server or from the gateway in front of it. The rest are about the other axis — not where the
+decision point sits, but how much a caller has to prove to reach it.

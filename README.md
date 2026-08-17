@@ -207,7 +207,7 @@ consent, log pinning, `--trust-proxy`, replay, and what the proofs actually cove
 
 - **How far a credential constrains the content depends on the posture.** Bearer validation
   and `--trust-proxy` do not constrain it at all, because a gateway legitimately asks about
-  other parties — so a bearer token issued to a workload carries no bind. The two workload
+  other parties — so a bearer token issued to a workload carries no bind. The workload
   postures bind a caller to itself unless it is listed in `--pep`. `--require-mission` is what
   makes decision approval server-derived, and `/audit/v1/subject` stays outside the guard on
   purpose, so treat handles as secrets and rate-limit that route at whatever fronts the
