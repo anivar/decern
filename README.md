@@ -97,22 +97,24 @@ Every decision lands in an append-only, Ed25519-signed, hash-chained ledger, and
 **only if its record was written** — an unrecordable decision returns 503, never a bare
 allow. A crash-torn tail heals; truncating committed history is detected.
 
-<p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: one of four postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p> Here an
-unrecognized caller is refused a `MoveMoney` — the money-gate forbid fires by name, no
-`sponsor` is derived for a caller the directory does not know, the exact request is
-digest-bound, and `prev` is the chain link:
+<p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: one of four postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p>
+
+Here a caller in one tenant is refused a `Read` on another's resource — the tenant-isolation
+forbid fires by name, the `sponsor` resolves to the principal ultimately answerable, the exact
+request is digest-bound, and `prev` is the chain link:
 
 ```json
-{"entry":{"seq":1,"ts_ms":1786245929000,
-          "subject_type":"Principal","subject_id":"agent-7",
-          "action":"MoveMoney","resource_type":"Resource","resource_id":"account9",
-          "context":{"now":1786245929},"decision":false,"reasons":["F-money"],
+{"entry":{"seq":1,"ts_ms":1786928909000,
+          "subject_type":"Principal","subject_id":"corpB",
+          "action":"Read","resource_type":"Resource","resource_id":"claim1",
+          "context":{"now":1786928909},"decision":false,"reasons":["F-tenant"],
+          "sponsor":{"kind":"Principal","id":"corpB"},
           "digests":{"authority":"cb03c58cb1f689cc270f99791138dbd913d25bd50c6ee2f70a41206ad795f9be",
-                     "parameters":"5b86c3bfd81d4092515553da5c4063222554e8e7b5a053271699e78b4628f04b"}},
- "prev":   "78d312d1b88a75d8441e19920408e3a8438ec2d547e7b5496636ba37a4bed8a6",
- "hash":   "7bd414059c27b912b87ba359d362830d81a63163c06c7d9ca0c7f5d0ac335205",
- "sig_b64":"gdyqqGJQB75EFgzBhAt2WVSGMucdyCeECYsCqiMx8QugQ6+zmeQOSBWsxJq7jhEZkO2pZsB3K+88E0bjf+l2CQ==",
- "kid":    "46a941e7d9536df4922254a6a3cf983bd90ea3d2264c44390257adca00468fff"}
+                     "parameters":"7d7d40f9016baf94f82ca2281d46c67fd6cea62d2f8c782c5d34978946c185ed"}},
+ "prev":   "252398ebc68779cd1a8c12cdacea6f9bdfa749bdddc665de2b9d2ec010f10725",
+ "hash":   "f43ecf0babe9c9e1cc6473bb0ebedda458b27776ddb674dd0a8e42b3ac92ebf2",
+ "sig_b64":"Aq2OkDXAHh4S+pbrmJv4YouAk4b5y7MnCmoE/r424YF6tMNnjsywTq0d9U2v4QLeYdbaK1r6evaE8p8HL+nVCg==",
+ "kid":    "e94659fb957a66fd5a553211f67a193c7ce2b620f3b4547612c16fba8d56016f"}
 ```
 
 Beyond the decision itself, a record carries accountability columns. The
@@ -170,17 +172,20 @@ POST /mission/v1/{s256}/terminate   -> {reference, state: terminated}
 
 ## Deployment
 
-`decern-serve` refuses to start unless told how its callers are established: it validates
-RFC 9068 bearer tokens itself (`--bearer-issuer`, `--bearer-audience`,
-`--bearer-issuer-key`, optionally `--bearer-scope`), or `--trust-proxy` states that
-something in front already authenticates them. Which routes are guarded, which stay open
-on purpose, and why is in [docs/CLI.md](docs/CLI.md)'s trust-boundary section.
+`decern-serve` refuses to start unless told how its callers are established, and naming two
+postures is also a startup failure. It validates RFC 9068 bearer tokens (`--bearer-issuer`),
+RFC 9421 signed requests (`--signed-agent-key`) or SPIFFE JWT-SVIDs
+(`--spiffe-trust-domain`) itself — all against keys configured at startup, never fetched —
+or `--trust-proxy` states that something in front already authenticates them. The two
+workload postures additionally bind a caller to the principals it may name. Which routes are
+guarded, which stay open on purpose, and why is in [docs/CLI.md](docs/CLI.md)'s
+trust-boundary section.
 
-Two worked integrations ship, as a pair: [`examples/mcp/`](examples/mcp/) — an MCP server
-that validates its caller and consults decern before every tool call — and
-[`examples/ext_authz_adapter/`](examples/ext_authz_adapter/) — a forward-auth shim that puts
-decern behind NGINX, Traefik or Envoy, failing closed. Both live deliberately outside the
-workspace: runnable and CI-tested, never published as crates.
+Four worked examples ship, all runnable and CI-tested and none published as crates:
+[`mcp/`](examples/mcp/) consults decern before every tool call,
+[`ext_authz_adapter/`](examples/ext_authz_adapter/) puts it behind NGINX, Traefik or Envoy,
+and [`signed-request/`](examples/signed-request/) and [`spiffe/`](examples/spiffe/) each run
+a workload posture end to end, minting their own credentials.
 
 `--sharded <dir>` replaces the single file with a per-tenant sharded ledger several
 processes on one host extend safely (`flock` head store); `--sharded postgres://…` does the
@@ -200,16 +205,14 @@ The list below is the standing set. Each release also states what it does **not*
 see [Known limits in 0.3.0](CHANGELOG.md#known-limits-in-this-release), which covers
 consent, log pinning, `--trust-proxy`, replay, and what the proofs actually cover.
 
-- **How far a credential constrains the content depends on the posture.** Under bearer
-  validation and `--trust-proxy` it does not: the mission `approver` is a request-body
-  field the verified caller vouches for, and the decision subject is not taken from the
-  credential, because a gateway legitimately asks about other parties. Under the two
-  *workload* postures (`--signed-agent-key`, `--spiffe-trust-domain`) the caller may only
-  name itself, unless listed in `--pep`. So a bearer token issued to a workload carries no
-  such bind. `--require-mission` is what makes decision approval server-derived.
-  `/audit/v1/subject` stays outside the guard on purpose — the party a decision was about
-  holds no credential here — so treat handles as secrets and rate-limit that route at
-  whatever fronts the server.
+- **How far a credential constrains the content depends on the posture.** Bearer validation
+  and `--trust-proxy` do not constrain it at all, because a gateway legitimately asks about
+  other parties — so a bearer token issued to a workload carries no bind. The two workload
+  postures bind a caller to itself unless it is listed in `--pep`. `--require-mission` is what
+  makes decision approval server-derived, and `/audit/v1/subject` stays outside the guard on
+  purpose, so treat handles as secrets and rate-limit that route at whatever fronts the
+  server. The full map is in
+  [docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly).
 - **`FileLedgerHeadStore` is single-host.** The sharded ledger's reference backend uses an
   exclusive `flock` per shard: correct multi-process exclusion on one host (Unix only), not
   a distributed store. Multi-host deployments use the Postgres head store instead.

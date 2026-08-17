@@ -13,63 +13,6 @@ it does not enforce. Identity providers and MCP/A2A gateways sit on the other si
 identity and enforcement peers — compose with them; do not absorb OAuth, service mesh, or approval
 UX into `decern-serve`.
 
-## Shipped
-
-- **Mission-lifecycle service** — approve / look up / terminate over HTTP, every transition
-  recorded to the tamper-evident ledger (`/mission/v1/*`).
-- **Decision-under-mission** — `--require-mission` gates decide on a live Mission; server-derived
-  approval flags; Mission ref and the digests it was bound to on the Entry.
-- **Anchoring** — a signed tree head over HTTP, and `decern verify --anchor`, so a record dropped
-  after it was committed is detectable by someone who is not the operator.
-- **Decision-subject column** — the party a decision is taken *upon*, distinct from who asked and
-  from the accountable owner, carried as a pseudonymous handle and never reaching the decision.
-  Implements [draft-aravind-oauth-decision-subject-00](https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/).
-- **A subject-side challenge surface** — the party a decision was about can register a signed
-  challenge; it is stripped from the context before the kernel runs, answered afterwards, and the
-  answer and its reason recorded. What a deployment supports is published at
-  `/.well-known/decern-subject-side-disclosure`.
-- **What was decided about one party** — `GET /audit/v1/subject`, each decision with an inclusion
-  proof against the returned head. Bounded, and it says when it truncates.
-- **`decern explain`** — a faithful reading of one recorded decision, chain verified first.
-- **Revocation blast radius** — who else loses authority if this principal is revoked.
-- **Portable digests** — an entry binds named digests, and numbers canonicalize as RFC 8785
-  §3.2.2.3 requires, so a digest is reproducible by any conformant implementation rather than only
-  by decern.
-- **Strict signature verification** — small-order public keys are rejected on every path, so a key
-  supplied by the party being audited cannot make an arbitrary log verify.
-- **Releases anyone can check** — signed binaries with a CycloneDX SBOM, an archived DOI per
-  release, and SDKs published from CI with no stored credential.
-- **A worked MCP integration** — `examples/mcp/`: an MCP server (revision 2026-07-28, no SDK)
-  that validates its caller and consults the PDP before every tool call, arguments digest-bound
-  onto the record; denials surface as a satisfiable `403 insufficient_scope` or an `isError`
-  tool result, per the spec's own error layering.
-- **Caller verification** — `decern-serve` validates RFC 9068 access tokens on the deciding
-  routes (issuer, audience per RFC 8707, expiry, optional scopes), or accepts a declared
-  authenticating front with `--trust-proxy`; a server with neither refuses to start. Caller-only
-  by design: the AuthZEN subject is deliberately not taken from the token's `sub`.
-- **The asserting caller on the record** — under bearer validation a decision carries
-  `asserted_by` (token subject, client, issuer, as verified); absent under a trusted front,
-  where the server verified nothing itself. Recorded, never a decision input.
-- **Named policy reasons** — the builtin model annotates every policy, so a denial says
-  `F-money` in `reasons` and in `decern explain`, not a position that shifts.
-- **A worked MCP integration** — `examples/mcp/`: an MCP server (stateless revision, no SDK)
-  that validates its caller and consults the PDP before every tool call, arguments
-  digest-bound onto the record; serves earlier-revision clients through the spec's own
-  backward-compatibility clause, and has run its whole allow/deny/step-up matrix end to end
-  with Claude Code as the client.
-- **An enforcement adapter** — `examples/ext_authz_adapter/`: a generic forward-auth shim
-  (NGINX `auth_request`, Traefik `forwardAuth`, Envoy `ext_authz`) that fails closed on
-  deny, missing forwarded headers, or an unreachable PDP. Contributed by @sameer-kireap.
-- **Bearer tokens in every SDK** — the Go, Python and TypeScript clients can present an
-  access token, absent entirely when unconfigured.
-
-- **Mission transitions name who asserted them** — `Mission.Approve` and
-  `Mission.Terminate` carry `asserted_by`, the caller the server verified, exactly as
-  decisions do ([#87](https://github.com/anivar/decern/issues/87)).
-- **Approval flags are server-derived only under a Mission** — a request body can no longer
-  assert `human_approved` for MoveMoney, which requires a live Mission unconditionally
-  ([#25](https://github.com/anivar/decern/issues/25)).
-
 ## Next — the accountable-operations path
 
 Close the loop from decided to enforced to revocable to accountable.

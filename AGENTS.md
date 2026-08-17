@@ -14,11 +14,13 @@ guarantees are the product — a change that weakens one is a regression, even i
 
 ## Conventions
 - Rust 2024, toolchain pinned in `rust-toolchain.toml`. Don't bump it casually.
-- Pure Rust: the core libraries and the `decern`/`decern-serve` binaries have no
-  compiled-C-FFI dependencies. The one documented exception is the optional
-  `decern-store-postgres` crate (multi-host deployments need a TLS stack); the
-  binaries don't depend on it, so the default build stays pure Rust. See that
-  crate's README. New deps must be permissive-licensed and cheap to audit.
+- No TLS stack: the core libraries and the `decern`/`decern-serve` binaries pull no
+  TLS, no OpenSSL and no `cmake`. That is the claim, and it is not "zero compiled
+  native code" — `cedar-policy` → `stacker` → `psm` compiles a small assembly routine
+  in every build, the default one included. The optional `decern-store-postgres` crate
+  (multi-host deployments need TLS) is the documented exception, and the binaries don't
+  depend on it. See that crate's README and [DEPENDENCIES.md](DEPENDENCIES.md). New
+  deps must be permissive-licensed and cheap to audit.
 - Terse code, terse comments. Comment the non-obvious *why*, never the *what*.
 
 ## Verify before commit

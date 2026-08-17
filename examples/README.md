@@ -18,5 +18,5 @@ Runnable end to end, tested in CI, never published as crates.
   bundle pinned at startup. No SPIRE daemon: the example mints its own ES256 SVIDs.
 
 The first two integrations are a pair: same decision point, consulted from inside the tool
-server or from the gateway in front of it. The third is about the other axis — not where
+server or from the gateway in front of it. The last two are about the other axis — not where
 the decision point sits, but how much a caller has to prove to reach it.

@@ -12,13 +12,14 @@
 //! one `decern-server` host can safely extend the same tenant hash chain (and
 //! gate the cumulative money-budget) without forking it.
 //!
-//! # The compiled-C-FFI exception (deliberate, isolated, documented)
+//! # The TLS exception (deliberate, isolated, documented)
 //!
-//! decern's core libraries and its `decern`/`decern-serve` binaries are pure
-//! Rust with zero compiled-C-FFI dependencies. This crate is the ONE documented
-//! exception: multi-host Postgres needs a TLS stack, and TLS providers link
-//! compiled C/assembly. The exception is contained here — the binaries do NOT
-//! depend on this crate, so the default build stays pure Rust. We use `rustls`
+//! decern's core libraries and its `decern`/`decern-serve` binaries pull no TLS
+//! stack, no OpenSSL and no `cmake` — not zero compiled native code, since `psm`
+//! (via `cedar-policy` → `stacker`) compiles a small assembly routine in every
+//! build. This crate is the ONE documented exception for TLS: multi-host Postgres
+//! needs it, and TLS providers link compiled C/assembly. The exception is contained
+//! here — the binaries do NOT depend on this crate. We use `rustls`
 //! with the `ring` provider (not `aws-lc-rs`, which needs a `cmake` toolchain),
 //! keeping the exception a single, audit-scoped stack. See this crate's README.
 //!

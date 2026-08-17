@@ -169,7 +169,9 @@ http_filters:
 
 ## How it composes with decern-serve caller postures
 
-`decern-serve` requires an explicit caller posture on boot. The adapter supports both postures seamlessly:
+`decern-serve` requires an explicit caller posture on boot, and names one of four. Two of them suit a gateway, and the adapter supports both.
+
+The other two — `--signed-agent-key` and `--spiffe-trust-domain` — are *workload* postures: they bind a caller to the principals it may name, so it can only ask about itself. An adapter asks on behalf of everyone behind the gateway, which is the opposite. Run it under one of those only if the deployment also lists the adapter in `--pep`.
 
 ### Standard proxy trust posture (`--trust-proxy`)
 
