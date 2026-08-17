@@ -202,7 +202,7 @@ tamper-evident ledger, and pure-Rust persistence and primitives.
 ## Known limitations
 
 The list below is the standing set. Each release also states what it does **not** claim —
-see [Known limits in 0.3.0](CHANGELOG.md#known-limits-in-this-release), which covers
+see [Known limits in 0.3.1](CHANGELOG.md#known-limits-in-this-release), which covers
 consent, log pinning, `--trust-proxy`, replay, and what the proofs actually cover.
 
 - **How far a credential constrains the content depends on the posture.** Bearer validation

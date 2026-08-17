@@ -6,6 +6,57 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-08-17
+
+The first release published to crates.io since 0.2.0. `cargo install decern-cli decern-server`
+now installs the four-posture server: 0.3.0 was tagged, signed and released on GitHub but never
+reached the registry, so its caller-authentication work — RFC 9421 signed requests, SPIFFE
+JWT-SVIDs, and the bind that stops a workload speaking for anyone else — arrives here for anyone
+installing the usual way. See the 0.3.0 notes below for that work and its limits.
+
+### Changed
+
+- **crates.io publishes by OIDC, with no stored token.** The nine crates authenticate the way
+  the PyPI and npm packages already do: the registry mints a credential for the run, and the job
+  revokes it at the end. Trust is pinned per crate to this repository, the workflow filename and
+  the `crates-io` environment. The 0.2.0 release stopped mid-publish on a token scoped
+  `publish-new`, which does not cover new versions of crates that already exist; a minted
+  credential cannot fall out of scope, because it does not outlive the run. Authored by @anivar.
+- **The diagrams and the website describe the four-posture server.** The decision-flow and
+  architecture diagrams name all four caller postures, the workload bind and `caller_mismatch`,
+  proofs taken over the model rather than the deployment, and `--anchor` rather than the chain
+  alone as what detects a dropped tail. Editable SVG sources ship beside the PNGs.
+  Authored by @anivar.
+- **`AGENTS.md` states the guarantees the gates cannot check.** The `CallerAuth` seam a new
+  caller posture must implement rather than route around, the context fields that must never
+  reach the kernel, the record-before-serve contract, and the rule that a claim in the
+  documentation is part of the product. Authored by @anivar.
+
+### Fixed
+
+- **The compiled-native-code claim is stated identically everywhere.** `AGENTS.md` and
+  `decern-store-postgres` described the default binaries as carrying zero compiled-C-FFI
+  dependencies. The accurate claim, already stated in `README.md` and `DEPENDENCIES.md`, is that
+  the default build pulls no TLS stack, no OpenSSL and no `cmake` — `cedar-policy` → `stacker`
+  → `psm` compiles a small assembly routine in every build, the default included.
+  Authored by @anivar.
+- **The sample records in the README and on the website are reproduced from live runs.** The
+  site showed a record carrying no `asserted_by` directly beneath the claim that every record
+  carries one; it had been captured under `--trust-proxy`, which records no caller by design.
+  The README's record showed `"reasons":["F-money"]` for an input that returns an empty
+  `reasons`, because neither the caller nor the resource exists in the builtin model, so the
+  denial comes from the Mission requirement instead. Both are replaced with records from 0.3.x
+  runs, and the site's `decern verify` line now names the key id of the record above it.
+  Authored by @anivar.
+
+### Known limits in this release
+
+Unchanged from 0.3.0. This release alters no decision, ledger or caller-authentication
+behaviour; the standing set — consent, log pinning, `--trust-proxy`, replay, standing tokens,
+and what the proofs actually cover — is listed in the
+[0.3.0 notes](https://github.com/anivar/decern/blob/main/CHANGELOG.md#030---2026-08-15) and
+applies verbatim.
+
 ## [0.3.0] - 2026-08-15
 
 ### Added
