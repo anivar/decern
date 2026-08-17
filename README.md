@@ -205,16 +205,14 @@ The list below is the standing set. Each release also states what it does **not*
 see [Known limits in 0.3.0](CHANGELOG.md#known-limits-in-this-release), which covers
 consent, log pinning, `--trust-proxy`, replay, and what the proofs actually cover.
 
-- **How far a credential constrains the content depends on the posture.** Under bearer
-  validation and `--trust-proxy` it does not: the mission `approver` is a request-body
-  field the verified caller vouches for, and the decision subject is not taken from the
-  credential, because a gateway legitimately asks about other parties. Under the two
-  *workload* postures (`--signed-agent-key`, `--spiffe-trust-domain`) the caller may only
-  name itself, unless listed in `--pep`. So a bearer token issued to a workload carries no
-  such bind. `--require-mission` is what makes decision approval server-derived.
-  `/audit/v1/subject` stays outside the guard on purpose — the party a decision was about
-  holds no credential here — so treat handles as secrets and rate-limit that route at
-  whatever fronts the server.
+- **How far a credential constrains the content depends on the posture.** Bearer validation
+  and `--trust-proxy` do not constrain it at all, because a gateway legitimately asks about
+  other parties — so a bearer token issued to a workload carries no bind. The two workload
+  postures bind a caller to itself unless it is listed in `--pep`. `--require-mission` is what
+  makes decision approval server-derived, and `/audit/v1/subject` stays outside the guard on
+  purpose, so treat handles as secrets and rate-limit that route at whatever fronts the
+  server. The full map is in
+  [docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly).
 - **`FileLedgerHeadStore` is single-host.** The sharded ledger's reference backend uses an
   exclusive `flock` per shard: correct multi-process exclusion on one host (Unix only), not
   a distributed store. Multi-host deployments use the Postgres head store instead.
