@@ -83,7 +83,7 @@ still cost a guarantee:
   implements it in its own module (`bearer.rs`, `sig.rs`, `spiffe.rs`) and knows nothing of the
   others, so the guard dispatches once and a posture added later cannot skip a step by being
   wired in differently. Adding one means implementing the trait and joining the `ArgGroup` in
-  `main.rs` — not a second `guard()`. The two *workload* postures additionally bind a caller to
+  `main.rs` — not a second `guard()`. The *workload* postures additionally bind a caller to
   the principals it may name; a posture that authenticates a workload and does not bind it is a
   hole.
 - **Some fields must never reach the kernel.** `asserted_by`, the decision subject, and a

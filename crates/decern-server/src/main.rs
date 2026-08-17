@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
 //! decern-serve — a thin PDP: every decision is proven-model-evaluated AND recorded before it is served.
 
+mod aauth;
 mod audit;
 mod bearer;
 mod caller;
@@ -146,6 +147,26 @@ struct Args {
     /// with `--spiffe-trust-domain`, same role as `--bearer-audience`.
     #[arg(long, value_name = "URI")]
     spiffe_audience: Option<String>,
+    /// An AAuth agent provider this deployment accepts, and the JWK Set holding the keys it
+    /// signs agent tokens with, as `ISS=PATH`. Repeatable: one entry per provider. The file
+    /// is read once at startup and refused there if it carries no usable Ed25519 signing key
+    /// or an entry without a `kid`. Keys are configured, never fetched: the draft's `dwk`
+    /// discovery is deliberately not performed, so an agent whose provider is not named here
+    /// is refused before any cryptography runs. Turns on AAuth agent-token validation for the
+    /// decision and mission-mutation endpoints.
+    #[arg(
+        long = "aauth-provider",
+        value_name = "ISS=PATH",
+        group = "posture",
+        requires = "aauth_audience"
+    )]
+    aauth_providers: Vec<String>,
+    /// This deployment's authority, which a request's `Host` must equal. Required with
+    /// `--aauth-provider`, and not optional: an agent token carries no `aud`, so without this
+    /// a request signed for one deployment would verify at another that pins the same
+    /// provider.
+    #[arg(long, value_name = "AUTHORITY")]
+    aauth_audience: Option<String>,
     /// Accept every caller, because something in front has already authenticated them.
     /// One of this or the bearer/signed flags is required to start: "no token configured"
     /// and "authentication deliberately delegated" are indistinguishable from inside this
@@ -261,6 +282,18 @@ pub(crate) fn caller_disclosure(caller: &caller::Caller) -> Value {
             }
             o
         }
+        caller::Caller::Aauth(c) => {
+            let mut o = json!({
+                "mode": "aauth",
+                "authority": c.authority,
+                "providers": c.providers.keys().collect::<Vec<_>>(),
+                "bind": "self",
+            });
+            if !c.pep.is_empty() {
+                o["pep"] = json!(c.pep.iter().cloned().collect::<Vec<_>>());
+            }
+            o
+        }
         caller::Caller::TrustedProxy => json!({ "mode": "trusted-proxy", "bind": "any" }),
     }
 }
@@ -311,10 +344,12 @@ fn caller_from(args: &Args) -> Result<caller::Caller> {
     if !args.pep.is_empty()
         && args.signed_agent_keys.is_empty()
         && args.spiffe_trust_domains.is_empty()
+        && args.aauth_providers.is_empty()
     {
         anyhow::bail!(
             "--pep names a caller exempt from the self-only bind, which only the workload \
-             postures apply: pass --signed-agent-key or --spiffe-trust-domain, or drop --pep. \
+             postures apply: pass --signed-agent-key, --spiffe-trust-domain or --aauth-provider, \
+             or drop --pep. \
              Bearer and --trust-proxy already authenticate a PEP that may name other parties"
         );
     }
@@ -404,6 +439,44 @@ fn caller_from(args: &Args) -> Result<caller::Caller> {
             pep,
         })));
     }
+    if !args.aauth_providers.is_empty() {
+        let mut providers = std::collections::BTreeMap::new();
+        for entry in &args.aauth_providers {
+            let (iss, path) = entry
+                .split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("--aauth-provider {entry} is not ISS=PATH"))?;
+            // The draft requires a provider identifier to be a valid HTTPS URL. Checked at
+            // startup so a malformed one fails the boot rather than every request.
+            if !aauth::valid_provider_url(iss) {
+                anyhow::bail!("--aauth-provider {iss} is not an https:// agent provider URL");
+            }
+            let raw = std::fs::read_to_string(path)
+                .with_context(|| format!("reading the key set for {iss} at {path}"))?;
+            let keys = aauth::load_provider_keys(&raw)
+                .map_err(|e| anyhow::anyhow!("key set for {iss} at {path}: {e}"))?;
+            if providers.insert(iss.to_owned(), keys).is_some() {
+                anyhow::bail!("--aauth-provider names {iss} more than once");
+            }
+        }
+        let Some(authority) = args.aauth_audience.clone() else {
+            anyhow::bail!("--aauth-provider requires --aauth-audience");
+        };
+        // A PEP must be able to authenticate, and an agent identity is minted by its
+        // provider, so there is no per-agent list to check against — only that the operator
+        // named something non-empty.
+        let mut pep = std::collections::BTreeSet::new();
+        for id in &args.pep {
+            if id.is_empty() {
+                anyhow::bail!("--pep names an empty agent id");
+            }
+            pep.insert(id.clone());
+        }
+        return Ok(caller::Caller::Aauth(Box::new(aauth::AauthConfig {
+            providers,
+            authority,
+            pep,
+        })));
+    }
     let Some(issuer) = args.bearer_issuer.clone() else {
         if args.trust_proxy {
             return Ok(caller::Caller::TrustedProxy);
@@ -462,6 +535,11 @@ async fn main() -> Result<()> {
             "SPIFFE JWT-SVID for {} across {} trust domain(s)",
             c.audience,
             c.trust_domains.len()
+        ),
+        caller::Caller::Aauth(c) => format!(
+            "AAuth agent tokens for {} across {} provider(s)",
+            c.authority,
+            c.providers.len()
         ),
         caller::Caller::TrustedProxy => "caller trusted (--trust-proxy)".to_owned(),
     };

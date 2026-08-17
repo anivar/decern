@@ -40,6 +40,10 @@ pub(crate) enum Caller {
     /// A SPIFFE JWT-SVID is required, verified against a trust bundle configured for the
     /// trust domain its `sub` names. See [`crate::spiffe`].
     Spiffe(Box<crate::spiffe::SpiffeConfig>),
+    /// An AAuth agent token is required, verified against the keys pinned for the agent
+    /// provider its `iss` names, and the request signature verified against the key that
+    /// token's `cnf` confirms. See [`crate::aauth`].
+    Aauth(Box<crate::aauth::AauthConfig>),
     /// Something in front has already authenticated the caller. Named rather than defaulted,
     /// because "no token configured" and "authentication deliberately delegated" look identical
     /// from inside the process and mean very different things outside it.
@@ -253,6 +257,7 @@ pub(crate) async fn guard(
             Caller::Bearer(cfg) => cfg.as_ref(),
             Caller::Signed(cfg) => cfg.as_ref(),
             Caller::Spiffe(cfg) => cfg.as_ref(),
+            Caller::Aauth(cfg) => cfg.as_ref(),
         };
         posture
             .authenticate(&req, now_secs(), &bytes)

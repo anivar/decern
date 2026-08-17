@@ -284,6 +284,37 @@ standards:
       the outer signature already covers it, and a second check would establish nothing the
       first does not. A draft, so re-read it before touching this surface.
 
+  - name: AAuth Protocol (draft-hardt-oauth-aauth-protocol)
+    url: https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/
+    verified: 2026-08-17
+    surface:
+      - crates/decern-server/src/aauth.rs
+    conformance: >-
+      The resource half of **identity-based access** only — the mode that applies local policy
+      to a verified agent identity and involves no Person Server. PS-asserted and federated
+      modes are not implemented and are ROADMAP non-goals, as is issuing any token.
+      `decern-server::aauth` verifies an `aa-agent+jwt` presented per the draft in
+      `Signature-Key: sig=jwt; jwt="…"`, with the covered components the draft lists
+      (`@method`, `@authority`, `@path`, `signature-key`). Two profile decisions are stated
+      rather than implied. First, **providers are pinned, never discovered**: the draft's
+      verification step says to fetch the issuer's JWKS at `{iss}/.well-known/{dwk}`, and this
+      deployment instead checks that `dwk` names that document and selects from a JWK Set the
+      operator configured, which the draft contemplates where it notes a resource pre-caching
+      provider keys does not need the fetch. An agent whose provider is not configured is
+      refused before any cryptography. Second, **`content-digest` is required on a bodied
+      request**, which the draft's example component list does not carry; RFC 9421 §1.4 assigns
+      component requirements to the application profile, and every AuthZEN evaluation is a POST,
+      so without it one captured signature would authorize any body at that path — the defect
+      closed in 0.3.0. An agent that does not sign `content-digest` is refused. `EdDSA` only, of
+      the algorithms the draft permits, and `none` is refused as the draft requires. The agent
+      token's own signature IS verified against the provider key, unlike the signed-request
+      posture where the outer signature already covers a self-carried token. An agent token
+      carries no `aud`, so `--aauth-audience` is required and the request's `Host` must equal
+      it. `jti` is required and shape-checked; it is not used for replay detection, as there is
+      no nonce cache. `parent_agent` is shape-checked and never reaches the kernel. A verified
+      agent is a workload and binds to itself unless listed in `--pep`. Verified against the
+      spec 2026-08-17.
+
   - name: Model Context Protocol (revision 2026-07-28)
     url: https://modelcontextprotocol.io/specification/2026-07-28
     verified: 2026-08-09

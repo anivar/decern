@@ -64,13 +64,13 @@ const BODIED_COMPONENTS: [&str; 5] = [
 /// How long after `created` a signature is still accepted. Mint-to-arrival latency plus
 /// clock skew, not a session length — a signature is proof for one request, not a grant
 /// that outlives it.
-const MAX_SIGNATURE_AGE_SECS: i64 = 60;
+pub(crate) const MAX_SIGNATURE_AGE_SECS: i64 = 60;
 
 /// How far ahead of this server's clock a signer's `created` may be and still be
 /// accepted. Independent clocks drift in both directions, not just late — a signer a
 /// few seconds ahead of this server is an ordinary NTP-grade skew, not an attack, and
 /// refusing it here would be an operational failure with a security-shaped symptom.
-const MAX_CLOCK_SKEW_AHEAD_SECS: i64 = 5;
+pub(crate) const MAX_CLOCK_SKEW_AHEAD_SECS: i64 = 5;
 
 /// A compact JWS three parts of which each fit in an HTTP header has no business being
 /// larger. Mirrors `bearer.rs`'s own token size ceiling.
@@ -110,9 +110,9 @@ pub(crate) struct Signed {
 
 /// Parsed `Signature-Input` value for a single signature. RFC 9421 §2.3 permits several
 /// labelled signatures in one header; this deployment accepts exactly one.
-struct SignatureInput {
-    components: Vec<String>,
-    created: i64,
+pub(crate) struct SignatureInput {
+    pub(crate) components: Vec<String>,
+    pub(crate) created: i64,
     /// Parsed for shape validation only — this deployment pins keys by agent id
     /// (`SigConfig::agents`), not by `keyid`, so the value itself is never consulted.
     _keyid: Option<String>,
@@ -122,7 +122,7 @@ struct SignatureInput {
 /// form `("comp1" "comp2" ...);created=NNN;keyid="..."`. Not a general structured-field
 /// parser: this module accepts exactly this shape and refuses anything else, the same
 /// discipline `bearer.rs` applies to `alg`/`typ`.
-fn parse_signature_input(label: &str, raw: &str) -> Result<SignatureInput, Denied> {
+pub(crate) fn parse_signature_input(label: &str, raw: &str) -> Result<SignatureInput, Denied> {
     let prefix = format!("{label}=(");
     let rest = raw
         .trim()
@@ -171,7 +171,7 @@ fn parse_signature_input(label: &str, raw: &str) -> Result<SignatureInput, Denie
 
 /// Extract the base64 signature bytes for `label` from a `Signature` header value of the
 /// form `label=:base64:`.
-fn parse_signature(label: &str, raw: &str) -> Result<Vec<u8>, Denied> {
+pub(crate) fn parse_signature(label: &str, raw: &str) -> Result<Vec<u8>, Denied> {
     let prefix = format!("{label}=:");
     let rest = raw
         .trim()
@@ -190,7 +190,7 @@ fn parse_signature(label: &str, raw: &str) -> Result<Vec<u8>, Denied> {
 /// covering its body — silently, and that is precisely the defect this component list
 /// exists to close. Anything carrying bytes covers them; `POST` covers them even when
 /// empty, so an empty-bodied POST cannot be downgraded to the shorter list either.
-fn required_components(method: &str, body: &[u8]) -> &'static [&'static str] {
+pub(crate) fn required_components(method: &str, body: &[u8]) -> &'static [&'static str] {
     if method.eq_ignore_ascii_case("POST") || !body.is_empty() {
         &BODIED_COMPONENTS
     } else {
@@ -222,7 +222,7 @@ fn sha256_of(body: &[u8]) -> [u8; 32] {
 /// RFC 9530 dictionary value for a `sha-256` digest of `body`. Test-only: the server
 /// verifies a digest it was sent and never produces one.
 #[cfg(test)]
-fn content_digest_header_value(body: &[u8]) -> String {
+pub(crate) fn content_digest_header_value(body: &[u8]) -> String {
     format!(
         "sha-256=:{}:",
         base64::engine::general_purpose::STANDARD.encode(sha256_of(body))
@@ -233,7 +233,7 @@ fn content_digest_header_value(body: &[u8]) -> String {
 /// then append the `@signature-params` line reconstructed from the same
 /// `Signature-Input` value that was parsed — never a value this function invents,
 /// so the base matches byte-for-byte what the signer actually covered.
-fn signature_base(
+pub(crate) fn signature_base(
     components: &[&str],
     values: &[&str],
     signature_input_label: &str,
@@ -262,19 +262,19 @@ struct Header {
 }
 
 #[derive(Deserialize)]
-struct Cnf {
-    jwk: JwkEd25519,
+pub(crate) struct Cnf {
+    pub(crate) jwk: JwkEd25519,
 }
 
 /// The one JWK shape this deployment accepts: an OKP Ed25519 public key (RFC 8037).
 #[derive(Deserialize)]
-struct JwkEd25519 {
+pub(crate) struct JwkEd25519 {
     kty: String,
     crv: String,
     x: String,
 }
 
-fn jwk_to_verifying_key(jwk: &JwkEd25519) -> Result<VerifyingKey, Denied> {
+pub(crate) fn jwk_to_verifying_key(jwk: &JwkEd25519) -> Result<VerifyingKey, Denied> {
     if jwk.kty != "OKP" || jwk.crv != "Ed25519" {
         return Err(Denied::Invalid("cnf.jwk is not an Ed25519 OKP key".into()));
     }
@@ -532,16 +532,16 @@ pub(crate) fn authenticate(
 }
 
 /// The values RFC 9421 §2.5 puts on the signature base, one per covered component.
-struct Covered<'a> {
-    method: &'a str,
-    authority: &'a str,
-    path: &'a str,
-    content_digest: Option<&'a str>,
-    signature_key: &'a str,
+pub(crate) struct Covered<'a> {
+    pub(crate) method: &'a str,
+    pub(crate) authority: &'a str,
+    pub(crate) path: &'a str,
+    pub(crate) content_digest: Option<&'a str>,
+    pub(crate) signature_key: &'a str,
 }
 
 impl<'a> Covered<'a> {
-    fn value(&self, component: &str) -> Result<&'a str, Denied> {
+    pub(crate) fn value(&self, component: &str) -> Result<&'a str, Denied> {
         match component {
             "@method" => Ok(self.method),
             "@authority" => Ok(self.authority),
@@ -560,7 +560,7 @@ impl<'a> Covered<'a> {
 /// If this method covers `content-digest`, the header must be present, `sha-256` only,
 /// and equal to the hash of the body bytes the handler will see. GET has no such
 /// component, so a stray `Content-Digest` on a GET is ignored rather than checked.
-fn bind_content_digest<'a>(
+pub(crate) fn bind_content_digest<'a>(
     components: &[&str],
     req: &SignedRequest<'a>,
 ) -> Result<Option<&'a str>, Denied> {
