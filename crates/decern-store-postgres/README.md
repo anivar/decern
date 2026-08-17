@@ -46,11 +46,13 @@ commits or rolls back. See the crate-level docs for the full rationale and the
 one deliberate behavior divergence (a `(shard, seq)` primary key that rejects a
 duplicate seq instead of trusting the caller).
 
-## The compiled-C-FFI exception
+## The TLS exception
 
-decern's **core libraries and its `decern`/`decern-serve` binaries are pure Rust
-with zero compiled-C-FFI dependencies** — the default build pulls no TLS stack.
-This crate is the **single documented exception**: multi-host Postgres needs TLS,
+decern's **core libraries and its `decern`/`decern-serve` binaries pull no TLS
+stack, no OpenSSL and no `cmake`** — which is not the same as zero compiled native
+code, since `cedar-policy` → `stacker` → `psm` compiles a small assembly routine in
+every build ([DEPENDENCIES.md](../../DEPENDENCIES.md) states that limit precisely).
+This crate is the **single documented exception** for TLS: multi-host Postgres needs it,
 and every TLS provider links compiled C/assembly. The exception is isolated —
 the binaries do **not** depend on this crate (verify with
 `cargo tree -p decern-cli` / `cargo tree -p decern-server`: no `rustls`, `ring`,
