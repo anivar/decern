@@ -97,22 +97,23 @@ Every decision lands in an append-only, Ed25519-signed, hash-chained ledger, and
 **only if its record was written** — an unrecordable decision returns 503, never a bare
 allow. A crash-torn tail heals; truncating committed history is detected.
 
-<p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: one of four postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p> Here an
-unrecognized caller is refused a `MoveMoney` — the money-gate forbid fires by name, no
-`sponsor` is derived for a caller the directory does not know, the exact request is
+<p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: one of four postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p> Here a caller in one
+tenant is refused a `Read` on another's resource — the tenant-isolation forbid fires by
+name, the `sponsor` resolves to the principal ultimately answerable, the exact request is
 digest-bound, and `prev` is the chain link:
 
 ```json
-{"entry":{"seq":1,"ts_ms":1786245929000,
-          "subject_type":"Principal","subject_id":"agent-7",
-          "action":"MoveMoney","resource_type":"Resource","resource_id":"account9",
-          "context":{"now":1786245929},"decision":false,"reasons":["F-money"],
+{"entry":{"seq":1,"ts_ms":1786928909000,
+          "subject_type":"Principal","subject_id":"corpB",
+          "action":"Read","resource_type":"Resource","resource_id":"claim1",
+          "context":{"now":1786928909},"decision":false,"reasons":["F-tenant"],
+          "sponsor":{"kind":"Principal","id":"corpB"},
           "digests":{"authority":"cb03c58cb1f689cc270f99791138dbd913d25bd50c6ee2f70a41206ad795f9be",
-                     "parameters":"5b86c3bfd81d4092515553da5c4063222554e8e7b5a053271699e78b4628f04b"}},
- "prev":   "78d312d1b88a75d8441e19920408e3a8438ec2d547e7b5496636ba37a4bed8a6",
- "hash":   "7bd414059c27b912b87ba359d362830d81a63163c06c7d9ca0c7f5d0ac335205",
- "sig_b64":"gdyqqGJQB75EFgzBhAt2WVSGMucdyCeECYsCqiMx8QugQ6+zmeQOSBWsxJq7jhEZkO2pZsB3K+88E0bjf+l2CQ==",
- "kid":    "46a941e7d9536df4922254a6a3cf983bd90ea3d2264c44390257adca00468fff"}
+                     "parameters":"7d7d40f9016baf94f82ca2281d46c67fd6cea62d2f8c782c5d34978946c185ed"}},
+ "prev":   "252398ebc68779cd1a8c12cdacea6f9bdfa749bdddc665de2b9d2ec010f10725",
+ "hash":   "f43ecf0babe9c9e1cc6473bb0ebedda458b27776ddb674dd0a8e42b3ac92ebf2",
+ "sig_b64":"Aq2OkDXAHh4S+pbrmJv4YouAk4b5y7MnCmoE/r424YF6tMNnjsywTq0d9U2v4QLeYdbaK1r6evaE8p8HL+nVCg==",
+ "kid":    "e94659fb957a66fd5a553211f67a193c7ce2b620f3b4547612c16fba8d56016f"}
 ```
 
 Beyond the decision itself, a record carries accountability columns. The

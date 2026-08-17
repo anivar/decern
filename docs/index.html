@@ -274,7 +274,7 @@
             <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">Refuses to answer an unverified caller</h3>
             <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Before evaluating anything, decern-serve establishes who is asking — a bearer token, a signed request, a SPIFFE identity, or a declared authenticated front taking responsibility for what it asserts. There is no default identity, and no way to start the server without naming one. The two workload postures go further: unless exempted, such a caller may only name itself. The verified caller is written onto the decision record itself, not inferred afterwards.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:26px 0 0">
-            <p style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-server · RFC 9068 bearer validation · asserted_by on every record</p>
+            <p style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-server · four caller postures · asserted_by under any credential posture</p>
           </article>
         </div>
       </div>
@@ -557,19 +557,20 @@
           <div style="padding:20px 24px;overflow-x:auto">
             <pre style="margin:0;font:400 12.5px/1.7 'IBM Plex Mono',monospace;color:#EAF0ED;white-space:pre">{
   "entry": {
-    "seq": 0, "ts_ms": 1786245929000,
+    "seq": 0, "ts_ms": 1786928762000,
     "subject_type": "Principal", "subject_id": "corp",
     "action": "Read",
     "resource_type": "Resource", "resource_id": "claim1",
-    "context": { "now": 1786245929 },
+    "context": { "now": 1786928762 },
     "decision": true, "reasons": ["P-read"],
-    "digests": {"authority": "cb03c58cb1f6…", "parameters": "f2eaa74d032e…"},
-    "sponsor": { "kind": "Principal", "id": "corp" }
+    "sponsor": { "kind": "Principal", "id": "corp" },
+    "asserted_by": {"sub": "corp", "client_id": "mcp-demo-client", "iss": "https://issuer.example/"},
+    "digests": {"authority": "cb03c58cb1f6…", "parameters": "12ac1a473dc0…"}
   },
   "prev":    "0000000000000000000000000000000000000000000000000000000000000000",
-  "hash":    "78d312d1b88a75d8441e19920408e3a8438ec2d547e7b5496636ba37a4bed8a6",
-  "sig_b64": "oDpSX6ucuBT6kxM4jo1poXzoKfVEobU4dlW3YXZHvBfdNL1JmZh1F0GEvA8//lmAOA1xXvybmqxl/Vaw9itlAw==",
-  "kid":     "46a941e7d9536df4922254a6a3cf983bd90ea3d2264c44390257adca00468fff"
+  "hash":    "5e828eb65f5b7b4a8143b6d21d2befc550f3cd2d8dcdf482e95a10e7609f3549",
+  "sig_b64": "MQ8ZnAwLQ/yQRwhuWRlaChGEr+KE+3X4xe16ui1QcKBpHlsCZ03wxciEexjdpjCWAN3dynrLLZ4yWivGmIEoAA==",
+  "kid":     "163086118c9525e96a1dfa96946c5317abd8bbe1f1fe1d3fa1d017aa9da6f8f0"
 }</pre>
           </div>
           <div style="border-top:1px solid #26332F;padding:16px 24px">
