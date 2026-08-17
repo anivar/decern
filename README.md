@@ -97,10 +97,11 @@ Every decision lands in an append-only, Ed25519-signed, hash-chained ledger, and
 **only if its record was written** — an unrecordable decision returns 503, never a bare
 allow. A crash-torn tail heals; truncating committed history is detected.
 
-<p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: one of four postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p> Here a caller in one
-tenant is refused a `Read` on another's resource — the tenant-isolation forbid fires by
-name, the `sponsor` resolves to the principal ultimately answerable, the exact request is
-digest-bound, and `prev` is the chain link:
+<p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: one of four postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p>
+
+Here a caller in one tenant is refused a `Read` on another's resource — the tenant-isolation
+forbid fires by name, the `sponsor` resolves to the principal ultimately answerable, the exact
+request is digest-bound, and `prev` is the chain link:
 
 ```json
 {"entry":{"seq":1,"ts_ms":1786928909000,
