@@ -8,7 +8,8 @@
 //! Fail-closed contract:
 //!   - PDP decision == true   => 200 OK
 //!   - PDP decision == false  => 403 Forbidden
-//!   - Missing subject header => 403 Forbidden (refuse unauthenticated callers by default)
+//!   - Missing forwarded header => 403 Forbidden (refuse unauthenticated callers by default)
+//!   - Duplicated forwarded header => 403 Forbidden (no copy can be trusted; see `refused_duplicated`)
 //!   - PDP error / timeout / unreachable / malformed response => 503 Service Unavailable
 
 use std::net::SocketAddr;
@@ -295,12 +296,35 @@ pub async fn run_main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// A forwarded header's value, if present and non-empty.
-fn forwarded<'h>(headers: &'h HeaderMap, name: &HeaderName) -> Option<&'h str> {
-    headers
+/// What a forwarded header said: one usable value, nothing, or more than one copy.
+enum Forwarded<'h> {
+    Present(&'h str),
+    Missing,
+    /// More than one copy arrived. Carries the count for the log line.
+    Duplicated(usize),
+}
+
+/// Read one forwarded header.
+///
+/// The duplicate count lives here rather than at the call sites so every forwarded
+/// header is covered by construction: a fourth one added later cannot skip the check
+/// by being wired in differently. Returning the three-way `Forwarded` rather than an
+/// `Option` is what enforces it — there is no way to get a value out without the
+/// compiler making you say what a duplicate means.
+fn forwarded<'h>(headers: &'h HeaderMap, name: &HeaderName) -> Forwarded<'h> {
+    let copies = headers.get_all(name).iter().count();
+    if copies > 1 {
+        return Forwarded::Duplicated(copies);
+    }
+    match headers
         .get(name)
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
         .filter(|s| !s.is_empty())
+    {
+        Some(value) => Forwarded::Present(value),
+        None => Forwarded::Missing,
+    }
 }
 
 /// The 403 for a request missing one of the three forwarded headers. Denied locally,
@@ -317,27 +341,66 @@ fn refused_missing(name: &HeaderName) -> Response {
         .into_response()
 }
 
+/// The 403 for a request carrying more than one copy of a forwarded header.
+///
+/// A duplicate is the signature of the misconfiguration the README warns about: the
+/// gateway set its own copy and a client-supplied one survived alongside it. The adapter
+/// cannot tell the two apart — `HeaderMap::get` would return whichever arrived first —
+/// so there is no correct value to choose and choosing one silently is the worst
+/// available outcome. Refused before the PDP, like a missing header: nothing was
+/// evaluated, so nothing is recorded.
+///
+/// Applies to all three forwarded headers, not only the subject. A gateway that forgets
+/// one `request_headers_to_remove` entry usually forgets the rest, and the method header
+/// is the sharper case: a client copy arriving ahead of the gateway's has the PDP
+/// authorize the `Read` it can see while the gateway forwards the `Write` it cannot —
+/// the fail-open the comment above those reads already warns about.
+///
+/// This does not catch a client copy that REPLACES the gateway's rather than sitting
+/// beside it. Nothing at this layer can. The gateway remains responsible for stripping
+/// client-supplied copies; this only makes the common way of forgetting it loud.
+fn refused_duplicated(name: &HeaderName, count: usize) -> Response {
+    eprintln!(
+        "check: status=403 decision=deny error=\"forwarded header '{name}' present {count} times; \
+         gateway must strip client-supplied copies\""
+    );
+    let mut res_headers = HeaderMap::new();
+    res_headers.insert("x-decern-decision", HeaderValue::from_static("deny"));
+    (
+        StatusCode::FORBIDDEN,
+        res_headers,
+        "Duplicated forwarded header",
+    )
+        .into_response()
+}
+
 /// Axum handler for `POST /check` (and `GET /check`).
 pub async fn check_handler(State(st): State<AppState>, headers: HeaderMap) -> Response {
     let start_time = Instant::now();
 
-    // 1. Extract subject identity header
+    // 1. Extract subject identity header.
     let subject_id = match forwarded(&headers, &st.subject_header) {
-        Some(v) => v,
-        None => return refused_missing(&st.subject_header),
+        Forwarded::Present(v) => v,
+        Forwarded::Missing => return refused_missing(&st.subject_header),
+        Forwarded::Duplicated(copies) => return refused_duplicated(&st.subject_header, copies),
     };
 
     // 2. Extract forwarded action (method) and resource (URI). Refused when absent,
     // exactly like the subject: a gateway that forwards who is calling but not what
     // they asked for would otherwise have every request evaluated under a default —
     // a write authorized as a Read is the fail-open this adapter exists to prevent.
+    // A duplicate of either is the same fail-open arriving by a different route: a
+    // client copy of the method header ahead of the gateway's has the PDP authorize
+    // the Read it can see while the gateway forwards the Write it cannot.
     let action_name = match forwarded(&headers, &st.method_header) {
-        Some(v) => v,
-        None => return refused_missing(&st.method_header),
+        Forwarded::Present(v) => v,
+        Forwarded::Missing => return refused_missing(&st.method_header),
+        Forwarded::Duplicated(copies) => return refused_duplicated(&st.method_header, copies),
     };
     let resource_id = match forwarded(&headers, &st.uri_header) {
-        Some(v) => v,
-        None => return refused_missing(&st.uri_header),
+        Forwarded::Present(v) => v,
+        Forwarded::Missing => return refused_missing(&st.uri_header),
+        Forwarded::Duplicated(copies) => return refused_duplicated(&st.uri_header, copies),
     };
 
     // 3. Evaluate decision against PDP
