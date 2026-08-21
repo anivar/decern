@@ -617,3 +617,118 @@ async fn test_single_subject_header_still_allowed() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_duplicated_method_header_refused() {
+    // The sharper of the two the subject check missed. If a client copy of the method
+    // header arrives ahead of the gateway's, `get()` returns `Read` while the real
+    // request is a `Write`: the PDP authorizes the Read, the adapter answers 200, and
+    // the gateway forwards the Write. That is the fail-open the comment above these
+    // reads already warns about, reached by a different route.
+    let (pdp_url, mode, last_auth) = spawn_mock_pdp().await;
+    mode.store(0, Ordering::SeqCst); // PDP would ALLOW, so a pass-through would return 200
+
+    let app = build_adapter_router_full(
+        &pdp_url,
+        "x-forwarded-subject",
+        Some("secret_access_token_123"),
+    );
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/check")
+        .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-method", "Read")
+        .header("x-forwarded-method", "Write")
+        .header("x-forwarded-uri", "/claims/claim1")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        resp.headers()
+            .get("x-decern-decision")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "deny"
+    );
+    assert!(
+        last_auth.lock().await.is_none(),
+        "a duplicated method header must be refused before the PDP is consulted"
+    );
+}
+
+#[tokio::test]
+async fn test_duplicated_uri_header_refused() {
+    // Same shape on the resource: the decision would be evaluated against a path the
+    // client supplied while the request goes somewhere else.
+    let (pdp_url, mode, last_auth) = spawn_mock_pdp().await;
+    mode.store(0, Ordering::SeqCst);
+
+    let app = build_adapter_router_full(
+        &pdp_url,
+        "x-forwarded-subject",
+        Some("secret_access_token_123"),
+    );
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/check")
+        .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-method", "Read")
+        .header("x-forwarded-uri", "/claims/claim1")
+        .header("x-forwarded-uri", "/admin")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert!(
+        last_auth.lock().await.is_none(),
+        "a duplicated uri header must be refused before the PDP is consulted"
+    );
+}
+
+#[tokio::test]
+async fn test_duplicated_method_header_refused_even_when_copies_agree() {
+    // Same reasoning as the subject: the adapter cannot tell which copy the gateway
+    // set, so agreement between them is not evidence the client did not supply one.
+    let (pdp_url, mode, _) = spawn_mock_pdp().await;
+    mode.store(0, Ordering::SeqCst);
+
+    let app = build_adapter_router(&pdp_url);
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/check")
+        .header("x-forwarded-subject", "corp")
+        .header("x-forwarded-method", "Read")
+        .header("x-forwarded-method", "Read")
+        .header("x-forwarded-uri", "/claims/claim1")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_duplicated_method_header_honours_custom_subject_header_name() {
+    // The three headers are read through one helper, so a custom --subject-header must
+    // not change how the other two are checked.
+    let (pdp_url, mode, _) = spawn_mock_pdp().await;
+    mode.store(0, Ordering::SeqCst);
+
+    let app = build_adapter_router_with_subject_header(&pdp_url, "X-Forwarded-User");
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/check")
+        .header("X-Forwarded-User", "corp")
+        .header("X-Forwarded-Method", "Read")
+        .header("X-Forwarded-Method", "Write")
+        .header("X-Forwarded-Uri", "/claims/claim1")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
