@@ -59,6 +59,19 @@ A change with nothing for a user to notice does not need a fragment: a refactor,
 CI. Say so in the pull request and apply the `no-changelog` label; the check looks for that label
 before it fails.
 
+## What counts as shipped code
+
+The check asks for a fragment when a change touches `crates/`, `sdks/`, an `examples/*/src/` tree,
+or `examples/mcp/server.py`. Those last two are the examples that are *components* — a binary
+people deploy in front of a gateway, and an MCP server people run — rather than walkthroughs.
+
+It does not ask for one when the change is a walkthrough script (`run.sh`, `mint.py`, `sign.py`),
+a test, a model fixture, a README or a lockfile. Those either cannot change what a deployment
+does, or say nothing a reader of the release notes would act on.
+
+The line is drawn at `src/` deliberately. An earlier attempt matched file extensions instead and
+asked for a fragment on `examples/aauth/mint.py`, which generates fixed public demo keys.
+
 ## Releasing
 
 ```bash
