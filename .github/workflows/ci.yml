@@ -65,8 +65,26 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           changed="$(git diff --name-only "${BASE}" "${HEAD}")"
-          # Only shipped code counts: docs, CI and the agent method are not user-visible releases.
-          if ! echo "${changed}" | grep -qE '^(crates|sdks)/'; then
+          # Shipped code is anything a reader of the release notes can run. The crates and the
+          # SDKs, plus the two examples that are components rather than walkthroughs:
+          # ext_authz_adapter (a binary people deploy in front of a gateway) and the MCP
+          # server. `examples/` was outside this rule until a behaviour change in the adapter —
+          # a duplicated forwarded header going from "authorize whichever copy arrived first"
+          # to a 403 — passed the gate with nothing in the release notes. A deployment whose
+          # gateway appends rather than replaces those headers starts being refused, which is
+          # exactly what a reader needed to be told.
+          #
+          # Deliberately NOT covered, and each for its own reason:
+          #   examples/*/run.sh, mint.py, sign.py   walkthrough scaffolding; the keys are fixed
+          #                                          and public and prove nothing outside the demo
+          #   examples/*/tests/                      a test is not a user-visible change
+          #   examples/*/model/, README.md           fixtures and prose
+          #   examples/*/Cargo.lock                  a version bump, not behaviour
+          #   docs/, .agent/, .github/, scripts/     none of it changes what a release does
+          #
+          # Matching on `src/` rather than a file-extension list is what keeps that split
+          # honest: an extension list caught mint.py, which is a demo key generator.
+          if ! echo "${changed}" | grep -qE '^(crates|sdks)/|^examples/[^/]+/src/|^examples/mcp/server\.py$'; then
             echo "No shipped code touched — no fragment needed."
             exit 0
           fi
@@ -74,7 +92,8 @@ jobs:
             echo "Fragment present."
             exit 0
           fi
-          echo "::error::This pull request changes crates/ or sdks/ but adds no changelog.d/ entry."
+          echo "::error::This pull request changes shipped code (crates/, sdks/, or an example"
+          echo "component) but adds no changelog.d/ entry."
           echo "Add one (see changelog.d/README.md), or apply the 'no-changelog' label if a user"
           echo "would notice nothing — a refactor, a test, a comment."
           exit 1
