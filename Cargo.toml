@@ -53,7 +53,7 @@ ed25519-dalek = "2"
 # JWT-SVID). Pure Rust, and the only ES/RS family member that can enter this tree:
 # RS*/PS* need the `rsa` crate, which carries an unpatched RUSTSEC-2023-0071, and
 # deny.toml runs with `ignore = []`.
-p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
 sha2 = "0.10"
 base64 = "0.22"
 hex = "0.4"
