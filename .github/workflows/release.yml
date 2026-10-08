@@ -5,9 +5,12 @@ on:
   push:
     tags: ["v*"]
 
+# Read-only by default. The build matrix only checks out and compiles; the two write grants
+# the release needs are scoped to the one job that signs and publishes, below, so a step
+# running in the matrix never holds a token that can create a release or mint an OIDC
+# identity.
 permissions:
-  contents: write # create the release
-  id-token: write # cosign keyless signing via OIDC
+  contents: read
 
 jobs:
   build:
@@ -61,6 +64,9 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+      id-token: write # cosign keyless signing via OIDC
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 

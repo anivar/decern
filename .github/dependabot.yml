@@ -15,12 +15,16 @@ updates:
         update-types: [minor, patch]
     # cedar-policy and cedar-policy-symcc are pinned exactly (`=`) because the
     # proof harness is built against one cedar version at a time; they move
-    # together, by hand, with a proof run — never by a Dependabot PR.
+    # together, by hand, with a proof run — never by a Dependabot PR. Major
+    # versions of anything are also by hand: a major bump of a crypto or
+    # protocol crate is a change to read, not a PR to wave through.
     ignore:
       - dependency-name: cedar-policy
       - dependency-name: cedar-policy-core
       - dependency-name: cedar-policy-formatter
       - dependency-name: cedar-policy-symcc
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: cargo
     directory: /examples/ext_authz_adapter
     schedule:
@@ -29,6 +33,9 @@ updates:
     groups:
       cargo-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -42,13 +49,22 @@ updates:
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: pip
     directory: /sdks/python
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: gomod
     directory: /sdks/go
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
