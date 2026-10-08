@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+# OpenSSF Scorecard: an outside, automated read of this repository's security
+# practices (branch protection, pinned dependencies, signed releases, token
+# permissions, dependency updates). Results are published to the Scorecard API
+# so the README badge reflects the current score, and uploaded as SARIF so each
+# finding appears under Security → Code scanning.
+name: Scorecard
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload the SARIF to code scanning
+      id-token: write # publish_results signs the upload with an OIDC token
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b # v3
+        with:
+          sarif_file: results.sarif
