@@ -671,7 +671,7 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "hex",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "thiserror",
  "zeroize",
 ]
@@ -686,7 +686,7 @@ dependencies = [
  "decern-store",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "thiserror",
 ]
 
@@ -712,7 +712,7 @@ dependencies = [
  "ryu-js",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "thiserror",
 ]
 
@@ -747,7 +747,7 @@ dependencies = [
  "p256",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "tokio",
  "tower",
 ]
