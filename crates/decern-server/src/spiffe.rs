@@ -168,8 +168,12 @@ fn p256_key(x_b64: &str, y_b64: &str) -> Result<VerifyingKey, String> {
         x.try_into().map_err(|_| "x is not 32 bytes")?,
         y.try_into().map_err(|_| "y is not 32 bytes")?,
     );
-    let point = p256::EncodedPoint::from_affine_coordinates(&x.into(), &y.into(), false);
-    VerifyingKey::from_encoded_point(&point)
+    let point = p256::elliptic_curve::sec1::Sec1Point::<p256::NistP256>::from_affine_coordinates(
+        &x.into(),
+        &y.into(),
+        false,
+    );
+    VerifyingKey::from_sec1_point(&point)
         .ok()
         .ok_or_else(|| "x/y is not a point on P-256".into())
 }
@@ -484,7 +488,7 @@ mod tests {
 
     /// A bundle entry for `k`, in the shape §6.1 requires.
     fn jwk(k: &SigningKey, kid: &str, use_: &str) -> Value {
-        let vk = k.verifying_key().to_encoded_point(false);
+        let vk = k.verifying_key().to_sec1_point(false);
         json!({
             "kty": "EC",
             "crv": "P-256",
