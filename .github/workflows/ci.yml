@@ -6,6 +6,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # A weekly run on an unchanged tree: the supply-chain gate (`cargo deny`) and the
+  # proofs can go red without a commit — a new advisory, a yanked crate, a solver
+  # release — and a badge that only reflects the last push would keep reading green.
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
