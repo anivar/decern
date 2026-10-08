@@ -30,7 +30,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - id: v
         run: |
@@ -58,7 +58,7 @@ jobs:
     permissions:
       id-token: write # mint the OIDC token PyPI trusts; nothing else is needed
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build sdist and wheel
         working-directory: sdks/python
@@ -82,7 +82,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Trusted publishing needs npm >= 11.5.1, which the runner does not ship, so npm is
       # upgraded. Current npm requires a Node newer than a pinned patch would hold: npm 12
