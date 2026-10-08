@@ -16,6 +16,7 @@ operator. What that covers, and what it deliberately does not, is
 
 <p align="center">
   <a href="https://github.com/anivar/decern/actions/workflows/ci.yml"><img alt="CI" src="https://anivar.net/badge?src=ci&repo=anivar/decern"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/anivar/decern"><img alt="OpenSSF Scorecard" src="https://api.securityscorecards.dev/projects/github.com/anivar/decern/badge"></a>
   <a href="https://crates.io/crates/decern-cli"><img alt="crates.io" src="https://anivar.net/badge?src=crates&name=decern-cli"></a>
   <a href="https://docs.rs/decern-ledger"><img alt="docs.rs" src="https://anivar.net/badge?src=docsrs&name=decern-ledger"></a>
   <a href="https://pypi.org/project/decern/"><img alt="PyPI" src="https://anivar.net/badge?src=pypi&name=decern"></a>
