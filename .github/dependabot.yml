@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+# Dependency updates, grouped weekly so the supply-chain gate (`cargo deny` in
+# scripts/verify.sh) is exercised against current versions rather than against
+# whatever was pinned at the last release. Security updates are not grouped and
+# arrive as soon as the advisory does.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+    # cedar-policy and cedar-policy-symcc are pinned exactly (`=`) because the
+    # proof harness is built against one cedar version at a time; they move
+    # together, by hand, with a proof run — never by a Dependabot PR.
+    ignore:
+      - dependency-name: cedar-policy
+      - dependency-name: cedar-policy-core
+      - dependency-name: cedar-policy-formatter
+      - dependency-name: cedar-policy-symcc
+  - package-ecosystem: cargo
+    directory: /examples/ext_authz_adapter
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+  - package-ecosystem: npm
+    directory: /sdks/typescript
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: pip
+    directory: /sdks/python
+    schedule:
+      interval: weekly
+      day: monday
+  - package-ecosystem: gomod
+    directory: /sdks/go
+    schedule:
+      interval: weekly
+      day: monday
