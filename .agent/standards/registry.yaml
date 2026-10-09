@@ -29,6 +29,7 @@ standards:
       - crates/decern-server/src/decide.rs
       - crates/decern-server/src/routes.rs
       - crates/decern-server/src/audit.rs
+      - crates/decern-server/src/batch.rs
       - crates/decern-server/src/authzen_certification.rs
       - examples/authzen-certification/
     conformance: >-
@@ -43,10 +44,14 @@ standards:
       policy can read it, while declared context keeps its schema validation; X-Request-ID
       is echoed (§10.1.3). Request entity types map onto the model's with
       --authzen-type-alias. GET /.well-known/authzen-configuration (§9) is served only with
-      --public-url and advertises the decision point and the evaluation endpoint, nothing
-      unserved. The certification scenario's Basic Core, Basic Properties and Discovery
-      sub-levels run as tests against examples/authzen-certification/model; Batch and
-      Search are not implemented. Reasons carry named policy ids on the builtin model, and
+      --public-url and advertises the decision point and the evaluation and evaluations
+      endpoints, nothing unserved. POST /access/v1/evaluations (§7) carries several
+      evaluations with top-level defaults an item replaces whole, the three semantics, and
+      one record per evaluated item before the batch is served; an item that is not an
+      evaluation is decision false with the reason in its context (§7.2.1). The
+      certification scenario's Basic and Batch levels (Core and Properties) and Discovery
+      run as tests against examples/authzen-certification/model; Search is not
+      implemented. Reasons carry named policy ids on the builtin model, and
       the endpoint sits behind whichever caller posture the deployment names, which AuthZEN
       leaves to the deployment. Verified against the spec 2026-10-09.
 

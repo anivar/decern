@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
 //! The OpenID AuthZEN *Authorization API 1.0* certification scenario
-//! (`openid/authzen`, `certification/authorization-api-1_0-scenario.md`), Basic Core, Basic
-//! Properties and Discovery sub-levels, run in-process against the certification model in
+//! (`openid/authzen`, `certification/authorization-api-1_0-scenario.md`): the Basic and
+//! Batch levels, Core and Properties, and Discovery, run in-process against the certification model in
 //! `examples/authzen-certification/model`. Each test names the scenario test it is; the
 //! requests are the scenario's own, byte for byte where it gives them.
 //!
-//! Batch and Search are not here, and the README says so.
+//! Search is not here, and the README says so.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -274,7 +274,15 @@ async fn the_metadata_document_names_the_decision_point_and_only_what_is_served(
         doc["access_evaluation_endpoint"],
         format!("{PUBLIC_URL}/access/v1/evaluation")
     );
-    for absent in ["access_evaluations_endpoint", "search_subject_endpoint"] {
+    assert_eq!(
+        doc["access_evaluations_endpoint"],
+        format!("{PUBLIC_URL}/access/v1/evaluations")
+    );
+    for absent in [
+        "search_subject_endpoint",
+        "search_resource_endpoint",
+        "search_action_endpoint",
+    ] {
         assert!(
             doc.get(absent).is_none(),
             "{absent} is not served and must not be advertised"
@@ -420,5 +428,362 @@ async fn the_record_carries_declared_properties_and_nothing_else() {
     assert!(
         ctx.get("action").is_none(),
         "write declares no action properties: {ctx}"
+    );
+}
+
+/// `POST /access/v1/evaluations` with a JSON body, under `--trust-proxy`.
+async fn evaluations(st: &AppState, body: &Value) -> (StatusCode, Value) {
+    let resp = app(st.clone(), open())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/access/v1/evaluations")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    body_json(resp).await
+}
+
+fn decisions(resp: &Value) -> Vec<Value> {
+    resp["evaluations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("evaluations array: {resp}"))
+        .iter()
+        .map(|e| e["decision"].clone())
+        .collect()
+}
+
+fn records_in(base: &TempBase, st: &AppState) -> Vec<Value> {
+    let ledger = base.0.join("ledger.jsonl");
+    decern_ledger::read_verified(&ledger, Some(&st.pubkey), 0, 10_000)
+        .map(|(_, records)| records)
+        .unwrap_or_default()
+}
+
+/// C-3-2-1, C-3-2-2, C-3-2-5, C-3-2-6, C-3-3-x: the Batch Core requests, answered in
+/// request order with the defaults filled in and no top-level decision.
+#[tokio::test]
+async fn batch_core_decides_in_request_order_with_defaults_filled_in() {
+    let (st, _base) = fixture_state();
+    // C-3-2-1: structure.
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "evaluations": [
+                { "resource": { "type": "record", "id": "record-1" } },
+                { "resource": { "type": "record", "id": "record-2" } },
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert!(decisions(&resp).iter().all(Value::is_boolean), "{resp}");
+    assert_eq!(decisions(&resp).len(), 2, "{resp}");
+    assert!(
+        resp.get("decision").is_none(),
+        "no top-level decision: {resp}"
+    );
+    // C-3-2-2: rules 3 and 4, in order.
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "subject": { "type": "user", "id": "bob" },
+            "resource": { "type": "record", "id": "record-1" },
+            "evaluations": [{ "action": { "name": "read" } }, { "action": { "name": "write" } }],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(decisions(&resp), [json!(true), json!(false)], "{resp}");
+    // C-3-2-5: fully specified items, no defaults.
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "evaluations": [
+                { "subject": { "type": "user", "id": "alice" }, "action": { "name": "read" },
+                  "resource": { "type": "record", "id": "record-1" } },
+                { "subject": { "type": "user", "id": "bob" }, "action": { "name": "write" },
+                  "resource": { "type": "record", "id": "record-1" } },
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(decisions(&resp), [json!(true), json!(false)], "{resp}");
+    // C-3-2-6: a top-level context, overridden whole by the second item.
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "context": { "time": "2025-06-27T18:03-07:00" },
+            "evaluations": [
+                { "resource": { "type": "record", "id": "record-1" } },
+                { "resource": { "type": "record", "id": "record-2" },
+                  "context": { "time": "2025-06-27T19:00-07:00", "source": "batch-override" } },
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(decisions(&resp), [json!(true), json!(true)], "{resp}");
+}
+
+/// C-3-2-3, C-3-2-4, C-3-2-7: properties are evaluated per item, and a key an item carries
+/// replaces the top-level default whole.
+#[tokio::test]
+async fn batch_properties_are_evaluated_per_item() {
+    let (st, _base) = fixture_state();
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "write" },
+            "evaluations": [
+                { "resource": { "type": "record", "id": "record-1", "properties": { "status": "active" } } },
+                { "resource": { "type": "record", "id": "record-2", "properties": { "status": "archived" } } },
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(
+        decisions(&resp),
+        [json!(true), json!(false)],
+        "C-3-2-3: {resp}"
+    );
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "action": { "name": "write" },
+            "resource": { "type": "record", "id": "record-2", "properties": { "status": "archived" } },
+            "evaluations": [
+                { "subject": { "type": "user", "id": "alice" } },
+                { "subject": { "type": "user", "id": "bob", "properties": { "role": "admin" } } },
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(
+        decisions(&resp),
+        [json!(false), json!(true)],
+        "C-3-2-4: {resp}"
+    );
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "write" },
+            "resource": { "type": "record", "id": "record-1", "properties": { "status": "active" } },
+            "evaluations": [
+                {},
+                { "resource": { "type": "record", "id": "record-2", "properties": { "status": "archived" } } },
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(
+        decisions(&resp),
+        [json!(true), json!(false)],
+        "C-3-2-7: {resp}"
+    );
+}
+
+/// C-3-4-1: under `execute_all`, an item that is not an evaluation is answered
+/// `decision: false` with the reason in its context, in its place, and nothing is recorded
+/// for it — it decided nothing.
+#[tokio::test]
+async fn a_batch_item_that_is_not_an_evaluation_is_denied_in_place_and_not_recorded() {
+    let (st, base) = fixture_state();
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "options": { "evaluations_semantic": "execute_all" },
+            "evaluations": [{ "resource": { "type": "record", "id": "record-1" } }, {}],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(decisions(&resp), [json!(true), json!(false)], "{resp}");
+    let errors = &resp["evaluations"][1]["context"]["errors"];
+    assert!(
+        errors[0].as_str().is_some_and(|e| e.contains("resource")),
+        "the reason names what is missing: {resp}"
+    );
+    let records = records_in(&base, &st);
+    assert_eq!(
+        records.len(),
+        1,
+        "only the evaluated item is recorded: {records:?}"
+    );
+    assert_eq!(records[0]["entry"]["resource_id"], "record-1");
+}
+
+/// C-3-4-2, C-3-4-3: no items, or an empty array, is the single evaluation — in request
+/// and in answer.
+#[tokio::test]
+async fn a_batch_without_items_is_the_single_evaluation() {
+    let (st, _base) = fixture_state();
+    for body in [
+        json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "resource": { "type": "record", "id": "record-1" },
+        }),
+        json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "resource": { "type": "record", "id": "record-1" },
+            "evaluations": [],
+        }),
+    ] {
+        let (status, resp) = evaluations(&st, &body).await;
+        assert_eq!(status, StatusCode::OK, "{resp}");
+        assert_eq!(resp["decision"], true, "{resp}");
+        assert!(resp.get("evaluations").is_none(), "{resp}");
+    }
+    // And a single evaluation that is not one is 400, as on the single endpoint.
+    let (status, resp) = evaluations(
+        &st,
+        &json!({ "subject": { "type": "user", "id": "alice" }, "action": { "name": "read" } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+}
+
+/// §7.1.2.1: `deny_on_first_deny` stops at the first deny, `permit_on_first_permit` at
+/// the first permit, `execute_all` at the end; a semantic this server does not know is
+/// refused rather than executed as another.
+#[tokio::test]
+async fn batch_semantics_stop_where_the_specification_says() {
+    let (st, base) = fixture_state();
+    let items = json!([
+        { "subject": { "type": "user", "id": "alice" }, "action": { "name": "read" } },
+        { "subject": { "type": "user", "id": "bob" }, "action": { "name": "write" } },
+        { "subject": { "type": "user", "id": "alice" }, "action": { "name": "write" } },
+    ]);
+    for (semantic, expect) in [
+        ("execute_all", vec![true, false, true]),
+        ("deny_on_first_deny", vec![true, false]),
+        ("permit_on_first_permit", vec![true]),
+    ] {
+        let (status, resp) = evaluations(
+            &st,
+            &json!({
+                "resource": { "type": "record", "id": "record-1" },
+                "options": { "evaluations_semantic": semantic },
+                "evaluations": items,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{semantic}: {resp}");
+        assert_eq!(
+            decisions(&resp),
+            expect.iter().map(|d| json!(d)).collect::<Vec<_>>(),
+            "{semantic}: {resp}"
+        );
+    }
+    // Every evaluated item, and only those, is on the record: 3 + 2 + 1.
+    assert_eq!(records_in(&base, &st).len(), 6);
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "resource": { "type": "record", "id": "record-1" },
+            "options": { "evaluations_semantic": "first_come_first_served" },
+            "evaluations": items,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+    assert_eq!(resp["error"], "invalid_request");
+}
+
+/// Admission is for the whole exchange and comes first: a caller bound to itself that
+/// names another principal in any item is refused before anything is evaluated or
+/// recorded.
+#[tokio::test]
+async fn a_batch_is_refused_whole_when_one_item_is_not_the_callers_to_ask() {
+    let (st, base) = fixture_state();
+    let req: crate::batch::BatchReq = serde_json::from_value(json!({
+        "action": { "name": "read" },
+        "resource": { "type": "record", "id": "record-1" },
+        "evaluations": [
+            { "subject": { "type": "user", "id": "bob" } },
+            { "subject": { "type": "user", "id": "alice" } },
+        ],
+    }))
+    .unwrap();
+    let workload =
+        crate::caller::Authenticated::new("bob", "bob", "https://iss.example/").self_only();
+    let (status, resp) = body_json(
+        crate::batch::evaluations(
+            State(st.clone()),
+            Some(axum::Extension(workload)),
+            Ok(Json(req)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(resp["error"], "caller_mismatch");
+    assert!(records_in(&base, &st).is_empty(), "nothing was recorded");
+
+    // An item that is not an evaluation still names whom it names: the refusal does not
+    // hide behind a malformed item's per-item deny.
+    let req: crate::batch::BatchReq = serde_json::from_value(json!({
+        "action": { "name": "read" },
+        "evaluations": [
+            { "subject": { "type": "user", "id": "bob" },
+              "resource": { "type": "record", "id": "record-1" } },
+            { "subject": { "type": "user", "id": "alice" } },
+        ],
+    }))
+    .unwrap();
+    let workload =
+        crate::caller::Authenticated::new("bob", "bob", "https://iss.example/").self_only();
+    let (status, resp) = body_json(
+        crate::batch::evaluations(
+            State(st.clone()),
+            Some(axum::Extension(workload)),
+            Ok(Json(req)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert!(records_in(&base, &st).is_empty(), "nothing was recorded");
+}
+
+/// A bounded exchange: one over the cap is refused with the cap named.
+#[tokio::test]
+async fn a_batch_over_the_cap_is_refused() {
+    let (st, _base) = fixture_state();
+    let items: Vec<Value> = (0..=crate::batch::MAX_EVALUATIONS)
+        .map(|_| json!({ "resource": { "type": "record", "id": "record-1" } }))
+        .collect();
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "evaluations": items,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+    assert!(
+        resp["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains(&crate::batch::MAX_EVALUATIONS.to_string())),
+        "{resp}"
     );
 }

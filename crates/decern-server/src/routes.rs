@@ -11,6 +11,7 @@ use axum::routing::{get, post};
 use crate::audit::{
     authzen_configuration, descendants, pubkey, subject_audit, subject_side_disclosure, tree_head,
 };
+use crate::batch::evaluations;
 use crate::decide::decide;
 use crate::mission::{mission_approve, mission_get, mission_terminate};
 use crate::{AppState, caller};
@@ -46,6 +47,8 @@ pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
         // AuthZEN Authorization API 1.0 Access Evaluation endpoint; /decide is a friendly alias.
         .route("/access/v1/evaluation", post(decide))
         .route("/decide", post(decide))
+        // Access Evaluations (§7): the same decisions, several to an exchange.
+        .route("/access/v1/evaluations", post(evaluations))
         // Mission lifecycle. The read is guarded with the mutations: mission state is what a
         // PEP consults before honoring a grant, and the reference is a digest of fields an
         // outsider may be able to guess — it is not a subject-side surface.
@@ -368,6 +371,7 @@ mod tests {
         // refused as 401, never answered 405 by a handler-side default.
         for (method, uri) in [
             ("POST", "/access/v1/evaluation"),
+            ("POST", "/access/v1/evaluations"),
             ("POST", "/decide"),
             ("GET", "/decide"),
             ("POST", "/mission/v1/approve"),
