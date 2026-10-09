@@ -200,7 +200,7 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 
 | Method | Path | Caller | What |
 |---|---|---|---|
-| `POST` | `/access/v1/evaluation` | guarded | The decision. AuthZEN-shaped. `/decide` is an alias. |
+| `POST` | `/access/v1/evaluation` | guarded | The decision. AuthZEN 1.0: `subject`/`resource` `{type,id,properties?}`, `action` `{name,properties?}`, optional `context`; `properties` reach the policies as `context.subject`/`context.resource`/`context.action` where the model declares them, from PEP-bound callers only. `/decide` is an alias. |
 | `GET` | `/pubkey` | open | The key records are signed with, so a verifier can fetch it once and keep it. |
 | `GET` | `/anchor/v1/tree-head` | open | A signed commitment to the log's current state — publish it somewhere you do not control. |
 | `GET` | `/audit/v1/subject?handle=<h>` | open | What was decided *about* one party, with inclusion proofs. |
@@ -238,9 +238,12 @@ names one posture:
   agent must equal the AuthZEN `subject`, the mission `approver`, the stored approver on
   terminate, and the principal id on `/directory/v1/principals/{id}/descendants`, unless it is
   listed in `--pep`. A mismatch is `403 caller_mismatch` — the credential was accepted, the
-  name is not theirs. Verification is against configured keys only, same no-fetch posture as
-  bearer validation, and an agent identifier with no configured key is refused before any
-  cryptography runs.
+  name is not theirs. The same bind covers a request's `properties`, what a PEP says about the
+  subject, resource or action (carried into the context as `context.subject`,
+  `context.resource` and `context.action` where the action's schema declares them): a caller
+  bound to itself may not describe a party, and that too is `403 caller_mismatch`.
+  Verification is against configured keys only, same no-fetch posture as bearer validation,
+  and an agent identifier with no configured key is refused before any cryptography runs.
   [`examples/signed-request/`](../examples/signed-request/README.md) runs this mode end to end,
   including the beat that separates it from a bearer credential: the *same* token, refused when the
   signature comes from a different key, and the beats that refuse an authenticated agent asking
@@ -260,7 +263,8 @@ names one posture:
   A verified `spiffe://…` identity is recorded as the caller on the decision. Like a
   signed-request agent it is a **workload**, so unless it is listed in `--pep` it may only name
   itself as AuthZEN `subject`, mission `approver`, stored approver on terminate, and directory
-  principal; a mismatch is `403 caller_mismatch`. It is never minted into the authority graph
+  principal, and may not describe a party with `properties`; either is `403 caller_mismatch`.
+  It is never minted into the authority graph
   either: what a decision may be *about* is unchanged, and stays closed-world exactly as under
   every other posture.
 - **`--trust-proxy`**: every caller is accepted, because the operator states that something in
@@ -277,9 +281,9 @@ enforcement point asking about other parties is the entire job. `--trust-proxy` 
 identity to bind in the first place.
 
 The workload postures are the opposite. A signed-request, SPIFFE or AAuth caller may only
-name itself as subject, approver, stored approver on terminate, and directory principal; a
-mismatch is `403 caller_mismatch`. `--pep` is the way out for a workload that genuinely is
-a gateway.
+name itself as subject, approver, stored approver on terminate, and directory principal, and
+may not describe a party with `properties`; a mismatch is `403 caller_mismatch`. `--pep` is
+the way out for a workload that genuinely is a gateway.
 
 The corollary is easy to miss: a bearer token issued to a workload is a PEP credential, and
 carries no bind at all. If your caller is a workload, give it a workload posture.

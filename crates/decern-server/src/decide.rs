@@ -18,17 +18,25 @@ use serde_json::{Value, json};
 use crate::record::{append_to_backend, record_and_respond, shard_for};
 use crate::{AppState, challenge, now_secs};
 
+/// AuthZEN subject or resource: a `type`, an `id`, and optionally `properties` — what the
+/// PEP says about the party, carried into the context under the party's name
+/// (`context.subject`, `context.resource`) where the action's schema declares it.
 #[derive(Deserialize)]
 struct Ref {
     #[serde(rename = "type")]
     ty: String,
     id: String,
+    #[serde(default)]
+    properties: Option<serde_json::Map<String, Value>>,
 }
 
-/// AuthZEN action: an object with a `name` (optional `properties` are accepted and ignored).
+/// AuthZEN action: an object with a `name`, and optionally `properties`, carried as
+/// `context.action` where the schema declares it.
 #[derive(Deserialize)]
 struct Action {
     name: String,
+    #[serde(default)]
+    properties: Option<serde_json::Map<String, Value>>,
 }
 
 #[derive(Deserialize)]
@@ -133,7 +141,7 @@ pub(crate) async fn decide(
     // 415 and 422; one status and one shape here, with the extractor's own text as the
     // detail. A well-formed request that fails a decern check further down keeps its
     // own status (a decision-subject or standing refusal is 422, a binding refusal 403).
-    let Json(req) = match req {
+    let Json(mut req) = match req {
         Ok(req) => req,
         Err(rejection) => {
             return (
@@ -144,6 +152,20 @@ pub(crate) async fn decide(
         }
     };
     if let Some(refusal) = crate::caller::refuse_unless_admits(&caller, &req.subject.id) {
+        return refusal;
+    }
+    // What the PEP says about each party, taken out before the parties are moved below.
+    // An empty `properties` says nothing, and a client that always sends the key must not
+    // be refused for it.
+    let described = [
+        ("subject", req.subject.properties.take()),
+        ("resource", req.resource.properties.take()),
+        ("action", req.action.properties.take()),
+    ]
+    .map(|(key, p)| (key, p.filter(|m| !m.is_empty())));
+    if described.iter().any(|(_, p)| p.is_some())
+        && let Some(refusal) = crate::caller::refuse_description_unless_pep(&caller)
+    {
         return refusal;
     }
     // Who asserted this request, when the guard verified a token. Under a trusted
@@ -168,6 +190,21 @@ pub(crate) async fn decide(
     // sole time source for the decay/expiry gate, so honoring a caller's `now`
     // would let `{"now":0}` win an Allow for an expired principal.
     ctx["now"] = json!(now_s);
+    // A description of a party is carried under the party's name — `context.subject`,
+    // `context.resource`, `context.action` — where the action declares it; the rest is
+    // pruned before the check. The three keys are reserved for the `properties` field the
+    // description gate above admits: whatever a caller wrote there directly is removed
+    // first, so there is no second way to describe a party.
+    if let Some(obj) = ctx.as_object_mut() {
+        for (key, _) in &described {
+            obj.remove(*key);
+        }
+    }
+    for (key, properties) in described {
+        if let Some(properties) = properties {
+            ctx[key] = Value::Object(properties);
+        }
+    }
     // A caller-supplied `asserted_by` key in the request context must not appear
     // on the permanent record alongside the server-derived top-level column.
     if let Some(obj) = ctx.as_object_mut() {
@@ -520,7 +557,7 @@ mod tests {
 
     #[test]
     fn accepts_authzen_request_shape() {
-        // AuthZEN 1.0: action is an object with a `name`; optional `properties` are ignored.
+        // AuthZEN 1.0: action is an object with a `name`; `properties` is optional.
         let req: DecideReq = serde_json::from_str(
             r#"{"subject":{"type":"Principal","id":"corp"},
                 "action":{"name":"Read","properties":{}},

@@ -10,7 +10,7 @@
 
 pub mod graph;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -118,10 +118,9 @@ impl CheckResponse {
 
 pub struct Kernel {
     schema: Schema,
-    /// Per action, the context attributes the schema declares — the only context a
-    /// validated policy can read. `None` where the declaration is not a record this
-    /// kernel can enumerate, and nothing is pruned for that action.
-    context_attrs: BTreeMap<String, Option<BTreeSet<String>>>,
+    /// Per action, the shape of the context the schema declares — the only context a
+    /// validated policy can read.
+    context_shape: BTreeMap<String, Declared>,
     policies: PolicySet,
     entities: Entities,
     directory: Directory,
@@ -135,7 +134,7 @@ impl Kernel {
     pub fn new(model: &Model) -> Result<Self, KernelError> {
         let (schema, _warnings) = Schema::from_cedarschema_str(&model.schema)
             .map_err(|e| KernelError::Schema(e.to_string()))?;
-        let context_attrs = declared_context_attrs(&model.schema)?;
+        let context_shape = declared_context_shape(&model.schema)?;
 
         let policies =
             PolicySet::from_str(&model.policies).map_err(|e| KernelError::Policy(e.to_string()))?;
@@ -187,7 +186,7 @@ impl Kernel {
 
         Ok(Kernel {
             schema,
-            context_attrs,
+            context_shape,
             policies,
             entities,
             directory,
@@ -199,27 +198,17 @@ impl Kernel {
         &self.directory
     }
 
-    /// Drop the context attributes `action` does not declare, and name them. A validated
-    /// policy can read only declared attributes, so an undeclared one cannot bear on the
-    /// decision; what it can do is make `check` refuse the whole context as malformed.
-    /// AuthZEN 1.0 (§10.1.1) has a PDP ignore what it does not know, and this is how a
-    /// server does that without loosening `check`, which stays strict. An action the
-    /// schema does not declare, or whose context is not a record this kernel can
-    /// enumerate, is left untouched.
+    /// Drop what `action`'s declared context does not include, at every level, and name
+    /// each removal by its dotted path. A validated policy can read only declared
+    /// attributes, so an undeclared one cannot bear on the decision; what it can do is
+    /// make `check` refuse the whole context as malformed. AuthZEN 1.0 (§10.1.1) has a
+    /// PDP ignore what it does not know, and this is how a server does that without
+    /// loosening `check`, which stays strict. An action the schema does not declare, or
+    /// whose context is not a record this kernel can read, is left untouched.
     pub fn prune_undeclared_context(&self, action: &str, context: &mut Value) -> Vec<String> {
-        let Some(Some(declared)) = self.context_attrs.get(action) else {
-            return Vec::new();
-        };
-        let Some(obj) = context.as_object_mut() else {
-            return Vec::new();
-        };
-        let mut dropped: Vec<String> = obj
-            .keys()
-            .filter(|k| !declared.contains(*k))
-            .cloned()
-            .collect();
-        for k in &dropped {
-            obj.remove(k);
+        let mut dropped = Vec::new();
+        if let Some(shape) = self.context_shape.get(action) {
+            prune(shape, context, "", &mut dropped);
         }
         // Named in one order whatever order the caller sent them in.
         dropped.sort();
@@ -360,15 +349,54 @@ impl Kernel {
     }
 }
 
-/// The context attributes each action declares, read off the schema's JSON form —
-/// cedar-policy exposes no accessor for an action's context type. `check` names actions in
-/// the empty namespace (`Action::"name"`), so that is the namespace read. An inline record
-/// gives its attribute names; a common-type name resolves within the namespace; an open
-/// record, or a shape this walk does not understand, yields `None` and no pruning. An
-/// action with no `context` declares the empty record, as Cedar reads it.
-fn declared_context_attrs(
-    schema: &str,
-) -> Result<BTreeMap<String, Option<BTreeSet<String>>>, KernelError> {
+/// What the schema declares at one position of an action's context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Declared {
+    /// A record whose attributes are known: anything else at this position is pruned.
+    Record(BTreeMap<String, Declared>),
+    /// A value this pruning does not look inside — a scalar, a set, an entity, an
+    /// extension, an open record, or a type the walk could not resolve. Cedar still
+    /// types it.
+    Opaque,
+}
+
+/// Remove from `value` what `shape` does not declare, naming each removal by its path.
+fn prune(shape: &Declared, value: &mut Value, path: &str, dropped: &mut Vec<String>) {
+    let Declared::Record(attrs) = shape else {
+        return;
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    let at = |key: &str| {
+        if path.is_empty() {
+            key.to_owned()
+        } else {
+            format!("{path}.{key}")
+        }
+    };
+    let undeclared: Vec<String> = obj
+        .keys()
+        .filter(|k| !attrs.contains_key(*k))
+        .cloned()
+        .collect();
+    for key in undeclared {
+        obj.remove(&key);
+        dropped.push(at(&key));
+    }
+    for (key, child) in attrs {
+        if let Some(v) = obj.get_mut(key) {
+            prune(child, v, &at(key), dropped);
+        }
+    }
+}
+
+/// The shape of the context each action declares, read off the schema's JSON form —
+/// cedar-policy exposes no accessor for an action's context type. `check` names actions
+/// in the empty namespace (`Action::"name"`), so that is the namespace read. A record
+/// gives its attributes, recursively; a common-type name resolves within the namespace;
+/// an action with no `context` declares the empty record, as Cedar reads it.
+fn declared_context_shape(schema: &str) -> Result<BTreeMap<String, Declared>, KernelError> {
     let (fragment, _warnings) = SchemaFragment::from_cedarschema_str(schema)
         .map_err(|e| KernelError::Schema(e.to_string()))?;
     let json = fragment
@@ -384,44 +412,49 @@ fn declared_context_attrs(
         .flatten()
         .map(|(name, action)| {
             let context = action.get("appliesTo").and_then(|a| a.get("context"));
-            (name.clone(), record_attrs(context, common, 0))
+            (name.clone(), shape_of(context, common, 0))
         })
         .collect())
 }
 
-/// The attribute names of a schema record type, through at most a few common-type hops.
-fn record_attrs(
+/// The declared shape of one schema type, through at most a few common-type hops.
+fn shape_of(
     ty: Option<&Value>,
     common: Option<&serde_json::Map<String, Value>>,
     depth: u8,
-) -> Option<BTreeSet<String>> {
+) -> Declared {
     let Some(ty) = ty else {
-        return Some(BTreeSet::new());
+        return Declared::Record(BTreeMap::new());
     };
-    match ty.get("type").and_then(Value::as_str)? {
-        "Record" => {
-            if ty.get("additionalAttributes").and_then(Value::as_bool) == Some(true) {
-                return None;
-            }
-            Some(
-                ty.get("attributes")
-                    .and_then(Value::as_object)
-                    .map(|attrs| attrs.keys().cloned().collect())
-                    .unwrap_or_default(),
-            )
+    let Some(kind) = ty.get("type").and_then(Value::as_str) else {
+        return Declared::Opaque;
+    };
+    if kind == "Record" {
+        if ty.get("additionalAttributes").and_then(Value::as_bool) == Some(true) {
+            return Declared::Opaque;
         }
-        reference => {
-            if depth > 4 {
-                return None;
-            }
-            // A bare name, or Cedar's `EntityOrCommon` form of one.
-            let name = if reference == "EntityOrCommon" {
-                ty.get("name").and_then(Value::as_str)?
-            } else {
-                reference
-            };
-            record_attrs(Some(common?.get(name)?), common, depth + 1)
-        }
+        return Declared::Record(
+            ty.get("attributes")
+                .and_then(Value::as_object)
+                .map(|attrs| {
+                    attrs
+                        .iter()
+                        .map(|(k, v)| (k.clone(), shape_of(Some(v), common, depth)))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        );
+    }
+    // A name — bare, or in Cedar's `EntityOrCommon` form — that may be a common type.
+    // Anything that is not (a primitive, a set, an entity, an extension) is opaque.
+    let name = if kind == "EntityOrCommon" {
+        ty.get("name").and_then(Value::as_str)
+    } else {
+        Some(kind)
+    };
+    match (name.and_then(|n| common?.get(n)), depth) {
+        (Some(target), d) if d <= 4 => shape_of(Some(target), common, depth + 1),
+        _ => Declared::Opaque,
     }
 }
 
@@ -621,13 +654,57 @@ mod tests {
         assert_eq!(unknown, json!({ "now": 100, "anything": 1 }));
     }
 
+    /// Pruning follows declared records down, and does not look inside anything else.
+    #[test]
+    fn pruning_descends_into_declared_records_and_names_what_it_drops() {
+        let shape = declared_context_shape(
+            r#"
+            entity P; entity R;
+            action write appliesTo {
+              principal: [P], resource: [R],
+              context: {
+                now: Long,
+                subject?: { role?: String },
+                resource?: { status?: String, tags?: Set<String> }
+              }
+            };
+        "#,
+        )
+        .unwrap();
+        let mut ctx = json!({
+            "now": 1,
+            "ip": "10.0.0.1",
+            "subject": { "role": "admin", "department": "Sales" },
+            "resource": { "status": "archived", "owner": "bob", "tags": { "x": 1 } },
+            "action": { "method": "GET" },
+        });
+        let mut dropped = Vec::new();
+        prune(&shape["write"], &mut ctx, "", &mut dropped);
+        dropped.sort();
+        assert_eq!(
+            dropped,
+            ["action", "ip", "resource.owner", "subject.department"]
+        );
+        // A declared set is not a record: whatever is inside it is left for Cedar to type.
+        assert_eq!(
+            ctx,
+            json!({
+                "now": 1,
+                "subject": { "role": "admin" },
+                "resource": { "status": "archived", "tags": { "x": 1 } },
+            })
+        );
+    }
+
     /// The walk reads what each builtin action declares, and resolves a common type.
     #[test]
-    fn declared_context_attrs_follow_the_schema() {
-        let attrs = declared_context_attrs(&Model::builtin().schema).unwrap();
-        let names = |a: &str| attrs[a].clone().unwrap().into_iter().collect::<Vec<_>>();
-        assert_eq!(names("Read"), ["consent", "now"]);
-        assert_eq!(names("MoveMoney"), ["consent", "human_approved", "now"]);
+    fn declared_context_shape_follows_the_schema() {
+        let shape = declared_context_shape(&Model::builtin().schema).unwrap();
+        assert_eq!(names_of(&shape, "Read"), ["consent", "now"]);
+        assert_eq!(
+            names_of(&shape, "MoveMoney"),
+            ["consent", "human_approved", "now"]
+        );
 
         let via_common = r#"
             type Ctx = { now: Long, reason?: String };
@@ -635,17 +712,20 @@ mod tests {
             action a appliesTo { principal: [P], resource: [R], context: Ctx };
             action b appliesTo { principal: [P], resource: [R] };
         "#;
-        let attrs = declared_context_attrs(via_common).unwrap();
-        assert_eq!(names_of(&attrs, "a"), ["now", "reason"]);
+        let shape = declared_context_shape(via_common).unwrap();
+        assert_eq!(names_of(&shape, "a"), ["now", "reason"]);
         assert_eq!(
-            names_of(&attrs, "b"),
+            names_of(&shape, "b"),
             Vec::<String>::new(),
             "no context is the empty record"
         );
     }
 
-    fn names_of(attrs: &BTreeMap<String, Option<BTreeSet<String>>>, action: &str) -> Vec<String> {
-        attrs[action].clone().unwrap().into_iter().collect()
+    fn names_of(shape: &BTreeMap<String, Declared>, action: &str) -> Vec<String> {
+        match &shape[action] {
+            Declared::Record(attrs) => attrs.keys().cloned().collect(),
+            Declared::Opaque => panic!("{action}: context is not a record"),
+        }
     }
 
     #[test]
