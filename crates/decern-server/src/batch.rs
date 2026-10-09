@@ -16,7 +16,7 @@ use crate::AppState;
 use crate::decide::{
     CONTEXT_TOO_LARGE, DecideReq, Refusal, admit_named, context_too_large, decide_one, evaluate_one,
 };
-use crate::record::{append_all_to_backend, evaluation_body, record_or_503};
+use crate::record::{Shard, append_all_to_backend, evaluation_body, record_or_503};
 
 /// The most evaluations one exchange may carry. Each is a recorded decision, so a batch
 /// is bounded the way a single request's body is, and says so rather than timing out.
@@ -150,6 +150,51 @@ fn undecided(status: StatusCode, code: &str, message: String) -> Value {
     })
 }
 
+/// An item's answer: what is served for it, and — when it was decided — what must land
+/// before it is.
+struct Answer {
+    decision: bool,
+    body: Value,
+    record: Option<(Shard, Entry)>,
+}
+
+fn undecided_answer(status: StatusCode, code: &str, message: String) -> Answer {
+    Answer {
+        decision: false,
+        body: undecided(status, code, message),
+        record: None,
+    }
+}
+
+/// Item `i`, answered.
+fn answer(
+    st: &AppState,
+    caller: &Option<axum::Extension<crate::caller::Authenticated>>,
+    top: &BatchReq,
+    i: usize,
+    item: &Value,
+    inherits_an_oversize_default: bool,
+) -> Answer {
+    if inherits_an_oversize_default {
+        return undecided_answer(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "context_too_large",
+            CONTEXT_TOO_LARGE.to_owned(),
+        );
+    }
+    match merged(top, Some(i), item) {
+        Err(detail) => undecided_answer(StatusCode::BAD_REQUEST, "invalid_request", detail),
+        Ok(req) => match evaluate_one(st, caller, req) {
+            Err(refusal) => undecided_answer(refusal.status, &refusal.error, refusal.detail),
+            Ok(e) => Answer {
+                decision: e.decision,
+                body: evaluation_body(e.decision, &e.reasons, &e.errors),
+                record: Some((e.shard, e.entry)),
+            },
+        },
+    }
+}
+
 /// `POST /access/v1/evaluations`.
 ///
 /// Without an `evaluations` array, or with an empty one, this is the single Access
@@ -209,46 +254,18 @@ pub(crate) async fn evaluations(
     const KEYS: [&str; 4] = ["subject", "action", "resource", "context"];
     let oversize_default = KEYS.map(|key| top.default_for(key).is_some_and(context_too_large));
     let mut results = Vec::with_capacity(items.len());
-    let mut decided: Vec<(Option<Result<String, String>>, Entry)> = Vec::new();
+    let mut decided = Vec::new();
     for (i, item) in items.iter().enumerate() {
         let inherits_an_oversize_default =
             KEYS.iter().zip(oversize_default).any(|(key, oversize)| {
                 oversize && !item.as_object().is_some_and(|o| o.contains_key(*key))
             });
-        let (decision, body) = if inherits_an_oversize_default {
-            (
-                false,
-                undecided(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    "context_too_large",
-                    CONTEXT_TOO_LARGE.to_owned(),
-                ),
-            )
-        } else {
-            match merged(&top, Some(i), item) {
-                Err(detail) => (
-                    false,
-                    undecided(StatusCode::BAD_REQUEST, "invalid_request", detail),
-                ),
-                Ok(req) => match evaluate_one(&st, &caller, req) {
-                    Err(refusal) => (
-                        false,
-                        undecided(refusal.status, &refusal.error, refusal.detail),
-                    ),
-                    Ok(e) => {
-                        decided.push((e.shard, e.entry));
-                        (
-                            e.decision,
-                            evaluation_body(e.decision, &e.reasons, &e.errors),
-                        )
-                    }
-                },
-            }
-        };
-        results.push(body);
+        let a = answer(&st, &caller, &top, i, item, inherits_an_oversize_default);
+        decided.extend(a.record);
+        results.push(a.body);
         match semantic {
-            Semantic::DenyOnFirstDeny if !decision => break,
-            Semantic::PermitOnFirstPermit if decision => break,
+            Semantic::DenyOnFirstDeny if !a.decision => break,
+            Semantic::PermitOnFirstPermit if a.decision => break,
             _ => {}
         }
     }
