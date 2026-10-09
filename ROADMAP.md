@@ -85,6 +85,11 @@ Trust that survives the operator, and releases that survive us.
 - Building another MCP firewall, model gateway, or Slack/mobile approval product.
 - Putting OAuth / IdP / vendor credential vaults inside `decern-serve`.
 - Dropping SMT proofs or negative controls to chase gateway feature parity.
+- Letting attestation claims — `agent_platform`, `agent_runtime`, enclave status and the like — into
+  the decision context. They are the attester's self-description, not verified facts about a
+  runtime; the AAuth draft has person and access servers ignore claims they do not recognise, and
+  this decision point does the same. The reasoning is in
+  [#140](https://github.com/anivar/decern/issues/140).
 
 Want to pick one up? See [ARCHITECTURE.md](ARCHITECTURE.md#where-to-start-contributing) and the
 [`help wanted`](https://github.com/anivar/decern/labels/help%20wanted) issues.
