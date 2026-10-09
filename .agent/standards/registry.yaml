@@ -286,7 +286,7 @@ standards:
 
   - name: AAuth Protocol (draft-hardt-oauth-aauth-protocol)
     url: https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/
-    verified: 2026-08-17
+    verified: 2026-10-09
     surface:
       - crates/decern-server/src/aauth.rs
     conformance: >-
@@ -312,8 +312,13 @@ standards:
       carries no `aud`, so `--aauth-audience` is required and the request's `Host` must equal
       it. `jti` is required and shape-checked; it is not used for replay detection, as there is
       no nonce cache. `parent_agent` is shape-checked and never reaches the kernel. A verified
-      agent is a workload and binds to itself unless listed in `--pep`. Verified against the
-      spec 2026-08-17.
+      agent is a workload and binds to itself unless listed in `--pep`. Verified against draft -10 on 2026-08-17 and
+      against draft -11 (2026-09-25) on 2026-10-09: -11 keeps every element above and renumbers
+      its sections. Three additions implemented with it: a request with no agent token is answered
+      401 with `AAuth-Requirement: requirement=agent-token` (§6.1); an `iat` ahead of this clock by
+      more than the signature window is refused with `Signature-Error: error=clock_skew`
+      (§11.5.2); a token claiming a lifetime above 24 hours is refused (§5.3.1, a verifier
+      policy the draft leaves open).
 
   - name: Model Context Protocol (revision 2026-07-28)
     url: https://modelcontextprotocol.io/specification/2026-07-28
