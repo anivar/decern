@@ -962,7 +962,7 @@ mod tests {
         let mut scalar = [0u8; 32];
         scalar[31] = 7;
         let sk = p256::ecdsa::SigningKey::from_bytes(&scalar.into()).unwrap();
-        let pt = sk.verifying_key().to_encoded_point(false);
+        let pt = sk.verifying_key().to_sec1_point(false);
         let b64 = |b: &[u8]| {
             use base64::Engine as _;
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
