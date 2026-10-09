@@ -26,6 +26,9 @@ jobs:
   # something else — so disagreement stops the run before either registry is touched.
   version:
     name: the tag and the manifests agree
+    # A release candidate tag rehearses release.yml and publishes nothing; every job below
+    # needs this one, so skipping it here skips the run.
+    if: ${{ !contains(github.ref_name, '-rc.') }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
