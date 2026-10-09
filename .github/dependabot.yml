@@ -54,6 +54,9 @@ updates:
         update-types: ["version-update:semver-major"]
   - package-ecosystem: npm
     directory: /sdks/typescript
+    # The SDKs are thin AuthZEN clients; a dependency bump in one is not release-notes
+    # material, so the changelog gate is told so up front instead of failing the PR.
+    labels: [dependencies, no-changelog]
     schedule:
       interval: weekly
       day: monday
@@ -65,6 +68,9 @@ updates:
         update-types: ["version-update:semver-major"]
   - package-ecosystem: pip
     directory: /sdks/python
+    # The SDKs are thin AuthZEN clients; a dependency bump in one is not release-notes
+    # material, so the changelog gate is told so up front instead of failing the PR.
+    labels: [dependencies, no-changelog]
     schedule:
       interval: weekly
       day: monday
@@ -73,6 +79,9 @@ updates:
         update-types: ["version-update:semver-major"]
   - package-ecosystem: gomod
     directory: /sdks/go
+    # The SDKs are thin AuthZEN clients; a dependency bump in one is not release-notes
+    # material, so the changelog gate is told so up front instead of failing the PR.
+    labels: [dependencies, no-changelog]
     schedule:
       interval: weekly
       day: monday
