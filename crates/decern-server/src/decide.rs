@@ -9,13 +9,13 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use decern_kernel::{Directory, EntityRef};
+use decern_kernel::{CheckResponse, Directory, EntityRef};
 use decern_ledger::{DecisionSubject, Entry, Party};
 use decern_store::MissionRegistry;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::record::{append_to_backend, record_and_respond, shard_for};
+use crate::record::{Shard, append_to_backend, record_and_respond, shard_for};
 use crate::{AppState, challenge, now_secs};
 
 /// AuthZEN subject or resource: a `type`, an `id`, and optionally `properties` — what the
@@ -323,18 +323,70 @@ pub(crate) struct Evaluated {
     pub(crate) reasons: Vec<String>,
     pub(crate) errors: Vec<String>,
     pub(crate) entry: Entry,
-    pub(crate) shard: Option<Result<String, String>>,
+    pub(crate) shard: Shard,
 }
 
-/// Evaluate one admitted request: the server-derived facts, the mission binding, the
-/// decision subject, the challenge, the kernel's decision, and the entry that records it.
-/// Nothing here writes; the caller appends the entry and serves the decision only once it
-/// has landed. A refusal is a well-formed request this server will not decide.
+/// Evaluate one admitted request: prepared, decided, the challenge answered, the record
+/// built — in that order. Nothing here writes; the caller appends the entry and serves the
+/// decision only once it has landed. A refusal is a well-formed request this server will
+/// not decide.
 pub(crate) fn evaluate_one(
     st: &AppState,
     caller: &Option<axum::Extension<crate::caller::Authenticated>>,
-    mut req: DecideReq,
+    req: DecideReq,
 ) -> Result<Evaluated, Refusal> {
+    let prepared = prepare(st, caller, req)?;
+    let r = decide_prepared(st, &prepared);
+    let challenge = answer_challenge(st, &prepared)?;
+    let (entry, shard) = record_of(st, prepared, &r, challenge);
+    Ok(Evaluated {
+        decision: r.decision,
+        reasons: r.reasons,
+        errors: r.errors,
+        entry,
+        shard,
+    })
+}
+
+/// A request made ready to decide: the parties in the model's terms, the context the
+/// kernel will see, and what this server took out of that context for its own use. The
+/// order `prepare` builds it in is the order the guarantees rest on — every key the server
+/// consumes is out before the context is pruned, and it is pruned before it is checked.
+struct Prepared {
+    now_s: u64,
+    subject: EntityRef,
+    action: String,
+    resource: EntityRef,
+    /// The context the kernel sees.
+    ctx: Value,
+    /// Who asserted this request, when the guard verified a token.
+    asserted_by: Option<decern_ledger::AssertedBy>,
+    mission: MissionOutcome,
+    /// A challenge from the party the decision is about, taken out before the check.
+    challenge: Option<Value>,
+    /// The party the decision is about, when that is a third party.
+    decision_subject: Option<DecisionSubject>,
+}
+
+/// What binding `context.mission` came to.
+struct MissionOutcome {
+    /// The live Mission this decision runs under, when one was bound.
+    bound: Option<decern_ledger::MissionRef>,
+    /// Why no Mission could be bound where one was needed, which forces a Deny.
+    errors: Vec<String>,
+    /// What the request named, as the pair the auditor sees — never as it was sent: the
+    /// object is caller-chosen, and the record is permanent.
+    named: Option<Value>,
+}
+
+/// Search will reuse the context half of this — through the prune, without the owner
+/// lookup the decision subject needs — as its own `prepare_context` when it lands; the
+/// seam is intended, so split here rather than bending this to fit.
+fn prepare(
+    st: &AppState,
+    caller: &Option<axum::Extension<crate::caller::Authenticated>>,
+    mut req: DecideReq,
+) -> Result<Prepared, Refusal> {
     // What the PEP says about each party, taken out before the parties are moved below.
     // An empty `properties` says nothing. `admit` has already settled whether this caller
     // may describe a party at all.
@@ -385,7 +437,7 @@ pub(crate) fn evaluate_one(
         &ctx,
         now_s,
     );
-    let (mission_ref, mission_errors) = match mission_bind {
+    let (bound, errors) = match mission_bind {
         // No Mission named and none required: `context` is left as the caller sent
         // it, including any approval flags, for every action except MoveMoney (which
         // `bind_mission` already denied above rather than reaching here). Establishing
@@ -405,18 +457,21 @@ pub(crate) fn evaluate_one(
             (None, errs)
         }
     };
-    // `mission` is not in the Cedar context schema — strip before check, re-attach
-    // on the ledger Entry (Entry.mission + context.mission for auditors).
-    let mission_for_context = if let Some(obj) = ctx.as_object_mut() {
-        obj.remove("mission")
-    } else {
-        None
-    };
+    // `mission` is not in the Cedar context schema — out before the check, kept for the
+    // record as the pair that was looked up.
+    let named = ctx
+        .as_object_mut()
+        .and_then(|obj| obj.remove("mission"))
+        .map(|m| {
+            let field =
+                |name: &str| bounded(m.get(name).and_then(Value::as_str).unwrap_or_default(), 256);
+            json!({ "approver": field("approver"), "s256": field("s256") })
+        });
 
     // A challenge from the party a decision was about is removed here too, and
     // unconditionally: a request carrying one is evaluated exactly as the same request
     // without it. Answering it is a separate act, after the decision is made.
-    let raw_challenge = challenge::take_raw(&mut ctx);
+    let challenge = challenge::take_raw(&mut ctx);
 
     // Out of the context before the check too, and for a stronger reason: who a
     // decision is about must not be able to change what the decision is.
@@ -438,13 +493,94 @@ pub(crate) fn evaluate_one(
     // attribute nobody evaluated is not written down for good.
     st.kernel.prune_undeclared_context(&action, &mut ctx);
 
-    let mut r = st.kernel.check(&subject, &action, &resource, &ctx);
-    if !mission_errors.is_empty() {
+    Ok(Prepared {
+        now_s,
+        subject,
+        action,
+        resource,
+        ctx,
+        asserted_by,
+        mission: MissionOutcome {
+            bound,
+            errors,
+            named,
+        },
+        challenge,
+        decision_subject,
+    })
+}
+
+/// The kernel's decision over what was prepared, forced to Deny where no Mission could be
+/// bound and one was needed.
+fn decide_prepared(st: &AppState, p: &Prepared) -> CheckResponse {
+    let mut r = st.kernel.check(&p.subject, &p.action, &p.resource, &p.ctx);
+    if !p.mission.errors.is_empty() {
         r.decision = false;
-        r.errors.extend(mission_errors);
+        r.errors.extend(p.mission.errors.iter().cloned());
         r.reasons.clear();
     }
+    r
+}
 
+/// Answer the challenge, if one came with the request — after the decision, never before
+/// it, so the answer is about a decision that has already been made rather than an
+/// influence on making it. A challenge that cannot be believed is refused outright:
+/// recording an answer to a claim whose standing was never proved would put a party's
+/// name on the record on nobody's authority.
+fn answer_challenge(
+    st: &AppState,
+    p: &Prepared,
+) -> Result<Option<decern_ledger::ChallengeRecord>, Refusal> {
+    let Some(raw) = &p.challenge else {
+        return Ok(None);
+    };
+    let c = challenge::parse(raw, &st.standing_issuers, p.now_s)
+        .map_err(|e| Refusal::unprocessable(e.kind(), e.detail()))?;
+    let subject_matches = p
+        .decision_subject
+        .as_ref()
+        .is_some_and(|ds| ds.handle == c.standing.decision_subject);
+    let (outcome, outcome_basis) = match challenge::answer(&c, subject_matches) {
+        challenge::Outcome::AffirmPriorDecision { affirm_basis } => {
+            ("affirm_prior_decision", affirm_basis)
+        }
+        challenge::Outcome::ReevaluateWithSubjectContext { reevaluation_basis } => {
+            ("reevaluate_with_subject_context", reevaluation_basis)
+        }
+    };
+    Ok(Some(decern_ledger::ChallengeRecord {
+        decision_ref: c.decision_ref,
+        decision_subject: c.standing.decision_subject,
+        basis: c.basis,
+        requested_effect: c.requested_effect,
+        outcome: outcome.to_owned(),
+        outcome_basis,
+        // The digest, never the evidence itself: what a party sends to argue their case
+        // is likely to be about them, and this log cannot be edited.
+        evidence_digest: c.evidence.as_ref().map(decern_ledger::digest),
+    }))
+}
+
+/// The record of a decision, and the shard it belongs to: the server-derived columns,
+/// the parameters digest over exactly what was evaluated, and the entry that must land
+/// before the decision is served.
+fn record_of(
+    st: &AppState,
+    p: Prepared,
+    r: &CheckResponse,
+    challenge: Option<decern_ledger::ChallengeRecord>,
+) -> (Entry, Shard) {
+    let Prepared {
+        now_s,
+        subject,
+        action,
+        resource,
+        mut ctx,
+        asserted_by,
+        mission,
+        challenge: _,
+        decision_subject,
+    } = p;
     // Accountable-owner, derived server-side from the delegation chain BEFORE
     // `subject.id` is moved into the entry. Never read from the request body.
     let sponsor = resolve_sponsor(st.kernel.directory(), &subject.id);
@@ -455,12 +591,9 @@ pub(crate) fn evaluate_one(
     // are carried into the append closure so they fail closed as a 503.
     let shard = shard_for(&st.backend, st.kernel.directory(), &subject.id);
 
-    // Re-attached for the auditor as the pair that was looked up, never as it was sent:
-    // the object is caller-chosen, and this record is permanent.
-    if let Some(m) = mission_for_context {
-        let field =
-            |name: &str| bounded(m.get(name).and_then(Value::as_str).unwrap_or_default(), 256);
-        ctx["mission"] = json!({ "approver": field("approver"), "s256": field("s256") });
+    // The mission the request named, for the auditor.
+    if let Some(named) = mission.named {
+        ctx["mission"] = named;
     }
 
     // Bind the exact parameters evaluated: subject/action/resource + post-mission ctx.
@@ -469,45 +602,9 @@ pub(crate) fn evaluate_one(
         "action": action,
         "resource": {"type": resource.ty, "id": resource.id},
         "context": ctx,
-        "mission": mission_ref.as_ref().map(|m| json!({"approver": m.approver, "s256": m.s256})),
+        "mission": mission.bound.as_ref().map(|m| json!({"approver": m.approver, "s256": m.s256})),
         "decision_subject": decision_subject,
     }));
-
-    // Answer the challenge, if one came with the request — after the decision, never
-    // before it, so the answer is about a decision that has already been made rather than
-    // an influence on making it. A challenge that cannot be believed is refused outright:
-    // recording an answer to a claim whose standing was never proved would put a party's
-    // name on the record on nobody's authority.
-    let challenge_record = match raw_challenge {
-        None => None,
-        Some(raw) => match challenge::parse(&raw, &st.standing_issuers, now_s) {
-            Err(e) => return Err(Refusal::unprocessable(e.kind(), e.detail())),
-            Ok(c) => {
-                let subject_matches = decision_subject
-                    .as_ref()
-                    .is_some_and(|ds| ds.handle == c.standing.decision_subject);
-                let (outcome, outcome_basis) = match challenge::answer(&c, subject_matches) {
-                    challenge::Outcome::AffirmPriorDecision { affirm_basis } => {
-                        ("affirm_prior_decision", affirm_basis)
-                    }
-                    challenge::Outcome::ReevaluateWithSubjectContext { reevaluation_basis } => {
-                        ("reevaluate_with_subject_context", reevaluation_basis)
-                    }
-                };
-                Some(decern_ledger::ChallengeRecord {
-                    decision_ref: c.decision_ref,
-                    decision_subject: c.standing.decision_subject,
-                    basis: c.basis,
-                    requested_effect: c.requested_effect,
-                    outcome: outcome.to_owned(),
-                    outcome_basis,
-                    // The digest, never the evidence itself: what a party sends to argue
-                    // their case is likely to be about them, and this log cannot be edited.
-                    evidence_digest: c.evidence.as_ref().map(decern_ledger::digest),
-                })
-            }
-        },
-    };
 
     // A decision that names an affected party is one an affected party should hear about.
     let notice_required = decision_subject.is_some();
@@ -523,11 +620,11 @@ pub(crate) fn evaluate_one(
         decision: r.decision,
         reasons: r.reasons.clone(),
         sponsor,
-        mission: mission_ref,
+        mission: mission.bound,
         decision_subject,
         notice_required,
         asserted_by,
-        challenge: challenge_record.clone(),
+        challenge,
         digests: BTreeMap::from([
             (
                 decern_ledger::DIGEST_PARAMETERS.to_owned(),
@@ -540,14 +637,7 @@ pub(crate) fn evaluate_one(
         ]),
         ..Default::default()
     };
-
-    Ok(Evaluated {
-        decision: r.decision,
-        reasons: r.reasons,
-        errors: r.errors,
-        entry,
-        shard,
-    })
+    (entry, shard)
 }
 
 /// Outcome of resolving `context.mission` against the registry.

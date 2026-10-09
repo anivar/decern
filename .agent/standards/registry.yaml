@@ -28,9 +28,10 @@ standards:
     surface:
       - crates/decern-server/src/decide.rs
       - crates/decern-server/src/routes.rs
-      - crates/decern-server/src/audit.rs
       - crates/decern-server/src/batch.rs
-      - crates/decern-server/src/authzen_certification.rs
+      - crates/decern-server/src/discovery.rs
+      - crates/decern-server/src/deployment.rs
+      - crates/decern-server/src/authzen_certification/
       - examples/authzen-certification/
     conformance: >-
       decern-serve exposes POST /access/v1/evaluation (and /decide as an alias): AuthZEN 1.0

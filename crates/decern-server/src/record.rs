@@ -12,6 +12,11 @@ use serde_json::{Value, json};
 
 use crate::LedgerBackend;
 
+/// Where a record goes on the sharded backend: `Some(Ok(shard))` for the subject's tenant,
+/// `Some(Err(why))` when it could not be resolved (fails closed as a 503 at append), `None`
+/// on the single-file backend, which has no shards.
+pub(crate) type Shard = Option<Result<String, String>>;
+
 /// Resolve the ledger shard for a decision: the subject's directory tenant.
 ///
 /// Security-sensitive — the shard is the tenant-isolation boundary of the
@@ -129,7 +134,7 @@ pub(crate) fn record_and_respond(
 /// sharded arm) becomes a ledger error → 503, never a panic or a misfiled record.
 pub(crate) fn append_to_backend(
     backend: &LedgerBackend,
-    shard: Option<Result<String, String>>,
+    shard: Shard,
     entry: Entry,
 ) -> Result<(), LedgerError> {
     match backend {
@@ -163,7 +168,7 @@ pub(crate) fn append_to_backend(
 /// shards. Either way nothing is served until every entry has landed.
 pub(crate) fn append_all_to_backend(
     backend: &LedgerBackend,
-    entries: Vec<(Option<Result<String, String>>, Entry)>,
+    entries: Vec<(Shard, Entry)>,
 ) -> Result<(), LedgerError> {
     match backend {
         LedgerBackend::Single(m) => match m.lock() {
@@ -183,11 +188,7 @@ pub(crate) fn append_all_to_backend(
 
 /// The ledger shard for a subject: `Some(resolve_shard(...))` on the sharded backend
 /// (derived server-side from the directory), `None` on the single-file backend.
-pub(crate) fn shard_for(
-    backend: &LedgerBackend,
-    dir: &Directory,
-    subject_id: &str,
-) -> Option<Result<String, String>> {
+pub(crate) fn shard_for(backend: &LedgerBackend, dir: &Directory, subject_id: &str) -> Shard {
     match backend {
         LedgerBackend::Sharded(_) => Some(resolve_shard(dir, subject_id)),
         LedgerBackend::Single(_) => None,
