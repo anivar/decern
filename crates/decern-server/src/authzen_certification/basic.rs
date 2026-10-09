@@ -251,14 +251,15 @@ async fn a_caller_bound_to_itself_may_not_describe_a_party() {
 }
 
 /// `context.subject`, `context.resource` and `context.action` are reserved for the
-/// request's `properties`: writing there directly describes nothing.
+/// request's `properties`: writing there directly describes nothing. `record-1` is active
+/// on the authority's side, so only a smuggled `status` could make bob's write permitted.
 #[tokio::test]
 async fn a_description_cannot_be_smuggled_through_the_free_form_context() {
     let (st, _base) = fixture_state();
     let body = json!({
         "subject": { "type": "user", "id": "bob" },
         "action": { "name": "write" },
-        "resource": { "type": "record", "id": "record-2" },
+        "resource": { "type": "record", "id": "record-1" },
         "context": { "subject": { "role": "admin" }, "resource": { "status": "archived" } },
     });
     let (status, resp) = decision(&st, &body.to_string()).await;

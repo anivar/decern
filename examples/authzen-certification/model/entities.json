@@ -25,6 +25,7 @@
     "attrs": {
       "owner": { "__entity": { "type": "Principal", "id": "alice" } },
       "tenant": "certification",
+      "status": "active",
       "viewers": [{ "__entity": { "type": "Principal", "id": "bob" } }]
     },
     "parents": []
@@ -34,6 +35,7 @@
     "attrs": {
       "owner": { "__entity": { "type": "Principal", "id": "alice" } },
       "tenant": "certification",
+      "status": "archived",
       "viewers": [{ "__entity": { "type": "Principal", "id": "bob" } }]
     },
     "parents": []

@@ -6,7 +6,6 @@
 //! `examples/authzen-certification/model`. Each test names the scenario test it is; the
 //! requests are the scenario's own, byte for byte where it gives them.
 //!
-//! Search is not here, and the README says so.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -134,6 +133,7 @@ fn records_in(base: &TempBase, st: &AppState) -> Vec<Value> {
 
 mod basic;
 mod batch;
+mod search;
 
 /// C-6: the metadata document names the decision point and its evaluation endpoint,
 /// as `application/json`, and nothing this deployment does not serve.
@@ -168,14 +168,11 @@ async fn the_metadata_document_names_the_decision_point_and_only_what_is_served(
         doc["access_evaluations_endpoint"],
         format!("{PUBLIC_URL}/access/v1/evaluations")
     );
-    for absent in [
-        "search_subject_endpoint",
-        "search_resource_endpoint",
-        "search_action_endpoint",
+    for (field, path) in [
+        ("search_subject_endpoint", "/access/v1/search/subject"),
+        ("search_resource_endpoint", "/access/v1/search/resource"),
+        ("search_action_endpoint", "/access/v1/search/action"),
     ] {
-        assert!(
-            doc.get(absent).is_none(),
-            "{absent} is not served and must not be advertised"
-        );
+        assert_eq!(doc[field], format!("{PUBLIC_URL}{path}"), "{doc}");
     }
 }
