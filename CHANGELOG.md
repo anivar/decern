@@ -6,6 +6,89 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-09
+
+### Added
+
+- **`decern-serve` can establish its caller from an AAuth agent token.** `--aauth-provider
+  ISS=PATH` (repeatable) and `--aauth-audience` make the deciding and mission-lifecycle routes
+  require an `aa-agent+jwt` presented per `draft-hardt-oauth-aauth-protocol` in
+  `Signature-Key: sig=jwt; jwt="…"`, with the request signed under RFC 9421 by the key the
+  token's RFC 7800 `cnf` confirms. This serves the draft's **identity-based access** mode,
+  where the resource applies its own policy to a verified agent identity; the PS-asserted and
+  federated modes need a Person Server, which decern does not implement. Two profile decisions
+  are stated rather than implied. Providers are **pinned, never discovered** — the draft says
+  to fetch the issuer's JWKS, and this deployment instead checks that `dwk` names that document
+  and selects from a key set configured at startup, which the draft contemplates where it notes
+  a resource pre-caching provider keys does not need the fetch; an agent from a provider this
+  deployment was never told about is refused. And **`content-digest` is required on a bodied
+  request**, which the draft's example component list does not carry: every AuthZEN evaluation
+  is a POST, and RFC 9421 §1.4 assigns component requirements to the profile, so an agent that
+  does not sign the digest is refused rather than allowing one captured signature to authorize
+  any body at that path. `EdDSA` only. Unlike the signed-request posture, the agent token's own
+  signature is verified against its provider's key, because here the token is the provider's
+  assertion about which key the agent holds. A verified agent is a **workload** and may name
+  only itself unless listed in `--pep`. `jti` is required and shape-checked but not used for
+  replay detection — there is no nonce cache — and `parent_agent` is shape-checked and never
+  reaches the kernel. `examples/aauth/` runs the whole posture with no agent
+  provider and no network, and asserts both profile refusals. Authored by @anivar.
+
+### Changed
+
+- **The kernel and the proof harness move to cedar-policy 4.13.0 and cedar-policy-symcc 0.7.0.**
+  The nine invariants and the negative controls prove unchanged on the built-in model. The
+  `rustls` the optional `decern-store-postgres` crate pulls in moves to 0.23.45, which closes
+  RUSTSEC-2026-0285; the default build carries no TLS stack and was never affected. Authored by
+  @anivar.
+- **The changelog check covers the example components, not just the crates and SDKs.** It asked
+  for a fragment on `crates/` and `sdks/` only, so a behaviour change in `examples/ext_authz_adapter`
+  — the forwarded-header refusal in this same release — passed with nothing in the release notes.
+  The adapter is a binary people deploy and the MCP example is a server people run, so both now
+  need an entry or the `no-changelog` label. Walkthrough scripts, tests, model fixtures, READMEs
+  and lockfiles still do not, because none of them changes what a deployment does. Authored by
+  @anivar.
+- **The RustCrypto line moves together: ed25519-dalek 3.0, p256 0.14, sha2 0.11, getrandom 0.4
+  and, through them, signature 3.0.** Nothing a caller sees changes: key, signature and digest
+  formats are the same bytes, the test suite (which signs with fixed keys) passes unchanged, and
+  the proofs are unaffected. ed25519-dalek, p256, sha2 and signature now resolve to one version
+  each where the tree carried two; getrandom still has the older versions `ring` and
+  `rand_core` pin beside it. Authored by @anivar.
+
+- **Release assets are signed as Sigstore bundles.** Each binary and `SHA256SUMS` now ships
+  with a `<file>.sigstore.json` carrying the signature, the signing certificate and the
+  transparency-log entry, written by cosign 3, in place of the `.sig` and `.pem` pair earlier
+  releases carried. `SECURITY.md` shows the `cosign verify-blob --bundle` command and the
+  identity to check against; older releases verify as before. Authored by @anivar.
+
+### Fixed
+
+- **The ext_authz adapter refuses a duplicated forwarded header instead of choosing one.**
+  `HeaderMap::get` returns the first copy and ignores the rest, so a gateway that appended
+  its own header rather than replacing a client-supplied one had the adapter authorize
+  whichever copy arrived first — a client's `x-forwarded-method: Read` ahead of the gateway's
+  `Write` is exactly the fail-open the adapter exists to prevent. Subject, method and URI are
+  all checked now, and a duplicate is refused `403` before the PDP is consulted, so nothing is
+  evaluated and nothing is recorded. Identical copies are refused too: the adapter cannot tell
+  which copy the gateway set, so agreement between them is not evidence that the client did
+  not supply one. A deployment whose gateway appends rather than replaces these headers will
+  start seeing refusals, which is the misconfiguration becoming visible rather than a new
+  restriction. Authored by @shaurya703, reported by @anivar.
+
+### Known limits in this release
+
+Unchanged from 0.3.0 — consent, log pinning, `--trust-proxy`, replay, standing tokens, and
+what the proofs cover — with two additions:
+
+- **The SPIFFE posture accepts both ECDSA encodings of a valid signature.** ES256 signers do
+  not normalize `s` and RFC 7518 does not require it, so refusing the high-S form would refuse
+  honest issuers. Nothing here keys on a token's bytes, so the twin is one more replay form,
+  which the replay limit already covers.
+- **The AAuth posture was verified against draft `-10`.** Draft `-11` (September 2026) keeps
+  the agent-token mode this release implements and renumbers its sections; it adds the
+  `AAuth-Requirement: requirement=agent-token` challenge on a token-less request and
+  `Signature-Error: error=clock_skew` on an `iat` ahead of the clock, neither of which this
+  release sends.
+
 ## [0.3.1] - 2026-08-17
 
 The first release published to crates.io since 0.2.0. `cargo install decern-cli decern-server`
