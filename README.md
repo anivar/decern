@@ -192,13 +192,15 @@ Four worked examples ship, all runnable and CI-tested and none published as crat
 and [`signed-request/`](examples/signed-request/) and [`spiffe/`](examples/spiffe/) each run
 a workload posture end to end, minting their own credentials.
 
-The HTTP surface is AuthZEN 1.0's. The certification scenario's Basic Core and Discovery
-sub-levels run in `cargo test` against
-[`examples/authzen-certification/model`](examples/authzen-certification/); Basic Properties,
-Batch and Search are not implemented, and decern has not been through the OpenID Foundation's
-certification program. A PEP that spells entity types its own way maps them with
-`--authzen-type-alias user=Principal`, and `--public-url` turns on
-`/.well-known/authzen-configuration`.
+The HTTP surface is AuthZEN 1.0's. The certification scenario's Basic Core, Basic Properties
+and Discovery sub-levels run in `cargo test` against
+[`examples/authzen-certification/model`](examples/authzen-certification/); Batch and Search
+are not implemented, and decern has not been through the OpenID Foundation's certification
+program. A PEP that spells entity types its own way maps them with
+`--authzen-type-alias user=Principal`. What it says about a party (`properties`) reaches a
+policy as `context.subject`, `context.resource` and `context.action` where the model declares
+it, and only from a caller bound as a PEP — a workload bound to itself may not describe one.
+`--public-url` turns on `/.well-known/authzen-configuration`.
 
 `--sharded <dir>` replaces the single file with a per-tenant sharded ledger several
 processes on one host extend safely (`flock` head store); `--sharded postgres://…` does the

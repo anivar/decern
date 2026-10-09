@@ -6,6 +6,11 @@
 // in `decern prove` still has its request environments; nothing permits them here.
 // Request types `user` and `record` reach these entity types through
 // `--authzen-type-alias user=Principal --authzen-type-alias record=Resource`.
+// A request's `subject.properties`, `resource.properties` and `action.properties` arrive
+// as `context.subject`, `context.resource` and `context.action`, kept only where an action
+// declares them: `write` reads the subject's role and the resource's status (rules 5 and
+// 6), `delete` reads whether the delete is soft (rules 7 and 8), and `read` declares none,
+// so properties sent with a read are dropped before evaluation.
 
 entity Organization {
   tenant: String,
@@ -63,11 +68,16 @@ action read appliesTo {
 action write appliesTo {
   principal: [Principal],
   resource: [Resource],
-  context: { now: Long, consent?: Bool }
+  context: {
+    now: Long,
+    consent?: Bool,
+    subject?: { role?: String },
+    resource?: { status?: String }
+  }
 };
 
 action delete appliesTo {
   principal: [Principal],
   resource: [Resource],
-  context: { now: Long, consent?: Bool, soft?: Bool }
+  context: { now: Long, consent?: Bool, action?: { soft?: Bool } }
 };
