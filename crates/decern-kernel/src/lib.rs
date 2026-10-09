@@ -10,12 +10,13 @@
 
 pub mod graph;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::str::FromStr;
 
 use cedar_policy::{
     Authorizer, Context, Decision, Entities, EntityId, EntityTypeName, EntityUid, PolicySet,
-    Request, Schema, ValidationMode, Validator,
+    Request, Schema, SchemaFragment, ValidationMode, Validator,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -117,6 +118,10 @@ impl CheckResponse {
 
 pub struct Kernel {
     schema: Schema,
+    /// Per action, the context attributes the schema declares — the only context a
+    /// validated policy can read. `None` where the declaration is not a record this
+    /// kernel can enumerate, and nothing is pruned for that action.
+    context_attrs: BTreeMap<String, Option<BTreeSet<String>>>,
     policies: PolicySet,
     entities: Entities,
     directory: Directory,
@@ -130,6 +135,7 @@ impl Kernel {
     pub fn new(model: &Model) -> Result<Self, KernelError> {
         let (schema, _warnings) = Schema::from_cedarschema_str(&model.schema)
             .map_err(|e| KernelError::Schema(e.to_string()))?;
+        let context_attrs = declared_context_attrs(&model.schema)?;
 
         let policies =
             PolicySet::from_str(&model.policies).map_err(|e| KernelError::Policy(e.to_string()))?;
@@ -181,6 +187,7 @@ impl Kernel {
 
         Ok(Kernel {
             schema,
+            context_attrs,
             policies,
             entities,
             directory,
@@ -190,6 +197,33 @@ impl Kernel {
 
     pub fn directory(&self) -> &Directory {
         &self.directory
+    }
+
+    /// Drop the context attributes `action` does not declare, and name them. A validated
+    /// policy can read only declared attributes, so an undeclared one cannot bear on the
+    /// decision; what it can do is make `check` refuse the whole context as malformed.
+    /// AuthZEN 1.0 (§10.1.1) has a PDP ignore what it does not know, and this is how a
+    /// server does that without loosening `check`, which stays strict. An action the
+    /// schema does not declare, or whose context is not a record this kernel can
+    /// enumerate, is left untouched.
+    pub fn prune_undeclared_context(&self, action: &str, context: &mut Value) -> Vec<String> {
+        let Some(Some(declared)) = self.context_attrs.get(action) else {
+            return Vec::new();
+        };
+        let Some(obj) = context.as_object_mut() else {
+            return Vec::new();
+        };
+        let mut dropped: Vec<String> = obj
+            .keys()
+            .filter(|k| !declared.contains(*k))
+            .cloned()
+            .collect();
+        for k in &dropped {
+            obj.remove(k);
+        }
+        // Named in one order whatever order the caller sent them in.
+        dropped.sort();
+        dropped
     }
 
     /// The deterministic decision. `context` must be a JSON object and must
@@ -323,6 +357,71 @@ impl Kernel {
                 id: id.clone(),
             })
             .collect()
+    }
+}
+
+/// The context attributes each action declares, read off the schema's JSON form —
+/// cedar-policy exposes no accessor for an action's context type. `check` names actions in
+/// the empty namespace (`Action::"name"`), so that is the namespace read. An inline record
+/// gives its attribute names; a common-type name resolves within the namespace; an open
+/// record, or a shape this walk does not understand, yields `None` and no pruning. An
+/// action with no `context` declares the empty record, as Cedar reads it.
+fn declared_context_attrs(
+    schema: &str,
+) -> Result<BTreeMap<String, Option<BTreeSet<String>>>, KernelError> {
+    let (fragment, _warnings) = SchemaFragment::from_cedarschema_str(schema)
+        .map_err(|e| KernelError::Schema(e.to_string()))?;
+    let json = fragment
+        .to_json_value()
+        .map_err(|e| KernelError::Schema(e.to_string()))?;
+    let Some(root) = json.get("") else {
+        return Ok(BTreeMap::new());
+    };
+    let common = root.get("commonTypes").and_then(Value::as_object);
+    let actions = root.get("actions").and_then(Value::as_object);
+    Ok(actions
+        .into_iter()
+        .flatten()
+        .map(|(name, action)| {
+            let context = action.get("appliesTo").and_then(|a| a.get("context"));
+            (name.clone(), record_attrs(context, common, 0))
+        })
+        .collect())
+}
+
+/// The attribute names of a schema record type, through at most a few common-type hops.
+fn record_attrs(
+    ty: Option<&Value>,
+    common: Option<&serde_json::Map<String, Value>>,
+    depth: u8,
+) -> Option<BTreeSet<String>> {
+    let Some(ty) = ty else {
+        return Some(BTreeSet::new());
+    };
+    match ty.get("type").and_then(Value::as_str)? {
+        "Record" => {
+            if ty.get("additionalAttributes").and_then(Value::as_bool) == Some(true) {
+                return None;
+            }
+            Some(
+                ty.get("attributes")
+                    .and_then(Value::as_object)
+                    .map(|attrs| attrs.keys().cloned().collect())
+                    .unwrap_or_default(),
+            )
+        }
+        reference => {
+            if depth > 4 {
+                return None;
+            }
+            // A bare name, or Cedar's `EntityOrCommon` form of one.
+            let name = if reference == "EntityOrCommon" {
+                ty.get("name").and_then(Value::as_str)?
+            } else {
+                reference
+            };
+            record_attrs(Some(common?.get(name)?), common, depth + 1)
+        }
     }
 }
 
@@ -461,6 +560,92 @@ mod tests {
         let r = kernel().check(&sub("agent1"), "Read", &res("claim1"), &json!({}));
         assert!(!r.decision);
         assert!(r.errors.iter().any(|e| e.contains("now")));
+    }
+
+    /// The property pruning rests on: an undeclared attribute can be dropped without
+    /// changing any decision, and a declared one keeps its full validation.
+    #[test]
+    fn pruning_drops_only_what_the_schema_does_not_declare() {
+        let k = kernel();
+        let mut ctx = json!({ "now": 100, "consent": true, "time": "2025-06-27T18:03-07:00", "ip": "192.168.1.1" });
+        let dropped = k.prune_undeclared_context("Read", &mut ctx);
+        assert_eq!(dropped, vec!["ip".to_owned(), "time".to_owned()]);
+        assert_eq!(ctx, json!({ "now": 100, "consent": true }));
+
+        // Undeclared, the same context is a malformed one; declared-only, it decides.
+        let strict = k.check(
+            &sub("agent1"),
+            "Read",
+            &res("claim1"),
+            &json!({ "now": 100, "time": "x" }),
+        );
+        assert!(!strict.decision, "check stays strict: {strict:?}");
+        assert!(
+            strict.errors.iter().any(|e| e.contains("bad context")),
+            "{strict:?}"
+        );
+        let mut pruned = json!({ "now": 100, "time": "x" });
+        k.prune_undeclared_context("Read", &mut pruned);
+        assert!(
+            k.check(&sub("agent1"), "Read", &res("claim1"), &pruned)
+                .decision
+        );
+
+        // A declared attribute of the wrong type is still refused after pruning — by the
+        // request's schema check, which is where Cedar types a context's scalars.
+        let mut wrong = json!({ "now": 100, "consent": "yes" });
+        assert!(k.prune_undeclared_context("Read", &mut wrong).is_empty());
+        let r = k.check(&sub("agent1"), "Read", &res("claim1"), &wrong);
+        assert!(
+            !r.decision
+                && r.errors
+                    .iter()
+                    .any(|e| e.contains("bad context") || e.contains("bad request")),
+            "{r:?}"
+        );
+
+        // An undeclared look-alike never satisfies a gate: F-consent still forbids.
+        let mut lookalike = json!({ "now": 100, "Consent": true });
+        assert_eq!(
+            k.prune_undeclared_context("AccessPII", &mut lookalike),
+            vec!["Consent".to_owned()]
+        );
+        assert!(
+            !k.check(&sub("acme_agent"), "AccessPII", &profile(), &lookalike)
+                .decision
+        );
+
+        // An action the schema does not declare is left alone, and `check` says why.
+        let mut unknown = json!({ "now": 100, "anything": 1 });
+        assert!(k.prune_undeclared_context("Nope", &mut unknown).is_empty());
+        assert_eq!(unknown, json!({ "now": 100, "anything": 1 }));
+    }
+
+    /// The walk reads what each builtin action declares, and resolves a common type.
+    #[test]
+    fn declared_context_attrs_follow_the_schema() {
+        let attrs = declared_context_attrs(&Model::builtin().schema).unwrap();
+        let names = |a: &str| attrs[a].clone().unwrap().into_iter().collect::<Vec<_>>();
+        assert_eq!(names("Read"), ["consent", "now"]);
+        assert_eq!(names("MoveMoney"), ["consent", "human_approved", "now"]);
+
+        let via_common = r#"
+            type Ctx = { now: Long, reason?: String };
+            entity P; entity R;
+            action a appliesTo { principal: [P], resource: [R], context: Ctx };
+            action b appliesTo { principal: [P], resource: [R] };
+        "#;
+        let attrs = declared_context_attrs(via_common).unwrap();
+        assert_eq!(names_of(&attrs, "a"), ["now", "reason"]);
+        assert_eq!(
+            names_of(&attrs, "b"),
+            Vec::<String>::new(),
+            "no context is the empty record"
+        );
+    }
+
+    fn names_of(attrs: &BTreeMap<String, Option<BTreeSet<String>>>, action: &str) -> Vec<String> {
+        attrs[action].clone().unwrap().into_iter().collect()
     }
 
     #[test]

@@ -8,10 +8,26 @@ use std::sync::Arc;
 use axum::Router;
 use axum::routing::{get, post};
 
-use crate::audit::{descendants, pubkey, subject_audit, subject_side_disclosure, tree_head};
+use crate::audit::{
+    authzen_configuration, descendants, pubkey, subject_audit, subject_side_disclosure, tree_head,
+};
 use crate::decide::decide;
 use crate::mission::{mission_approve, mission_get, mission_terminate};
 use crate::{AppState, caller};
+
+/// AuthZEN 1.0: a request's `X-Request-ID` comes back on its response, so a PEP can pair
+/// the two across a pool of connections. Nothing is generated when none was sent.
+async fn echo_request_id(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let id = req.headers().get("x-request-id").cloned();
+    let mut response = next.run(req).await;
+    if let Some(id) = id {
+        response.headers_mut().insert("x-request-id", id);
+    }
+    response
+}
 
 pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
     // Everything that decides, or that changes what a later decision will be. Split into
@@ -57,9 +73,17 @@ pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
             "/.well-known/decern-subject-side-disclosure",
             get(subject_side_disclosure),
         )
+        // AuthZEN 1.0 metadata: where the decision point is, for a PEP that discovers it.
+        // Served only when the deployment named its public URL; open because discovery
+        // precedes any credential.
+        .route(
+            "/.well-known/authzen-configuration",
+            get(authzen_configuration),
+        )
         .route("/audit/v1/subject", get(subject_audit))
         .merge(guarded)
         .with_state(state)
+        .layer(axum::middleware::from_fn(echo_request_id))
 }
 
 #[cfg(test)]
@@ -111,6 +135,8 @@ mod tests {
             standing_issuers: Arc::new(Vec::new()),
             authority_digest: Arc::from("test-authority"),
             caller_disclosure: Arc::new(caller_disclosure(&caller::Caller::TrustedProxy)),
+            type_aliases: Arc::new(std::collections::BTreeMap::new()),
+            public_url: None,
         };
 
         // corpB is a builtin principal in tenant "B".
@@ -120,7 +146,7 @@ mod tests {
                 "resource":{"type":"Resource","id":"claimB"}}"#,
         )
         .unwrap();
-        let resp = decide(State(st), None, Json(req)).await;
+        let resp = decide(State(st), None, Ok(Json(req))).await;
         assert_eq!(resp.status(), StatusCode::OK, "recorded decision is served");
 
         // Read the log back via an independent reader over the same store.
@@ -389,6 +415,8 @@ mod tests {
             ),
             ("/anchor/v1/tree-head", StatusCode::OK),
             ("/audit/v1/subject?handle=ppid:nobody", StatusCode::OK),
+            // Open, and 404 until `--public-url` names what it should advertise.
+            ("/.well-known/authzen-configuration", StatusCode::NOT_FOUND),
         ] {
             let resp = router
                 .clone()
@@ -787,7 +815,7 @@ mod tests {
                 "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
         ))
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(
             body["decision"], true,
@@ -833,7 +861,8 @@ mod tests {
                     "context":{ctx}}}"#
             ))
             .unwrap();
-            let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+            let (status, body) =
+                body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
             assert_eq!(status, StatusCode::OK, "{body}");
         }
 
@@ -933,7 +962,7 @@ mod tests {
                     "context":{"decision_subject":"ppid:many"}}"#,
             )
             .unwrap();
-            let (status, _) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+            let (status, _) = body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
             assert_eq!(status, StatusCode::OK);
         }
 
@@ -979,7 +1008,7 @@ mod tests {
                 "context":{"decision_subject":"ppid:carol"}}"#,
         )
         .unwrap();
-        let (status, _) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+        let (status, _) = body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK);
 
         // A prefix of a real handle is not that handle.
@@ -1084,7 +1113,7 @@ mod tests {
                 "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
         ))
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(
             body["decision"], false,
@@ -1120,7 +1149,7 @@ mod tests {
                 "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
         ))
         .unwrap();
-        let (status, body) = body_json(decide(State(st), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["decision"], false, "{body}");
         assert!(
@@ -1160,7 +1189,7 @@ mod tests {
                 "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
         ))
         .unwrap();
-        let (status, body) = body_json(decide(State(st), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["decision"], false, "{body}");
         assert!(
