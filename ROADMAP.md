@@ -2,8 +2,27 @@
 # Roadmap
 
 The public direction, in rough order. Aspirations, not commitments — priorities move as deployments
-and contributors teach us more, and nothing here carries a date. Shipped behavior lives in the
-[README](README.md) and [CHANGELOG](CHANGELOG.md).
+and contributors teach us more. Shipped behavior lives in the [README](README.md) and
+[CHANGELOG](CHANGELOG.md).
+
+## Milestones, as of October 2026
+
+Months, not dates: each is a target the next one depends on, and a missed one is said here,
+not re-baselined quietly.
+
+- **October 2026** — the verification gate runs weekly on an unchanged tree; Scorecard and
+  OpenSSF Best Practices published; the 0.4.0 release with the RustCrypto line moved
+  together; the AAuth posture re-verified against draft `-11` (`AAuth-Requirement`
+  challenge, `clock_skew` signalling).
+- **November 2026** — the AuthZEN 1.0 certification scenario runs in CI; the
+  COAZ-MCP binding (OpenID AuthZEN WG draft) replaces the ad-hoc tool-call mapping in
+  `examples/mcp`; implementation feedback filed on the drafts.
+- **December 2026 – January 2027** — decern documented as an external authorization service
+  for agentgateway; the decision about recording a committed *effect* beside the decision;
+  a written seam for a non-Cedar policy backend.
+- **January – March 2027** — first named adopter in [ADOPTERS.md](ADOPTERS.md); a second
+  maintainer; a neutral project home.
+- **April 2027** — a foundation proposal, only if the above holds.
 
 ## Positioning
 

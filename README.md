@@ -8,10 +8,13 @@
 
 # decern
 
-A deterministic authorization kernel whose safety properties are **machine-checked by an
-SMT solver over the model's whole symbolic input space**, not just tested on examples —
-with a hash-chained, tamper-evident decision ledger anyone can verify without trusting the
-operator. What that covers, and what it deliberately does not, is
+An authorization decision point that records. Every decision for an agent, a human or a
+workload — one principal type, one pure function of `(principal, authority graph, policy,
+now)` — is written to an Ed25519-signed, hash-chained ledger **before it is served**, and
+that ledger verifies offline without trusting the operator. The model's safety invariants
+are **machine-checked over its whole symbolic input space**, not tested on examples, by
+Cedar's Lean-verified symbolic compiler ([cedar-policy-symcc](https://crates.io/crates/cedar-policy-symcc))
+and the cvc5 solver. What that covers, and what it deliberately does not, is
 [stated precisely](docs/CLI.md#what-proven-covers).
 
 <p align="center">
