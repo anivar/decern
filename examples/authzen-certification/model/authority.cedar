@@ -4,9 +4,13 @@
 // (openid/authzen, certification/authorization-api-1_0-scenario.md, "Required Fixture"),
 // expressed in decern's vocabulary. The invariant layer below is the built-in model's,
 // verbatim, so `decern prove --model examples/authzen-certification/model` proves the
-// same nine statements over this model. The permits are the fixture's rules 1–4:
-// alice owns both records and may read, write and delete them; bob is a viewer of
-// record-1 and may read it, and nothing else.
+// same nine statements over this model. The permits are the fixture's rules 1–8: alice
+// owns both records and may read, write and (softly) delete them; bob is a viewer of both
+// and may read them; nobody writes an archived record, except a viewer the PEP describes
+// as an admin. Request properties are read from `context.subject`, `context.resource` and
+// `context.action`, where the schema declares them. Every permit keeps to an edge the
+// authority graph records — ownership, a delegation ancestor, or a viewer relation — which
+// is what the attenuation-edge proof holds over this model too.
 
 // ============================ BUSINESS LAYER ================================
 
@@ -24,6 +28,7 @@ permit (
    (resource has viewers && resource.viewers.contains(principal)))
 };
 
+// Rules 2, 4 and 5: an owner writes, unless the PEP describes the record as archived.
 @id("P-write")
 permit (
   principal,
@@ -34,8 +39,26 @@ permit (
   context.now <= principal.expiry &&
   principal.scopes.contains("write") &&
   (resource.owner == principal || principal.ancestors.contains(resource.owner))
+} unless {
+  context has resource && context.resource has status && context.resource.status == "archived"
 };
 
+// Rule 6: a viewer the PEP describes as an admin writes an archived record.
+@id("P-write-archived-as-admin")
+permit (
+  principal,
+  action == Action::"write",
+  resource
+) when {
+  principal.tenant == resource.tenant &&
+  context.now <= principal.expiry &&
+  principal.scopes.contains("write") &&
+  resource has viewers && resource.viewers.contains(principal) &&
+  context has subject && context.subject has role && context.subject.role == "admin" &&
+  context has resource && context.resource has status && context.resource.status == "archived"
+};
+
+// Rules 7 and 8: an owner deletes softly; a hard delete is denied.
 @id("P-delete")
 permit (
   principal,
@@ -45,7 +68,8 @@ permit (
   principal.tenant == resource.tenant &&
   context.now <= principal.expiry &&
   principal.scopes.contains("delete") &&
-  (resource.owner == principal || principal.ancestors.contains(resource.owner))
+  (resource.owner == principal || principal.ancestors.contains(resource.owner)) &&
+  context has action && context.action has soft && context.action.soft == true
 };
 
 // ============================ INVARIANT LAYER ===============================

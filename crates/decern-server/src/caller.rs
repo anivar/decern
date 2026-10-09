@@ -211,6 +211,33 @@ pub(crate) fn refuse_unless_admits(
     }
 }
 
+/// A request that describes its subject, resource or action (`properties`) makes a claim
+/// about a party. A caller bound to itself may not make one — the bind that keeps it from
+/// naming another principal keeps it from describing one — so the request is refused with
+/// the same `caller_mismatch` as a name that is not theirs. A PEP in `--pep`, a bearer
+/// caller and a trusted front may describe.
+pub(crate) fn refuse_description_unless_pep(
+    caller: &Option<axum::Extension<Authenticated>>,
+) -> Option<Response> {
+    match caller {
+        Some(axum::Extension(who)) if who.bind == Bind::SelfOnly => Some(
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": "caller_mismatch",
+                    "detail": format!(
+                        "caller {} is bound to itself and cannot describe the subject, \
+                         resource or action; a PEP listed in --pep can",
+                        brief(&who.subject)
+                    ),
+                })),
+            )
+                .into_response(),
+        ),
+        _ => None,
+    }
+}
+
 /// The layer over the protected routes.
 ///
 /// Applied as a layer rather than a handler argument. The check is the same for every

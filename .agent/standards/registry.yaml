@@ -35,14 +35,17 @@ standards:
       decern-serve exposes POST /access/v1/evaluation (and /decide as an alias): AuthZEN 1.0
       request (subject/resource {type,id}, action {name}, optional context) and response
       (boolean decision; any reasons under context). Every malformed request is 400 and
-      unknown top-level fields and entity properties are ignored (§10.1.1); context
-      attributes the model's schema does not declare are dropped before evaluation, since
-      no validated policy can read them, while declared ones keep their schema validation;
-      X-Request-ID is echoed (§10.1.3). Request entity types map onto the model's with
+      unknown top-level fields are ignored (§10.1.1). Subject, resource and action
+      `properties` are carried as context.subject, context.resource and context.action
+      where the action's schema declares them, from PEP-bound, bearer or trusted-front
+      callers only (a caller bound to itself is 403 caller_mismatch); context the schema
+      does not declare, at any level, is dropped before evaluation, since no validated
+      policy can read it, while declared context keeps its schema validation; X-Request-ID
+      is echoed (§10.1.3). Request entity types map onto the model's with
       --authzen-type-alias. GET /.well-known/authzen-configuration (§9) is served only with
       --public-url and advertises the decision point and the evaluation endpoint, nothing
-      unserved. The certification scenario's Basic Core and Discovery sub-levels run as
-      tests against examples/authzen-certification/model; Basic Properties, Batch and
+      unserved. The certification scenario's Basic Core, Basic Properties and Discovery
+      sub-levels run as tests against examples/authzen-certification/model; Batch and
       Search are not implemented. Reasons carry named policy ids on the builtin model, and
       the endpoint sits behind whichever caller posture the deployment names, which AuthZEN
       leaves to the deployment. Verified against the spec 2026-10-09.

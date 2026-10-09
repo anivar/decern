@@ -33,7 +33,8 @@
     "uid": { "type": "Resource", "id": "record-2" },
     "attrs": {
       "owner": { "__entity": { "type": "Principal", "id": "alice" } },
-      "tenant": "certification"
+      "tenant": "certification",
+      "viewers": [{ "__entity": { "type": "Principal", "id": "bob" } }]
     },
     "parents": []
   }
