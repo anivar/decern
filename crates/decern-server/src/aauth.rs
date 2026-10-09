@@ -56,6 +56,18 @@ const MAX_TOKEN_BYTES: usize = 8192;
 /// How much of an attacker-chosen string may be echoed back in an error.
 const MAX_ECHO: usize = 64;
 
+/// Draft -11 §5.3.1: an agent token SHOULD NOT have a lifetime above 24 hours. The draft
+/// leaves the bound to the verifier's policy; this deployment refuses a token that claims
+/// more, because with no nonce cache a long-lived token is a long replay window.
+const MAX_AGENT_TOKEN_LIFETIME_SECS: i64 = 24 * 60 * 60;
+
+/// The one refusal `refuse` must recognise on its way out: draft -11 §11.5.2 answers an
+/// `iat` ahead of the verifier's clock with `Signature-Error: error=clock_skew`, so the
+/// agent can tell skew from a bad token. [`Denied`] carries no variant for it — the enum
+/// is shared by every posture and the other postures have no such signal — so the detail
+/// text is the marker, compared whole.
+const CLOCK_SKEW_DETAIL: &str = "agent token is issued ahead of this server's clock";
+
 /// The draft RECOMMENDs EdDSA and forbids `none`. This deployment accepts EdDSA only, which
 /// is the curve every other decern signature path already uses, so the posture adds no new
 /// cryptography — unlike the SPIFFE posture, whose spec has no EdDSA at all.
@@ -203,15 +215,35 @@ impl CallerAuth for AauthConfig {
         authenticate(&signed, self, now_secs as i64)
     }
 
-    /// The draft carries no challenge scheme of its own for a failed signature, so the
-    /// refusal states which check failed and offers no `WWW-Authenticate` — the same choice
-    /// `sig.rs` makes, and for the same reason: naming a scheme this deployment does not
-    /// accept would invite a retry that cannot succeed.
+    /// Two refusals carry a header the draft defines; the rest state which check failed
+    /// and offer no `WWW-Authenticate`, the same choice `sig.rs` makes and for the same
+    /// reason: naming a scheme this deployment does not accept would invite a retry that
+    /// cannot succeed. Draft -11 §6.1: a resource deciding on the agent's identity alone
+    /// answers a request that presented no agent token with the one requirement it has,
+    /// `AAuth-Requirement: requirement=agent-token`, with no parameters — and AAuth never
+    /// conveys a requirement through `WWW-Authenticate`. §11.5.2: an `iat` ahead of this
+    /// clock is a signature failure answered `Signature-Error: error=clock_skew`.
     fn refuse(&self, denied: Denied) -> Response {
         let body = axum::Json(
             serde_json::json!({ "error": "invalid_request", "error_description": denied.detail() }),
         );
-        (denied.status(), body).into_response()
+        let mut response = (denied.status(), body).into_response();
+        match &denied {
+            Denied::NoCredentials => {
+                response.headers_mut().insert(
+                    "aauth-requirement",
+                    axum::http::HeaderValue::from_static("requirement=agent-token"),
+                );
+            }
+            Denied::Invalid(detail) if detail == CLOCK_SKEW_DETAIL => {
+                response.headers_mut().insert(
+                    "signature-error",
+                    axum::http::HeaderValue::from_static("error=clock_skew"),
+                );
+            }
+            _ => {}
+        }
+        response
     }
 }
 
@@ -400,9 +432,15 @@ pub(crate) fn authenticate(
     }
     let iat = numeric_date(&claims, "iat")?
         .ok_or_else(|| Denied::Invalid("agent token carries no iat".into()))?;
-    if iat > now_secs as f64 {
+    // Draft -11 §11.5.2: `iat` is not a validity check. A verifier that refuses an `iat`
+    // ahead of its clock bounds the refusal by its signature validity window rather than
+    // demanding an exact clock, so the tolerance is the one the signature's `created` gets.
+    if iat > (now_secs + sig::MAX_CLOCK_SKEW_AHEAD_SECS) as f64 {
+        return Err(Denied::Invalid(CLOCK_SKEW_DETAIL.into()));
+    }
+    if exp - iat > MAX_AGENT_TOKEN_LIFETIME_SECS as f64 {
         return Err(Denied::Invalid(
-            "agent token is issued in the future".into(),
+            "agent token claims a lifetime above 24 hours".into(),
         ));
     }
     // The draft lists `exp` and `iat` among its required claims and does not name `nbf`, but
@@ -876,7 +914,114 @@ mod tests {
         );
         let err = authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
             .expect_err("should refuse");
-        assert!(matches!(err, Denied::Invalid(ref d) if d.contains("issued in the future")));
+        assert!(
+            matches!(err, Denied::Invalid(ref d) if d == CLOCK_SKEW_DETAIL),
+            "{err:?}"
+        );
+    }
+
+    /// Draft -11 §6.1: a resource that decides on the agent's identity alone tells an agent
+    /// that presented no token what it needs, and only that — the header carries no
+    /// parameters, and AAuth never conveys a requirement through `WWW-Authenticate`. A
+    /// refused credential is a different thing from a missing one and gets no requirement.
+    #[test]
+    fn a_request_with_no_agent_token_is_told_the_requirement() {
+        let (provider, _) = keys();
+        let resp = cfg(&provider.verifying_key()).refuse(Denied::NoCredentials);
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            resp.headers()
+                .get("aauth-requirement")
+                .and_then(|v| v.to_str().ok()),
+            Some("requirement=agent-token")
+        );
+        assert!(resp.headers().get("www-authenticate").is_none());
+
+        let resp = cfg(&provider.verifying_key()).refuse(Denied::Invalid("not this".into()));
+        assert!(resp.headers().get("aauth-requirement").is_none());
+        assert!(resp.headers().get("signature-error").is_none());
+    }
+
+    /// Draft -11 §11.5.2: `iat` is not a validity check. An `iat` ahead of this clock by no
+    /// more than the signature window is honoured; one beyond it is refused as the draft's
+    /// `clock_skew`, signalled in `Signature-Error` so the agent can tell skew from a bad
+    /// token.
+    #[test]
+    fn an_iat_ahead_of_the_clock_is_tolerated_within_the_signature_window() {
+        let (provider, agent) = keys();
+        let within = fixture_with(
+            &provider,
+            &agent,
+            |_| {},
+            |c| c["iat"] = json!((NOW + sig::MAX_CLOCK_SKEW_AHEAD_SECS) as f64),
+        );
+        assert!(
+            authenticate(
+                &req(&within, AUTHORITY),
+                &cfg(&provider.verifying_key()),
+                NOW
+            )
+            .is_ok()
+        );
+
+        let beyond = fixture_with(
+            &provider,
+            &agent,
+            |_| {},
+            |c| c["iat"] = json!((NOW + sig::MAX_CLOCK_SKEW_AHEAD_SECS + 1) as f64),
+        );
+        let err = authenticate(
+            &req(&beyond, AUTHORITY),
+            &cfg(&provider.verifying_key()),
+            NOW,
+        )
+        .expect_err("should refuse");
+        assert!(
+            matches!(err, Denied::Invalid(ref d) if d == CLOCK_SKEW_DETAIL),
+            "{err:?}"
+        );
+        let resp = cfg(&provider.verifying_key()).refuse(err);
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            resp.headers()
+                .get("signature-error")
+                .and_then(|v| v.to_str().ok()),
+            Some("error=clock_skew")
+        );
+    }
+
+    /// Draft -11 §5.3.1: an agent token SHOULD NOT outlive 24 hours. The draft leaves the
+    /// bound to the verifier; this deployment refuses a token that claims more, and honours
+    /// one that claims exactly a day.
+    #[test]
+    fn a_token_claiming_more_than_a_day_is_refused() {
+        let (provider, agent) = keys();
+        let long = fixture_with(
+            &provider,
+            &agent,
+            |_| {},
+            |c| {
+                c["iat"] = json!((NOW - 100) as f64);
+                c["exp"] = json!((NOW - 100 + MAX_AGENT_TOKEN_LIFETIME_SECS + 1) as f64);
+            },
+        );
+        let err = authenticate(&req(&long, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
+            .expect_err("should refuse");
+        assert!(
+            matches!(err, Denied::Invalid(ref d) if d.contains("24 hours")),
+            "{err:?}"
+        );
+
+        let day = fixture_with(
+            &provider,
+            &agent,
+            |_| {},
+            |c| {
+                c["iat"] = json!((NOW - 100) as f64);
+                c["exp"] = json!((NOW - 100 + MAX_AGENT_TOKEN_LIFETIME_SECS) as f64);
+            },
+        );
+        assert!(authenticate(&req(&day, AUTHORITY), &cfg(&provider.verifying_key()), NOW).is_ok());
     }
 
     #[test]
