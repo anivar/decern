@@ -46,8 +46,9 @@ cargo install decern-cli decern-server
 
 Two binaries: `decern` to prove and verify, `decern-serve` to answer requests. Prebuilt,
 signed binaries for Linux (x64/arm64), macOS (Apple Silicon) and Windows (x64) are on the
-[releases page](https://github.com/anivar/decern/releases). Only `decern prove` needs the
-**cvc5** solver on `PATH`; serving answers does not.
+[releases page](https://github.com/anivar/decern/releases); how to check a signature is in
+[SECURITY.md](SECURITY.md#verifying-a-release). Only `decern prove` needs the **cvc5**
+solver on `PATH`; serving answers does not.
 
 ```sh
 # 1. Prove every invariant over the model's input space (cvc5)
