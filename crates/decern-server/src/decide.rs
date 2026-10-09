@@ -44,8 +44,10 @@ pub(crate) struct DecideReq {
     subject: Ref,
     action: Action,
     resource: Ref,
+    /// Optional, and an object when present: anything else is a wrong type, and a wrong
+    /// type is 400 (AuthZEN 1.0 §10.1.1), not a context quietly taken as empty.
     #[serde(default)]
-    context: Value,
+    context: Option<serde_json::Map<String, Value>>,
 }
 
 /// Derive the accountable-owner ("sponsor") for a decision: the pure ROOT of
@@ -145,10 +147,20 @@ pub(crate) async fn decide(
         Ok(req) => req,
         Err(rejection) => return Refusal::invalid_request(rejection.body_text()).into_response(),
     };
-    if let Some(refusal) = admit(&caller, &req) {
+    decide_one(&st, &caller, req)
+}
+
+/// One request, start to finish: admitted, evaluated, recorded, served — in that order,
+/// and served only once recorded. The single endpoint and a batch without items share it.
+pub(crate) fn decide_one(
+    st: &AppState,
+    caller: &Option<axum::Extension<crate::caller::Authenticated>>,
+    req: DecideReq,
+) -> Response {
+    if let Some(refusal) = admit(caller, &req) {
         return refusal;
     }
-    match evaluate_one(&st, &caller, req) {
+    match evaluate_one(st, caller, req) {
         Err(refusal) => refusal.into_response(),
         Ok(e) => {
             let backend = st.backend.clone();
@@ -169,22 +181,56 @@ pub(crate) struct Refusal {
 }
 
 impl Refusal {
-    fn unprocessable(error: impl Into<String>, detail: impl Into<String>) -> Self {
+    fn new(status: StatusCode, error: impl Into<String>, detail: impl Into<String>) -> Self {
         Refusal {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
+            status,
             error: error.into(),
-            detail: detail.into(),
+            // A detail quotes the caller's own input; bounded, so a refusal is never a
+            // mirror for an unbounded body.
+            detail: bounded(&detail.into(), 512),
         }
+    }
+
+    fn unprocessable(error: impl Into<String>, detail: impl Into<String>) -> Self {
+        Refusal::new(StatusCode::UNPROCESSABLE_ENTITY, error, detail)
     }
 
     /// A request that is not one: AuthZEN 1.0 (§10.1.1) answers every malformed shape 400.
     pub(crate) fn invalid_request(detail: impl Into<String>) -> Self {
-        Refusal {
-            status: StatusCode::BAD_REQUEST,
-            error: "invalid_request".to_owned(),
-            detail: detail.into(),
-        }
+        Refusal::new(StatusCode::BAD_REQUEST, "invalid_request", detail)
     }
+
+    /// A context larger than this server will evaluate or record.
+    pub(crate) fn context_too_large() -> Self {
+        Refusal::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "context_too_large",
+            CONTEXT_TOO_LARGE,
+        )
+    }
+}
+
+/// The most context one evaluation may carry, properties included, measured as JSON.
+/// Every decision is a permanent record, and a batch repeats its defaults in every item,
+/// so what one evaluation may put on the ledger is bounded here rather than only by the
+/// request body.
+pub(crate) const MAX_CONTEXT_BYTES: usize = 64 * 1024;
+pub(crate) const CONTEXT_TOO_LARGE: &str = "context exceeds 64 KiB, properties included";
+
+pub(crate) fn context_too_large(context: &Value) -> bool {
+    !serde_json::to_vec(context).is_ok_and(|bytes| bytes.len() <= MAX_CONTEXT_BYTES)
+}
+
+/// `s` with control characters dropped and at most `max` characters kept, by character
+/// and never by byte: a cut inside a multi-byte character would turn a refusal into a
+/// panic on attacker-chosen text.
+fn bounded(s: &str, max: usize) -> String {
+    let kept: Vec<char> = s.chars().filter(|c| !c.is_control()).collect();
+    let mut out: String = kept.iter().take(max).collect();
+    if kept.len() > max {
+        out.push('…');
+    }
+    out
 }
 
 impl IntoResponse for Refusal {
@@ -197,20 +243,29 @@ impl IntoResponse for Refusal {
     }
 }
 
+impl DecideReq {
+    /// What admission needs to know: whom the request names, and whether it describes a
+    /// party through `properties` (an empty `properties` describes nothing).
+    pub(crate) fn facts(&self) -> (Option<&str>, bool) {
+        let describes = [
+            &self.subject.properties,
+            &self.resource.properties,
+            &self.action.properties,
+        ]
+        .iter()
+        .any(|p| p.as_ref().is_some_and(|m| !m.is_empty()));
+        (Some(&self.subject.id), describes)
+    }
+}
+
 /// What a caller may ask at all, checked before anything is evaluated or recorded: a
 /// caller bound to itself may neither name another principal nor describe a party.
 pub(crate) fn admit(
     caller: &Option<axum::Extension<crate::caller::Authenticated>>,
     req: &DecideReq,
 ) -> Option<Response> {
-    let describes = [
-        &req.subject.properties,
-        &req.resource.properties,
-        &req.action.properties,
-    ]
-    .iter()
-    .any(|p| p.as_ref().is_some_and(|m| !m.is_empty()));
-    admit_named(caller, Some(&req.subject.id), describes)
+    let (subject_id, describes) = req.facts();
+    admit_named(caller, subject_id, describes)
 }
 
 /// The same admission over what a request names, for a request that could not be parsed
@@ -229,6 +284,36 @@ pub(crate) fn admit_named(
         return crate::caller::refuse_description_unless_pep(caller);
     }
     None
+}
+
+/// The context as the kernel will see it, before the keys this server consumes itself
+/// (`mission`, the challenge, the decision subject) are taken out of it.
+///
+/// `now` is a server-derived fact, like `sponsor` and `shard` — the PEP is the clock
+/// authority. It is set unconditionally from the server clock, over any body-supplied
+/// value: the kernel reads `context.now` as its sole time source for the decay and expiry
+/// gates, so honouring a caller's `now` would let `{"now":0}` win an Allow for an expired
+/// principal. A caller-supplied `asserted_by` goes too: the record's own column is the
+/// server-verified one. And a description of a party is carried under the party's name —
+/// `context.subject`, `context.resource`, `context.action` — where the action declares it
+/// (the rest is pruned before the check); those three keys are reserved for the
+/// `properties` the description gate admits, so whatever a caller wrote there directly is
+/// removed first and there is no second way to describe a party.
+fn kernel_context(
+    context: serde_json::Map<String, Value>,
+    described: [(&str, Option<serde_json::Map<String, Value>>); 3],
+    now_s: u64,
+) -> Value {
+    let mut ctx = context;
+    ctx.insert("now".to_owned(), json!(now_s));
+    ctx.remove("asserted_by");
+    for (key, properties) in described {
+        ctx.remove(key);
+        if let Some(properties) = properties {
+            ctx.insert(key.to_owned(), Value::Object(properties));
+        }
+    }
+    Value::Object(ctx)
 }
 
 /// One decision, made and ready to record: what is served, and the entry that must land
@@ -270,36 +355,9 @@ pub(crate) fn evaluate_one(
             iss: who.issuer.clone(),
         });
     let now_s = now_secs();
-    let mut ctx = if req.context.is_object() {
-        req.context
-    } else {
-        json!({})
-    };
-    // `now` is a server-derived fact, like `sponsor` and `shard` below — the PEP
-    // is the clock authority. Set it UNCONDITIONALLY from the server clock,
-    // overriding any body-supplied value: the kernel uses `context.now` as its
-    // sole time source for the decay/expiry gate, so honoring a caller's `now`
-    // would let `{"now":0}` win an Allow for an expired principal.
-    ctx["now"] = json!(now_s);
-    // A description of a party is carried under the party's name — `context.subject`,
-    // `context.resource`, `context.action` — where the action declares it; the rest is
-    // pruned before the check. The three keys are reserved for the `properties` field the
-    // description gate above admits: whatever a caller wrote there directly is removed
-    // first, so there is no second way to describe a party.
-    if let Some(obj) = ctx.as_object_mut() {
-        for (key, _) in &described {
-            obj.remove(*key);
-        }
-    }
-    for (key, properties) in described {
-        if let Some(properties) = properties {
-            ctx[key] = Value::Object(properties);
-        }
-    }
-    // A caller-supplied `asserted_by` key in the request context must not appear
-    // on the permanent record alongside the server-derived top-level column.
-    if let Some(obj) = ctx.as_object_mut() {
-        obj.remove("asserted_by");
+    let mut ctx = kernel_context(req.context.take().unwrap_or_default(), described, now_s);
+    if context_too_large(&ctx) {
+        return Err(Refusal::context_too_large());
     }
     // A request names entity types in its own terms (`user`, `record`); the deployment
     // maps them onto the model's (`--authzen-type-alias`). The record carries the type the
@@ -397,8 +455,12 @@ pub(crate) fn evaluate_one(
     // are carried into the append closure so they fail closed as a 503.
     let shard = shard_for(&st.backend, st.kernel.directory(), &subject.id);
 
+    // Re-attached for the auditor as the pair that was looked up, never as it was sent:
+    // the object is caller-chosen, and this record is permanent.
     if let Some(m) = mission_for_context {
-        ctx["mission"] = m;
+        let field =
+            |name: &str| bounded(m.get(name).and_then(Value::as_str).unwrap_or_default(), 256);
+        ctx["mission"] = json!({ "approver": field("approver"), "s256": field("s256") });
     }
 
     // Bind the exact parameters evaluated: subject/action/resource + post-mission ctx.

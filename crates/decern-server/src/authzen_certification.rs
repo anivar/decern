@@ -184,6 +184,7 @@ async fn a_malformed_request_is_400_in_every_shape_the_scenario_lists() {
         ("subject is a string", json!({"subject":"alice","action":{"name":"read"},"resource":{"type":"record","id":"record-1"}}).to_string()),
         ("action.name is a number", json!({"subject":{"type":"user","id":"alice"},"action":{"name":123},"resource":{"type":"record","id":"record-1"}}).to_string()),
         ("properties is a string", json!({"subject":{"type":"user","id":"alice","properties":"x"},"action":{"name":"read"},"resource":{"type":"record","id":"record-1"}}).to_string()),
+        ("context is a string", json!({"subject":{"type":"user","id":"alice"},"action":{"name":"read"},"resource":{"type":"record","id":"record-1"},"context":"x"}).to_string()),
         ("malformed JSON", "{\"subject\": ".to_owned()),
         ("empty body", String::new()),
     ];
@@ -597,8 +598,9 @@ async fn batch_properties_are_evaluated_per_item() {
 }
 
 /// C-3-4-1: under `execute_all`, an item that is not an evaluation is answered
-/// `decision: false` with the reason in its context, in its place, and nothing is recorded
-/// for it — it decided nothing.
+/// `decision: false` with the reason in its context (§7.2.1's shape: `context.error`
+/// with the status the single endpoint would have answered), in its place, and nothing is
+/// recorded for it — it decided nothing.
 #[tokio::test]
 async fn a_batch_item_that_is_not_an_evaluation_is_denied_in_place_and_not_recorded() {
     let (st, base) = fixture_state();
@@ -614,9 +616,13 @@ async fn a_batch_item_that_is_not_an_evaluation_is_denied_in_place_and_not_recor
     .await;
     assert_eq!(status, StatusCode::OK, "{resp}");
     assert_eq!(decisions(&resp), [json!(true), json!(false)], "{resp}");
-    let errors = &resp["evaluations"][1]["context"]["errors"];
+    let error = &resp["evaluations"][1]["context"]["error"];
+    assert_eq!(error["status"], 400, "{resp}");
+    assert_eq!(error["code"], "invalid_request", "{resp}");
     assert!(
-        errors[0].as_str().is_some_and(|e| e.contains("resource")),
+        error["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("resource")),
         "the reason names what is missing: {resp}"
     );
     let records = records_in(&base, &st);
@@ -658,6 +664,12 @@ async fn a_batch_without_items_is_the_single_evaluation() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+    assert!(
+        resp["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("resource") && !d.contains("evaluations[")),
+        "a batch without items names no item: {resp}"
+    );
 }
 
 /// §7.1.2.1: `deny_on_first_deny` stops at the first deny, `permit_on_first_permit` at
@@ -785,5 +797,157 @@ async fn a_batch_over_the_cap_is_refused() {
             .as_str()
             .is_some_and(|d| d.contains(&crate::batch::MAX_EVALUATIONS.to_string())),
         "{resp}"
+    );
+}
+
+/// A refusal this server would answer 422 on the single endpoint — here, a decision
+/// subject that identifies a person — is carried inside the item that earned it, as that
+/// item's deny with `context.error` carrying the status and code, and the item is not
+/// recorded; the rest of the exchange is unaffected, and `deny_on_first_deny` treats it as
+/// the deny it is.
+#[tokio::test]
+async fn a_refusal_inside_a_batch_item_is_that_items_deny_and_records_nothing_for_it() {
+    let (st, base) = fixture_state();
+    let body = json!({
+        "subject": { "type": "user", "id": "alice" },
+        "action": { "name": "read" },
+        "resource": { "type": "record", "id": "record-1" },
+        "evaluations": [
+            {},
+            { "context": { "decision_subject": "carol@example.com" } },
+            {},
+        ],
+    });
+    let (status, resp) = evaluations(&st, &body).await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(
+        decisions(&resp),
+        [json!(true), json!(false), json!(true)],
+        "{resp}"
+    );
+    let error = &resp["evaluations"][1]["context"]["error"];
+    assert_eq!(error["status"], 422, "{resp}");
+    assert_eq!(error["code"], "decision_subject", "{resp}");
+    let records = records_in(&base, &st);
+    assert_eq!(
+        records.len(),
+        2,
+        "the refused item decided nothing: {records:?}"
+    );
+    assert!(
+        !records
+            .iter()
+            .any(|r| r.to_string().contains("carol@example.com")),
+        "a refused handle never reaches the ledger"
+    );
+
+    let mut short = body.clone();
+    short["options"] = json!({ "evaluations_semantic": "deny_on_first_deny" });
+    let (status, resp) = evaluations(&st, &short).await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(decisions(&resp), [json!(true), json!(false)], "{resp}");
+}
+
+/// A context larger than one evaluation may carry is refused before it is evaluated or
+/// recorded — 413 on the single endpoint, that item's answer in a batch — and a batch
+/// whose default context is too large does not copy it into every item to find out; an
+/// item that brings its own context is judged on that.
+#[tokio::test]
+async fn an_oversize_context_is_refused_before_it_is_evaluated_or_recorded() {
+    let (st, base) = fixture_state();
+    let pad = "x".repeat(crate::decide::MAX_CONTEXT_BYTES + 1);
+    let (status, resp) = decision(
+        &st,
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "resource": { "type": "record", "id": "record-1" },
+            "context": { "pad": pad },
+        })
+        .to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{resp}");
+    assert_eq!(resp["error"], "context_too_large");
+    assert!(records_in(&base, &st).is_empty(), "nothing recorded");
+
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "resource": { "type": "record", "id": "record-1" },
+            "context": { "pad": pad },
+            "evaluations": [{}, { "context": { "small": true } }],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(decisions(&resp), [json!(false), json!(true)], "{resp}");
+    assert_eq!(
+        resp["evaluations"][0]["context"]["error"]["status"], 413,
+        "{resp}"
+    );
+    assert_eq!(
+        records_in(&base, &st).len(),
+        1,
+        "only the decided item is recorded"
+    );
+
+    // The same for a party whose default `properties` are that large: the item that
+    // inherits it is answered without the copy, the item that brings its own is decided.
+    let (status, resp) = evaluations(
+        &st,
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "resource": { "type": "record", "id": "record-1", "properties": { "pad": pad } },
+            "evaluations": [
+                {},
+                { "resource": { "type": "record", "id": "record-1", "properties": {} } },
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(decisions(&resp), [json!(false), json!(true)], "{resp}");
+    assert_eq!(
+        resp["evaluations"][0]["context"]["error"]["status"], 413,
+        "{resp}"
+    );
+    assert_eq!(
+        records_in(&base, &st).len(),
+        2,
+        "one more decided item is recorded"
+    );
+}
+
+/// What the record keeps of a `context.mission` is the pair that was looked up — never
+/// the object as sent, which is caller-chosen and would be permanent.
+#[tokio::test]
+async fn the_record_carries_the_mission_pair_not_the_object_sent() {
+    let (st, base) = fixture_state();
+    let (status, resp) = decision(
+        &st,
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "resource": { "type": "record", "id": "record-1" },
+            "context": { "mission": { "approver": "alice", "s256": "nope", "pad": "y".repeat(10_000) } },
+        })
+        .to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(
+        resp["decision"], false,
+        "an unregistered mission denies: {resp}"
+    );
+    let records = records_in(&base, &st);
+    let mission = &records.last().expect("recorded")["entry"]["context"]["mission"];
+    assert_eq!(
+        mission,
+        &json!({ "approver": "alice", "s256": "nope" }),
+        "{mission}"
     );
 }

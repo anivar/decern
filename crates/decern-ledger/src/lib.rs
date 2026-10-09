@@ -1001,6 +1001,35 @@ impl Ledger {
         Ok(record)
     }
 
+    /// Append several entries as one durable step. Each is chained, signed and written
+    /// exactly as [`Ledger::append`] writes it; when sync is on, the file is synced once
+    /// at the end rather than once per entry, and what landed before a failure is synced
+    /// before the error is returned — a record this call reported written is as durable
+    /// as any other.
+    pub fn append_all(&mut self, entries: Vec<Entry>) -> Result<Vec<Record>, LedgerError> {
+        let sync = self.sync;
+        self.sync = false;
+        let mut records = Vec::with_capacity(entries.len());
+        let mut outcome = Ok(());
+        for entry in entries {
+            match self.append(entry) {
+                Ok(record) => records.push(record),
+                Err(e) => {
+                    outcome = Err(e);
+                    break;
+                }
+            }
+        }
+        self.sync = sync;
+        if sync {
+            self.file
+                .sync_data()
+                .map_err(|e| io_err(&self.active_path, e))?;
+        }
+        outcome?;
+        Ok(records)
+    }
+
     /// Whether the NEXT append (which will carry `next_ts_ms`, on top of
     /// `current_bytes` already written to the active segment) should roll
     /// over first. `epoch_ms` compares `next_ts_ms` against the active
@@ -2507,6 +2536,35 @@ mod tests {
         drop(l);
         let report = verify(&path, Some(&key.verifying_key())).unwrap();
         assert_eq!(report.entries, 2);
+        assert!(report.signatures_checked);
+    }
+
+    #[test]
+    fn append_all_is_one_durable_step_and_keeps_the_chain() {
+        let path = tmp("synced-batch.ledger");
+        std::fs::remove_file(&path).ok();
+        let key = decern_crypto::generate().unwrap();
+        let mut l = Ledger::open(&path, key.clone()).unwrap();
+        l.set_sync(true);
+        let records = l
+            .append_all(vec![
+                entry("Read", true),
+                entry("Read", false),
+                entry("MoveMoney", false),
+            ])
+            .unwrap();
+        assert_eq!(records.len(), 3);
+        assert!(
+            records
+                .windows(2)
+                .all(|w| w[1].entry.seq == w[0].entry.seq + 1),
+            "contiguous"
+        );
+        // Sync is back on for the next single append.
+        l.append(entry("Read", true)).unwrap();
+        drop(l);
+        let report = verify(&path, Some(&key.verifying_key())).unwrap();
+        assert_eq!(report.entries, 4);
         assert!(report.signatures_checked);
     }
 

@@ -170,7 +170,7 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | Option | Meaning |
 |---|---|
 | `--model <DIR>` | Model directory. Omit for the built-in model. |
-| `--authzen-type-alias <REQUEST=MODEL>` | A request entity type and the model entity type it names (`user=Principal`). Repeatable. A PEP spells types in its own terms; the record carries the model's. A type with no alias passes through unchanged. |
+| `--authzen-type-alias <REQUEST=MODEL>` | A request entity type and the model entity type it names (`user=Principal`). Repeatable. A PEP spells types in its own terms; the record carries the model's. A type with no alias passes through unchanged. The model type must be one the model's schema declares, or the server does not start. |
 | `--public-url <URL>` | This deployment's public base URL, advertised as the policy decision point by `GET /.well-known/authzen-configuration`. `https://`, or `http://` on loopback for a local walkthrough; an origin only. Omit and the document is not served. |
 | `--ledger <PATH>` | Single-file ledger. The default backend. Mutually exclusive with `--sharded`. |
 | `--sharded <DIR_OR_POSTGRES_URL>` | Hosted. A directory gives a per-shard `flock` head store (several processes, one host). A `postgres://` URL gives a multi-host head store and needs `--features postgres`. |
@@ -200,8 +200,8 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 
 | Method | Path | Caller | What |
 |---|---|---|---|
-| `POST` | `/access/v1/evaluation` | guarded | The decision. AuthZEN 1.0: `subject`/`resource` `{type,id,properties?}`, `action` `{name,properties?}`, optional `context`; `properties` reach the policies as `context.subject`/`context.resource`/`context.action` where the model declares them, from PEP-bound callers only. `/decide` is an alias. |
-| `POST` | `/access/v1/evaluations` | guarded | Several decisions in one exchange (AuthZEN 1.0 §7). Top-level `subject`/`action`/`resource`/`context` are defaults an item replaces whole; `options.evaluations_semantic` is `execute_all` (default), `deny_on_first_deny` or `permit_on_first_permit`; answers come back in request order. Each evaluated item is admitted, decided and recorded as a single evaluation is, before the batch is served; an item that is not an evaluation is `decision: false` with the reason in its context and is not recorded. At most 1000 items. Without items, this is the single evaluation. |
+| `POST` | `/access/v1/evaluation` | guarded | The decision. AuthZEN 1.0: `subject`/`resource` `{type,id,properties?}`, `action` `{name,properties?}`, optional `context`; `properties` reach the policies as `context.subject`/`context.resource`/`context.action` where the model declares them, from PEP-bound callers only. A context over 64 KiB as sent, properties included, is 413. `/decide` is an alias. |
+| `POST` | `/access/v1/evaluations` | guarded | Several decisions in one exchange (AuthZEN 1.0 §7). Top-level `subject`/`action`/`resource`/`context` are defaults an item replaces whole; `options.evaluations_semantic` is `execute_all` (default), `deny_on_first_deny` or `permit_on_first_permit`; answers come back in request order. Each evaluated item is admitted, decided and recorded as a single evaluation is, before the batch is served — as one durable step on the single-file ledger; an item that is not an evaluation, or that this server refuses, is `decision: false` with `context.error` `{status, code, message}` and is not recorded, where a policy deny carries the kernel's `context.errors`. A record that cannot land fails the exchange closed (503) with the items before it already recorded, so a retry records those again. At most 1000 items. Without items, this is the single evaluation. |
 | `GET` | `/pubkey` | open | The key records are signed with, so a verifier can fetch it once and keep it. |
 | `GET` | `/anchor/v1/tree-head` | open | A signed commitment to the log's current state — publish it somewhere you do not control. |
 | `GET` | `/audit/v1/subject?handle=<h>` | open | What was decided *about* one party, with inclusion proofs. |
@@ -242,7 +242,8 @@ names one posture:
   name is not theirs. The same bind covers a request's `properties`, what a PEP says about the
   subject, resource or action (carried into the context as `context.subject`,
   `context.resource` and `context.action` where the action's schema declares them): a caller
-  bound to itself may not describe a party, and that too is `403 caller_mismatch`.
+  bound to itself may not describe a party through `properties`, and that too is
+  `403 caller_mismatch`.
   Verification is against configured keys only, same no-fetch posture as bearer validation,
   and an agent identifier with no configured key is refused before any cryptography runs.
   [`examples/signed-request/`](../examples/signed-request/README.md) runs this mode end to end,
