@@ -6,7 +6,10 @@ The fixture of the OpenID AuthZEN *Authorization API 1.0* certification scenario
 subjects `alice` and `bob`, resources `record-1` and `record-2`, actions `read`, `write` and
 `delete`, and decision rules 1–8 — alice owns both records and may read, write and softly delete
 them; bob views both and may read them; nobody writes a record the PEP describes as archived,
-except a viewer it describes as an admin. A request's `properties` reach the policies as
+except a viewer it describes as an admin. (The scenario's rule 6 says any subject described
+as an admin; this model narrows it to a viewer, so every permit keeps to an edge the
+authority graph records and the attenuation-edge proof holds.) A request's `properties`
+reach the policies as
 `context.subject`, `context.resource` and `context.action`, where the schema declares them per
 action. The invariant layer is the built-in model's, verbatim, so the nine proofs hold over
 this model too.
