@@ -198,6 +198,12 @@ impl Kernel {
         &self.directory
     }
 
+    /// The entity types the schema declares, by name — what a request's entity type must
+    /// resolve to for a decision to be about anything.
+    pub fn entity_types(&self) -> impl Iterator<Item = String> + '_ {
+        self.schema.entity_types().map(ToString::to_string)
+    }
+
     /// Drop what `action`'s declared context does not include, at every level, and name
     /// each removal by its dotted path. A validated policy can read only declared
     /// attributes, so an undeclared one cannot bear on the decision; what it can do is

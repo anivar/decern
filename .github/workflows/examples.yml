@@ -45,7 +45,7 @@ jobs:
           fi
           git fetch -q origin "${{ github.base_ref }}"
           if git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
-              | grep -qE '^(examples/mcp/|crates/|[.]github/workflows/examples[.]yml)'; then
+              | grep -qE '^(examples/mcp/|examples/authzen-certification/|crates/|[.]github/workflows/examples[.]yml)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -76,6 +76,12 @@ jobs:
       - name: Run the MCP walkthrough
         if: steps.relevant.outputs.run == 'true'
         run: examples/mcp/run.sh
+
+      # The AuthZEN certification model differs from the proven builtin too, and its
+      # README says the nine invariants hold over it. This is where that is checked.
+      - name: Prove the invariants over the AuthZEN certification model
+        if: steps.relevant.outputs.run == 'true'
+        run: cargo run -q -p decern-cli -- prove --model examples/authzen-certification/model
 
   signed-request:
     name: signed-request walkthrough

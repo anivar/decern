@@ -156,6 +156,31 @@ pub(crate) fn append_to_backend(
     }
 }
 
+/// Append every entry of a batch, fail-closed. On the single-file backend the batch is
+/// one durable step under one lock — one sync for the exchange, not one per decision —
+/// so a thousand decisions cannot hold the ledger for a thousand fsyncs. On the sharded
+/// backend each entry is its own append under its shard's lock, since entries may span
+/// shards. Either way nothing is served until every entry has landed.
+pub(crate) fn append_all_to_backend(
+    backend: &LedgerBackend,
+    entries: Vec<(Option<Result<String, String>>, Entry)>,
+) -> Result<(), LedgerError> {
+    match backend {
+        LedgerBackend::Single(m) => match m.lock() {
+            Ok(mut g) => g
+                .append_all(entries.into_iter().map(|(_, entry)| entry).collect())
+                .map(|_| ()),
+            Err(_) => Err(LedgerError::Io {
+                path: "ledger".into(),
+                err: "ledger mutex poisoned; refusing to serve".into(),
+            }),
+        },
+        LedgerBackend::Sharded(_) => entries
+            .into_iter()
+            .try_for_each(|(shard, entry)| append_to_backend(backend, shard, entry)),
+    }
+}
+
 /// The ledger shard for a subject: `Some(resolve_shard(...))` on the sharded backend
 /// (derived server-side from the directory), `None` on the single-file backend.
 pub(crate) fn shard_for(
