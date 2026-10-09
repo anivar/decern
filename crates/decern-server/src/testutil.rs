@@ -107,6 +107,8 @@ pub(crate) fn mission_state_at(base: &Path) -> (AppState, VerifyingKey) {
         standing_issuers: Arc::new(Vec::new()),
         authority_digest: Arc::from("test-authority"),
         caller_disclosure: Arc::new(caller_disclosure(&crate::caller::Caller::TrustedProxy)),
+        type_aliases: Arc::new(std::collections::BTreeMap::new()),
+        public_url: None,
     };
     (st, pubkey)
 }

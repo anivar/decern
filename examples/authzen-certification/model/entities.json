@@ -1,0 +1,40 @@
+[
+  {
+    "uid": { "type": "Principal", "id": "alice" },
+    "attrs": {
+      "kind": "Human",
+      "tenant": "certification",
+      "expiry": 32503680000,
+      "scopes": ["read", "write", "delete"]
+    },
+    "parents": []
+  },
+  {
+    "uid": { "type": "Principal", "id": "bob" },
+    "attrs": {
+      "kind": "Human",
+      "tenant": "certification",
+      "expiry": 32503680000,
+      "scopes": ["read", "write"],
+      "roles": ["admin"]
+    },
+    "parents": []
+  },
+  {
+    "uid": { "type": "Resource", "id": "record-1" },
+    "attrs": {
+      "owner": { "__entity": { "type": "Principal", "id": "alice" } },
+      "tenant": "certification",
+      "viewers": [{ "__entity": { "type": "Principal", "id": "bob" } }]
+    },
+    "parents": []
+  },
+  {
+    "uid": { "type": "Resource", "id": "record-2" },
+    "attrs": {
+      "owner": { "__entity": { "type": "Principal", "id": "alice" } },
+      "tenant": "certification"
+    },
+    "parents": []
+  }
+]
