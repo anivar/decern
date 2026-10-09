@@ -8,11 +8,10 @@ use std::sync::Arc;
 use axum::Router;
 use axum::routing::{get, post};
 
-use crate::audit::{
-    authzen_configuration, descendants, pubkey, subject_audit, subject_side_disclosure, tree_head,
-};
+use crate::audit::{descendants, pubkey, subject_audit, subject_side_disclosure, tree_head};
 use crate::batch::evaluations;
 use crate::decide::decide;
+use crate::discovery::authzen_configuration;
 use crate::mission::{mission_approve, mission_get, mission_terminate};
 use crate::{AppState, caller};
 
