@@ -660,7 +660,7 @@ dependencies = [
 
 [[package]]
 name = "decern-cli"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "decern-crypto"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "base64",
  "chacha20poly1305",
@@ -691,7 +691,7 @@ dependencies = [
 
 [[package]]
 name = "decern-identity"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "base64",
  "decern-crypto",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "decern-kernel"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "cedar-policy",
  "proptest",
@@ -716,7 +716,7 @@ dependencies = [
 
 [[package]]
 name = "decern-ledger"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "base64",
  "decern-crypto",
@@ -731,7 +731,7 @@ dependencies = [
 
 [[package]]
 name = "decern-proof"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "cedar-policy",
  "cedar-policy-symcc",
@@ -742,7 +742,7 @@ dependencies = [
 
 [[package]]
 name = "decern-server"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -767,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "decern-store"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -776,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "decern-store-postgres"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "decern-store",
  "postgres",
