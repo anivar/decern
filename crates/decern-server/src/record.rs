@@ -70,7 +70,7 @@ pub(crate) fn reserved_tenant_collision(dir: &Directory) -> Option<String> {
 
 /// AuthZEN Access Evaluation response: a boolean `decision`, with any reasons (on allow)
 /// or errors (on deny) under `context`.
-fn evaluation_body(decision: bool, reasons: &[String], errors: &[String]) -> Value {
+pub(crate) fn evaluation_body(decision: bool, reasons: &[String], errors: &[String]) -> Value {
     let mut body = json!({ "decision": decision });
     let mut ctx = serde_json::Map::new();
     if !reasons.is_empty() {

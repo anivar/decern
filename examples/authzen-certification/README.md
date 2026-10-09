@@ -29,9 +29,13 @@ curl -s localhost:8080/access/v1/evaluation -H 'content-type: application/json' 
   "action":   {"name":"write"},
   "resource": {"type":"record","id":"record-2","properties":{"status":"archived"}}
 }'
+curl -s localhost:8080/access/v1/evaluations -H 'content-type: application/json' -d '{
+  "subject":  {"type":"user","id":"bob"},
+  "resource": {"type":"record","id":"record-1"},
+  "evaluations": [{"action":{"name":"read"}}, {"action":{"name":"write"}}]
+}'
 ```
 
-The scenario's Basic Core, Basic Properties and Discovery tests run in
-`cargo test -p decern-server authzen_certification` against this model. Batch and Search are
-not implemented, and decern has not been through the OpenID Foundation's certification
-program.
+The scenario's Basic and Batch levels (Core and Properties) and Discovery run in
+`cargo test -p decern-server authzen_certification` against this model. Search is not
+implemented, and decern has not been through the OpenID Foundation's certification program.

@@ -201,6 +201,7 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 | Method | Path | Caller | What |
 |---|---|---|---|
 | `POST` | `/access/v1/evaluation` | guarded | The decision. AuthZEN 1.0: `subject`/`resource` `{type,id,properties?}`, `action` `{name,properties?}`, optional `context`; `properties` reach the policies as `context.subject`/`context.resource`/`context.action` where the model declares them, from PEP-bound callers only. `/decide` is an alias. |
+| `POST` | `/access/v1/evaluations` | guarded | Several decisions in one exchange (AuthZEN 1.0 §7). Top-level `subject`/`action`/`resource`/`context` are defaults an item replaces whole; `options.evaluations_semantic` is `execute_all` (default), `deny_on_first_deny` or `permit_on_first_permit`; answers come back in request order. Each evaluated item is admitted, decided and recorded as a single evaluation is, before the batch is served; an item that is not an evaluation is `decision: false` with the reason in its context and is not recorded. At most 1000 items. Without items, this is the single evaluation. |
 | `GET` | `/pubkey` | open | The key records are signed with, so a verifier can fetch it once and keep it. |
 | `GET` | `/anchor/v1/tree-head` | open | A signed commitment to the log's current state — publish it somewhere you do not control. |
 | `GET` | `/audit/v1/subject?handle=<h>` | open | What was decided *about* one party, with inclusion proofs. |

@@ -141,33 +141,124 @@ pub(crate) async fn decide(
     // 415 and 422; one status and one shape here, with the extractor's own text as the
     // detail. A well-formed request that fails a decern check further down keeps its
     // own status (a decision-subject or standing refusal is 422, a binding refusal 403).
-    let Json(mut req) = match req {
+    let Json(req) = match req {
         Ok(req) => req,
-        Err(rejection) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "invalid_request", "detail": rejection.body_text() })),
-            )
-                .into_response();
-        }
+        Err(rejection) => return Refusal::invalid_request(rejection.body_text()).into_response(),
     };
-    if let Some(refusal) = crate::caller::refuse_unless_admits(&caller, &req.subject.id) {
+    if let Some(refusal) = admit(&caller, &req) {
         return refusal;
     }
+    match evaluate_one(&st, &caller, req) {
+        Err(refusal) => refusal.into_response(),
+        Ok(e) => {
+            let backend = st.backend.clone();
+            record_and_respond(e.decision, e.reasons, e.errors, move || {
+                append_to_backend(&backend, e.shard, e.entry)
+            })
+        }
+    }
+}
+
+/// A well-formed request this server will not evaluate: the status, an error code and a
+/// detail, in the one shape every refusal on this surface has. Typed rather than built as
+/// a response so a batch can carry the same refusal inside an item.
+pub(crate) struct Refusal {
+    pub(crate) status: StatusCode,
+    pub(crate) error: String,
+    pub(crate) detail: String,
+}
+
+impl Refusal {
+    fn unprocessable(error: impl Into<String>, detail: impl Into<String>) -> Self {
+        Refusal {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            error: error.into(),
+            detail: detail.into(),
+        }
+    }
+
+    /// A request that is not one: AuthZEN 1.0 (§10.1.1) answers every malformed shape 400.
+    pub(crate) fn invalid_request(detail: impl Into<String>) -> Self {
+        Refusal {
+            status: StatusCode::BAD_REQUEST,
+            error: "invalid_request".to_owned(),
+            detail: detail.into(),
+        }
+    }
+}
+
+impl IntoResponse for Refusal {
+    fn into_response(self) -> Response {
+        (
+            self.status,
+            Json(json!({ "error": self.error, "detail": self.detail })),
+        )
+            .into_response()
+    }
+}
+
+/// What a caller may ask at all, checked before anything is evaluated or recorded: a
+/// caller bound to itself may neither name another principal nor describe a party.
+pub(crate) fn admit(
+    caller: &Option<axum::Extension<crate::caller::Authenticated>>,
+    req: &DecideReq,
+) -> Option<Response> {
+    let describes = [
+        &req.subject.properties,
+        &req.resource.properties,
+        &req.action.properties,
+    ]
+    .iter()
+    .any(|p| p.as_ref().is_some_and(|m| !m.is_empty()));
+    admit_named(caller, Some(&req.subject.id), describes)
+}
+
+/// The same admission over what a request names, for a request that could not be parsed
+/// whole: a batch item that is not an evaluation still names whom it names.
+pub(crate) fn admit_named(
+    caller: &Option<axum::Extension<crate::caller::Authenticated>>,
+    subject_id: Option<&str>,
+    describes: bool,
+) -> Option<Response> {
+    if let Some(id) = subject_id
+        && let Some(refusal) = crate::caller::refuse_unless_admits(caller, id)
+    {
+        return Some(refusal);
+    }
+    if describes {
+        return crate::caller::refuse_description_unless_pep(caller);
+    }
+    None
+}
+
+/// One decision, made and ready to record: what is served, and the entry that must land
+/// before it is.
+pub(crate) struct Evaluated {
+    pub(crate) decision: bool,
+    pub(crate) reasons: Vec<String>,
+    pub(crate) errors: Vec<String>,
+    pub(crate) entry: Entry,
+    pub(crate) shard: Option<Result<String, String>>,
+}
+
+/// Evaluate one admitted request: the server-derived facts, the mission binding, the
+/// decision subject, the challenge, the kernel's decision, and the entry that records it.
+/// Nothing here writes; the caller appends the entry and serves the decision only once it
+/// has landed. A refusal is a well-formed request this server will not decide.
+pub(crate) fn evaluate_one(
+    st: &AppState,
+    caller: &Option<axum::Extension<crate::caller::Authenticated>>,
+    mut req: DecideReq,
+) -> Result<Evaluated, Refusal> {
     // What the PEP says about each party, taken out before the parties are moved below.
-    // An empty `properties` says nothing, and a client that always sends the key must not
-    // be refused for it.
+    // An empty `properties` says nothing. `admit` has already settled whether this caller
+    // may describe a party at all.
     let described = [
         ("subject", req.subject.properties.take()),
         ("resource", req.resource.properties.take()),
         ("action", req.action.properties.take()),
     ]
     .map(|(key, p)| (key, p.filter(|m| !m.is_empty())));
-    if described.iter().any(|(_, p)| p.is_some())
-        && let Some(refusal) = crate::caller::refuse_description_unless_pep(&caller)
-    {
-        return refusal;
-    }
     // Who asserted this request, when the guard verified a token. Under a trusted
     // front there is no extension and the column stays off the record: an assertion
     // this server did not verify itself does not belong on a permanent one.
@@ -280,13 +371,7 @@ pub(crate) async fn decide(
     let decision_subject =
         match take_decision_subject(&mut ctx, &subject.id, resource_owner.as_deref()) {
             Ok(ds) => ds,
-            Err(detail) => {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({ "error": "decision_subject", "detail": detail })),
-                )
-                    .into_response();
-            }
+            Err(detail) => return Err(Refusal::unprocessable("decision_subject", detail)),
         };
 
     // What the authority does not declare, no policy can read, and AuthZEN 1.0 (§10.1.1)
@@ -334,13 +419,7 @@ pub(crate) async fn decide(
     let challenge_record = match raw_challenge {
         None => None,
         Some(raw) => match challenge::parse(&raw, &st.standing_issuers, now_s) {
-            Err(e) => {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({ "error": e.kind(), "detail": e.detail() })),
-                )
-                    .into_response();
-            }
+            Err(e) => return Err(Refusal::unprocessable(e.kind(), e.detail())),
             Ok(c) => {
                 let subject_matches = decision_subject
                     .as_ref()
@@ -400,9 +479,12 @@ pub(crate) async fn decide(
         ..Default::default()
     };
 
-    let backend = st.backend.clone();
-    record_and_respond(r.decision, r.reasons, r.errors, move || {
-        append_to_backend(&backend, shard, entry)
+    Ok(Evaluated {
+        decision: r.decision,
+        reasons: r.reasons,
+        errors: r.errors,
+        entry,
+        shard,
     })
 }
 
