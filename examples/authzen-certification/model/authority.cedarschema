@@ -1,0 +1,73 @@
+// decern AuthZEN certification model — schema.
+//
+// The built-in schema (crates/decern-kernel/model/authority.cedarschema), with the three
+// actions the Authorization API 1.0 certification scenario fixes — `read`, `write`,
+// `delete` — declared beside the built-in ones. The built-in actions stay so every proof
+// in `decern prove` still has its request environments; nothing permits them here.
+// Request types `user` and `record` reach these entity types through
+// `--authzen-type-alias user=Principal --authzen-type-alias record=Resource`.
+
+entity Organization {
+  tenant: String,
+  parent?: Organization,
+};
+
+entity Principal {
+  kind: String,
+  tenant: String,
+  org?: Organization,
+  expiry: Long,
+  scopes: Set<String>,
+  roles?: Set<String>,
+  jurisdictions?: Set<String>,
+  delegator?: Principal,
+  ancestors: Set<Principal>,
+  revoked: Bool,
+};
+
+entity Resource {
+  owner: Principal,
+  tenant: String,
+  org?: Organization,
+  sensitivity?: String,
+  residency?: String,
+  required_role?: String,
+  viewers?: Set<Principal>,
+};
+
+action Read appliesTo {
+  principal: [Principal],
+  resource: [Resource],
+  context: { now: Long, consent?: Bool }
+};
+
+action MoveMoney appliesTo {
+  principal: [Principal],
+  resource: [Resource],
+  context: { now: Long, human_approved?: Bool, consent?: Bool }
+};
+
+action AccessPII appliesTo {
+  principal: [Principal],
+  resource: [Resource],
+  context: { now: Long, consent?: Bool }
+};
+
+// The certification fixture's actions, as the scenario spells them.
+action read appliesTo {
+  principal: [Principal],
+  resource: [Resource],
+  context: { now: Long, consent?: Bool }
+};
+
+action write appliesTo {
+  principal: [Principal],
+  resource: [Resource],
+  context: { now: Long, consent?: Bool }
+};
+
+action delete appliesTo {
+  principal: [Principal],
+  resource: [Resource],
+  context: { now: Long, consent?: Bool, soft?: Bool }
+};

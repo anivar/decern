@@ -4,6 +4,10 @@
 
 mod aauth;
 mod audit;
+/// The AuthZEN 1.0 certification scenario, Basic Core and Discovery, driven end to end
+/// against the certification model in `examples/authzen-certification/model`.
+#[cfg(test)]
+mod authzen_certification;
 mod bearer;
 mod caller;
 mod challenge;
@@ -42,6 +46,17 @@ struct Args {
     /// Model directory; omit for the built-in model.
     #[arg(long, value_name = "DIR")]
     model: Option<PathBuf>,
+    /// A request entity type and the model entity type it names, as `REQUEST=MODEL`
+    /// (`user=Principal`). Repeatable. AuthZEN lets a PEP spell types in its own terms;
+    /// the record carries the model's. A type with no alias passes through unchanged.
+    #[arg(long = "authzen-type-alias", value_name = "REQUEST=MODEL")]
+    authzen_type_alias: Vec<String>,
+    /// This deployment's public base URL, advertised as the policy decision point by
+    /// `GET /.well-known/authzen-configuration` (AuthZEN 1.0 metadata). `https://`, or
+    /// `http://` on loopback for a local walkthrough; no path, query or fragment. Omit
+    /// and the document is not served.
+    #[arg(long = "public-url", value_name = "URL")]
+    public_url: Option<String>,
     /// Single-file ledger path (default backend). Mutually exclusive with `--sharded`.
     #[arg(long, value_name = "PATH", conflicts_with = "sharded")]
     ledger: Option<PathBuf>,
@@ -231,6 +246,12 @@ pub(crate) struct AppState {
     /// by exactly what a token minted under it would later be bounded by.
     model: Arc<Model>,
     pub(crate) backend: Arc<LedgerBackend>,
+    /// Request entity type -> model entity type (`--authzen-type-alias`). Empty means
+    /// every request type is taken as written.
+    type_aliases: Arc<std::collections::BTreeMap<String, String>>,
+    /// The base URL `/.well-known/authzen-configuration` advertises (`--public-url`);
+    /// `None` and the document is not served.
+    pub(crate) public_url: Option<Arc<str>>,
     /// The durable record of approved Missions. Held so a mission's termination
     /// outlives any single in-memory handle and is seen across processes.
     missions: Arc<FileMissionRegistry>,
@@ -249,6 +270,78 @@ pub(crate) struct AppState {
     /// How this deployment establishes callers, as the disclosure endpoint reports it —
     /// derived from the running configuration at boot, like everything else it says.
     caller_disclosure: Arc<Value>,
+}
+
+impl AppState {
+    /// The model entity type a request's spelling names: its alias under
+    /// `--authzen-type-alias`, or the spelling itself when it has none.
+    pub(crate) fn model_type(&self, request_type: &str) -> String {
+        self.type_aliases
+            .get(request_type)
+            .cloned()
+            .unwrap_or_else(|| request_type.to_owned())
+    }
+}
+
+/// `--authzen-type-alias REQUEST=MODEL`, both sides non-empty, no request type aliased
+/// twice: two aliases for one spelling would leave the type a record carries to argument
+/// order.
+fn parse_type_aliases(pairs: &[String]) -> Result<std::collections::BTreeMap<String, String>> {
+    let mut aliases = std::collections::BTreeMap::new();
+    for pair in pairs {
+        let (request, model) = pair
+            .split_once('=')
+            .with_context(|| format!("--authzen-type-alias {pair:?}: expected REQUEST=MODEL"))?;
+        let (request, model) = (request.trim(), model.trim());
+        if request.is_empty() || model.is_empty() {
+            anyhow::bail!(
+                "--authzen-type-alias {pair:?}: both sides of REQUEST=MODEL are required"
+            );
+        }
+        if aliases
+            .insert(request.to_owned(), model.to_owned())
+            .is_some()
+        {
+            anyhow::bail!("--authzen-type-alias: request type {request:?} is aliased twice");
+        }
+    }
+    Ok(aliases)
+}
+
+/// `--public-url`: an origin, `https://host[:port]`, or `http://` on loopback only, with no
+/// userinfo, path, query or fragment; one trailing slash is dropped. What is advertised as
+/// the policy decision point is what a PEP will resolve, so anything else is refused at
+/// boot rather than published.
+fn parse_public_url(url: &str) -> Result<String> {
+    let url = url.trim();
+    let url = url.strip_suffix('/').unwrap_or(url);
+    let (scheme, rest) = url
+        .split_once("://")
+        .with_context(|| format!("--public-url {url:?}: expected https://host[:port]"))?;
+    if rest.is_empty() || rest.contains(['/', '?', '#', '@']) {
+        anyhow::bail!(
+            "--public-url {url:?}: an origin only, with no path, query, fragment or userinfo"
+        );
+    }
+    let host = match rest.strip_prefix('[') {
+        // `[::1]` or `[::1]:8080`: the literal, brackets included.
+        Some(literal) => {
+            let end = literal
+                .find(']')
+                .with_context(|| format!("--public-url {url:?}: unterminated IPv6 literal"))?;
+            &rest[..end + 2]
+        }
+        None => rest.rsplit_once(':').map_or(rest, |(host, _port)| host),
+    };
+    match scheme {
+        "https" => {}
+        "http" if matches!(host, "localhost" | "127.0.0.1" | "[::1]") => {}
+        "http" => anyhow::bail!(
+            "--public-url {url:?}: http:// is accepted on loopback only; a published decision point is https://"
+        ),
+        other => anyhow::bail!("--public-url {url:?}: scheme {other:?} is not https"),
+    }
+    Ok(url.to_owned())
 }
 
 /// The `caller` object the subject-side disclosure reports: which posture, and under
@@ -632,10 +725,19 @@ async fn main() -> Result<()> {
         .as_str(),
     );
 
+    let type_aliases = parse_type_aliases(&args.authzen_type_alias)?;
+    let public_url = args
+        .public_url
+        .as_deref()
+        .map(parse_public_url)
+        .transpose()?
+        .map(Arc::from);
     let state = AppState {
         kernel: Arc::new(kernel),
         model: Arc::new(model),
         backend: Arc::new(backend),
+        type_aliases: Arc::new(type_aliases),
+        public_url,
         missions,
         pubkey,
         require_mission: args.require_mission,
@@ -1059,5 +1161,68 @@ mod tests {
         assert_eq!(d["mode"], "bearer");
         assert_eq!(d["audience"], "https://pdp.example/");
         assert_eq!(d["bind"], "any");
+    }
+
+    #[test]
+    fn type_aliases_map_request_spellings_and_refuse_a_double_alias() {
+        let aliases =
+            super::parse_type_aliases(&["user=Principal".into(), " record = Resource ".into()])
+                .unwrap();
+        assert_eq!(aliases.get("user").map(String::as_str), Some("Principal"));
+        assert_eq!(aliases.get("record").map(String::as_str), Some("Resource"));
+        for bad in ["user", "user=", "=Principal", " = "] {
+            assert!(
+                super::parse_type_aliases(&[bad.to_owned()]).is_err(),
+                "{bad:?} must be refused"
+            );
+        }
+        assert!(
+            super::parse_type_aliases(&["user=Principal".into(), "user=Agent".into()]).is_err(),
+            "a request type aliased twice must be refused"
+        );
+    }
+
+    #[test]
+    fn a_type_with_no_alias_passes_through_unchanged() {
+        let base = crate::testutil::mission_base();
+        let (mut st, _pk) = crate::testutil::mission_state_at(&base);
+        st.type_aliases = std::sync::Arc::new(std::collections::BTreeMap::from([(
+            "user".to_owned(),
+            "Principal".to_owned(),
+        )]));
+        assert_eq!(st.model_type("user"), "Principal");
+        assert_eq!(st.model_type("Resource"), "Resource");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_public_url_is_an_origin_https_or_loopback_http() {
+        for (given, kept) in [
+            ("https://pdp.example", "https://pdp.example"),
+            ("https://pdp.example:8443/", "https://pdp.example:8443"),
+            ("http://localhost:8080", "http://localhost:8080"),
+            ("http://127.0.0.1:8080/", "http://127.0.0.1:8080"),
+            ("http://[::1]:8080", "http://[::1]:8080"),
+        ] {
+            assert_eq!(super::parse_public_url(given).unwrap(), kept, "{given}");
+        }
+        for bad in [
+            "pdp.example",                  // no scheme
+            "http://pdp.example",           // http off loopback
+            "http://localhost.pdp.example", // a host that merely starts with localhost
+            "ftp://pdp.example",            // not https
+            "https://pdp.example/pdp",      // a path
+            "https://pdp.example//",        // a second slash is a path
+            "https://pdp.example?x=1",      // a query
+            "https://pdp.example#frag",     // a fragment
+            "https://user@pdp.example",     // userinfo
+            "https://",                     // no host
+            "http://[::1",                  // unterminated literal
+        ] {
+            assert!(
+                super::parse_public_url(bad).is_err(),
+                "{bad:?} must be refused"
+            );
+        }
     }
 }

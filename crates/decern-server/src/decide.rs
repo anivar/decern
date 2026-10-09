@@ -125,8 +125,24 @@ fn take_decision_subject(
 pub(crate) async fn decide(
     State(st): State<AppState>,
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
-    Json(req): Json<DecideReq>,
+    req: Result<Json<DecideReq>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
+    // AuthZEN 1.0 and its certification scenario answer every malformed request with
+    // 400: a missing field, a wrong type, a body that is not JSON or is empty, a content
+    // type that is not application/json. axum's extractor would spread those over 400,
+    // 415 and 422; one status and one shape here, with the extractor's own text as the
+    // detail. A well-formed request that fails a decern check further down keeps its
+    // own status (a decision-subject or standing refusal is 422, a binding refusal 403).
+    let Json(req) = match req {
+        Ok(req) => req,
+        Err(rejection) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "invalid_request", "detail": rejection.body_text() })),
+            )
+                .into_response();
+        }
+    };
     if let Some(refusal) = crate::caller::refuse_unless_admits(&caller, &req.subject.id) {
         return refusal;
     }
@@ -157,12 +173,15 @@ pub(crate) async fn decide(
     if let Some(obj) = ctx.as_object_mut() {
         obj.remove("asserted_by");
     }
+    // A request names entity types in its own terms (`user`, `record`); the deployment
+    // maps them onto the model's (`--authzen-type-alias`). The record carries the type the
+    // kernel decided on, not the spelling the caller used.
     let subject = EntityRef {
-        ty: req.subject.ty,
+        ty: st.model_type(&req.subject.ty),
         id: req.subject.id,
     };
     let resource = EntityRef {
-        ty: req.resource.ty,
+        ty: st.model_type(&req.resource.ty),
         id: req.resource.id,
     };
     let action = req.action.name;
@@ -232,6 +251,12 @@ pub(crate) async fn decide(
                     .into_response();
             }
         };
+
+    // What the authority does not declare, no policy can read, and AuthZEN 1.0 (§10.1.1)
+    // has the PDP ignore it rather than refuse the request. Dropped last, after every key
+    // this server consumes itself has been taken out above, and before the record: an
+    // attribute nobody evaluated is not written down for good.
+    st.kernel.prune_undeclared_context(&action, &mut ctx);
 
     let mut r = st.kernel.check(&subject, &action, &resource, &ctx);
     if !mission_errors.is_empty() {
@@ -590,7 +615,7 @@ mod tests {
                 "context":{"now":100}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK, "a recorded decision is served");
         assert_eq!(
             body["decision"], false,
@@ -611,7 +636,7 @@ mod tests {
                 "context":{"human_approved":true}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["decision"], false, "missing mission must Deny: {body}");
         assert!(
@@ -640,7 +665,7 @@ mod tests {
                 "context":{"human_approved":true}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             body["decision"], false,
@@ -697,7 +722,8 @@ mod tests {
                 "context":{"decision_subject":"ppid:carol"}}"#,
         )
         .unwrap();
-        let (status, without) = body_json(decide(State(st.clone()), None, Json(plain)).await).await;
+        let (status, without) =
+            body_json(decide(State(st.clone()), None, Ok(Json(plain))).await).await;
         assert_eq!(status, StatusCode::OK, "{without}");
 
         let token = standing_token(&issuer, "dec-1", "ppid:carol", now_secs() + 3600);
@@ -714,7 +740,7 @@ mod tests {
         ))
         .unwrap();
         let (status, with) =
-            body_json(decide(State(st.clone()), None, Json(challenged)).await).await;
+            body_json(decide(State(st.clone()), None, Ok(Json(challenged))).await).await;
         assert_eq!(status, StatusCode::OK, "{with}");
         assert_eq!(
             without["decision"], with["decision"],
@@ -772,7 +798,7 @@ mod tests {
                                 "requested_effect":"reverse"}}}}}}"#
         ))
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
         assert_eq!(body["error"], "standing_not_proved");
 
@@ -801,7 +827,7 @@ mod tests {
                                                "purpose":"eligibility-audit"}}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
 
         let ledger_path = base.join("decern-ledger.jsonl");
@@ -834,7 +860,7 @@ mod tests {
                 "context":{"decision_subject":"ppid:bare"}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
 
         let ledger_path = base.join("decern-ledger.jsonl");
@@ -862,7 +888,8 @@ mod tests {
                     "context":{{"decision_subject":"{handle}"}}}}"#
             ))
             .unwrap();
-            let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+            let (status, body) =
+                body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
             assert_eq!(status, StatusCode::OK, "{handle}: {body}");
         }
 
@@ -892,7 +919,7 @@ mod tests {
                 "context":{"decision_subject":"carol@example.com"}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
         assert_eq!(
             status,
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -921,7 +948,7 @@ mod tests {
                 "context":{"asserted_by":{"sub":"forged-caller"}}}"#,
         )
         .unwrap();
-        let (status, body) = body_json(decide(State(st.clone()), None, Json(req)).await).await;
+        let (status, body) = body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK, "{body}");
 
         let ledger_path = base.join("decern-ledger.jsonl");
@@ -953,9 +980,15 @@ mod tests {
         let (st, _pk) = mission_state_at(&base);
         let who = crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")
             .self_only();
-        let (status, body) =
-            body_json(decide(State(st), Some(axum::Extension(who)), Json(read_as("corp"))).await)
-                .await;
+        let (status, body) = body_json(
+            decide(
+                State(st),
+                Some(axum::Extension(who)),
+                Ok(Json(read_as("corp"))),
+            )
+            .await,
+        )
+        .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
         assert_eq!(body["error"], "caller_mismatch");
         let _ = std::fs::remove_dir_all(&base);
@@ -971,7 +1004,7 @@ mod tests {
             decide(
                 State(st),
                 Some(axum::Extension(who)),
-                Json(read_as("agent-1")),
+                Ok(Json(read_as("agent-1"))),
             )
             .await,
         )
@@ -985,9 +1018,15 @@ mod tests {
         let base = mission_base();
         let (st, _pk) = mission_state_at(&base);
         let who = crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/");
-        let (status, body) =
-            body_json(decide(State(st), Some(axum::Extension(who)), Json(read_as("corp"))).await)
-                .await;
+        let (status, body) = body_json(
+            decide(
+                State(st),
+                Some(axum::Extension(who)),
+                Ok(Json(read_as("corp"))),
+            )
+            .await,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let _ = std::fs::remove_dir_all(&base);
     }
