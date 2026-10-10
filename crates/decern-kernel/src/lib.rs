@@ -299,13 +299,20 @@ impl Kernel {
         }
     }
 
-    /// AuthZEN subject search: which principals get Allow for (action, resource)?
+    /// AuthZEN subject search (§8.4): the principals of entity type `ty` that `check`
+    /// allows for (`action`, `resource`) under `context`, which the caller has pruned for
+    /// that action. Only `Principal` is a type principals have, so any other `ty` finds
+    /// nothing — a type the model does not know is an empty result, not an error.
     pub fn search_subjects(
         &self,
+        ty: &str,
         action: &str,
         resource: &EntityRef,
         context: &Value,
     ) -> Vec<EntityRef> {
+        if ty != "Principal" {
+            return Vec::new();
+        }
         self.directory
             .principals
             .keys()
@@ -328,13 +335,19 @@ impl Kernel {
             .collect()
     }
 
-    /// AuthZEN resource search: which resources does (subject, action) reach?
+    /// AuthZEN resource search (§8.5): the resources of entity type `ty` that `check`
+    /// allows for (`subject`, `action`) under `context`, pruned for that action by the
+    /// caller. Only `Resource` is a type resources have.
     pub fn search_resources(
         &self,
         subject: &EntityRef,
         action: &str,
+        ty: &str,
         context: &Value,
     ) -> Vec<EntityRef> {
+        if ty != "Resource" {
+            return Vec::new();
+        }
         self.directory
             .resources
             .keys()
@@ -354,6 +367,26 @@ impl Kernel {
                 ty: "Resource".into(),
                 id: id.clone(),
             })
+            .collect()
+    }
+
+    /// AuthZEN action search (§8.6): the actions the schema declares that `check` allows
+    /// for (`subject`, `resource`) under `context`. Each action declares its own context,
+    /// so the context is pruned here, per action, before its check.
+    pub fn search_actions(
+        &self,
+        subject: &EntityRef,
+        resource: &EntityRef,
+        context: &Value,
+    ) -> Vec<String> {
+        self.context_shape
+            .keys()
+            .filter(|action| {
+                let mut ctx = context.clone();
+                self.prune_undeclared_context(action, &mut ctx);
+                self.check(subject, action, resource, &ctx).decision
+            })
+            .cloned()
             .collect()
     }
 }
@@ -621,7 +654,7 @@ mod tests {
     #[test]
     fn subject_search_finds_expected() {
         let k = kernel();
-        let subs = k.search_subjects("Read", &res("claim1"), &json!({"now": 100}));
+        let subs = k.search_subjects("Principal", "Read", &res("claim1"), &json!({"now": 100}));
         let ids: Vec<_> = subs.iter().map(|s| s.id.as_str()).collect();
         assert!(ids.contains(&"corp"));
         assert!(ids.contains(&"agent1"));

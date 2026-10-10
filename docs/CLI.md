@@ -202,6 +202,9 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 |---|---|---|---|
 | `POST` | `/access/v1/evaluation` | guarded | The decision. AuthZEN 1.0: `subject`/`resource` `{type,id,properties?}`, `action` `{name,properties?}`, optional `context`; `properties` reach the policies as `context.subject`/`context.resource`/`context.action` where the model declares them, from PEP-bound callers only. A context over 64 KiB as sent, properties included, is 413. `/decide` is an alias. |
 | `POST` | `/access/v1/evaluations` | guarded | Several decisions in one exchange (AuthZEN 1.0 §7). Top-level `subject`/`action`/`resource`/`context` are defaults an item replaces whole; `options.evaluations_semantic` is `execute_all` (default), `deny_on_first_deny` or `permit_on_first_permit`; answers come back in request order. Each evaluated item is admitted, decided and recorded as a single evaluation is, before the batch is served — as one durable step on the single-file ledger; an item that is not an evaluation, or that this server refuses, is `decision: false` with `context.error` `{status, code, message}` and is not recorded, where a policy deny carries the kernel's `context.errors`. A record that cannot land fails the exchange closed (503) with the items before it already recorded, so a retry records those again. At most 1000 items. Without items, this is the single evaluation. |
+| `POST` | `/access/v1/search/subject` | guarded | The subjects of a type that may perform an action on a resource (AuthZEN 1.0 §8.4): every principal of that type is decided as an evaluation would be, over the same prepared context, and the ones permitted come back in the request's type spelling. `subject.id`, if sent, is ignored. A caller bound to itself may not search for subjects. |
+| `POST` | `/access/v1/search/resource` | guarded | The resources of a type a subject may perform an action on (§8.5); `resource.id`, if sent, is ignored. |
+| `POST` | `/access/v1/search/action` | guarded | The actions the model declares that a subject may perform on a resource (§8.6); `action` is omitted from the request. For all three: no pagination — every result comes in one page, a `page.limit` is accepted and a `page.token` is 400, since this server issued none; a search binds no Mission (refused, 422 `search_under_mission`, under `--require-mission` or with a `context.mission`); a `decision_subject` or a challenge in the context is dropped, nothing being decided about anyone; an action a decision would refuse for want of a Mission (`MoveMoney` in the built-in model) is never a result; `properties` on the searched side describe every candidate (a subject search with `subject.properties` asks which subjects, so described, would be permitted — it is not a filter); each search is recorded once under `Search.Subject`/`Search.Resource`/`Search.Action` with the result ids (up to 1000) and the count. |
 | `GET` | `/pubkey` | open | The key records are signed with, so a verifier can fetch it once and keep it. |
 | `GET` | `/anchor/v1/tree-head` | open | A signed commitment to the log's current state — publish it somewhere you do not control. |
 | `GET` | `/audit/v1/subject?handle=<h>` | open | What was decided *about* one party, with inclusion proofs. |
@@ -242,8 +245,8 @@ names one posture:
   name is not theirs. The same bind covers a request's `properties`, what a PEP says about the
   subject, resource or action (carried into the context as `context.subject`,
   `context.resource` and `context.action` where the action's schema declares them): a caller
-  bound to itself may not describe a party through `properties`, and that too is
-  `403 caller_mismatch`.
+  bound to itself may not describe a party through `properties`, nor search for subjects —
+  a search names everyone — and each is `403 caller_mismatch`.
   Verification is against configured keys only, same no-fetch posture as bearer validation,
   and an agent identifier with no configured key is refused before any cryptography runs.
   [`examples/signed-request/`](../examples/signed-request/README.md) runs this mode end to end,
@@ -284,8 +287,8 @@ identity to bind in the first place.
 
 The workload postures are the opposite. A signed-request, SPIFFE or AAuth caller may only
 name itself as subject, approver, stored approver on terminate, and directory principal, and
-may not describe a party with `properties`; a mismatch is `403 caller_mismatch`. `--pep` is
-the way out for a workload that genuinely is a gateway.
+may neither describe a party with `properties` nor search for subjects; a mismatch is
+`403 caller_mismatch`. `--pep` is the way out for a workload that genuinely is a gateway.
 
 The corollary is easy to miss: a bearer token issued to a workload is a PEP credential, and
 carries no bind at all. If your caller is a workload, give it a workload posture.

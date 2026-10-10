@@ -28,7 +28,8 @@ permit (
    (resource has viewers && resource.viewers.contains(principal)))
 };
 
-// Rules 2, 4 and 5: an owner writes, unless the PEP describes the record as archived.
+// Rules 2, 4 and 5: an owner writes, unless the record is archived — as the PEP describes
+// it, or as the authority records it.
 @id("P-write")
 permit (
   principal,
@@ -40,10 +41,12 @@ permit (
   principal.scopes.contains("write") &&
   (resource.owner == principal || principal.ancestors.contains(resource.owner))
 } unless {
-  context has resource && context.resource has status && context.resource.status == "archived"
+  (context has resource && context.resource has status && context.resource.status == "archived") ||
+  (resource has status && resource.status == "archived")
 };
 
-// Rule 6: a viewer the PEP describes as an admin writes an archived record.
+// Rule 6 (and S4–S6): a viewer who is an admin — as the PEP describes them, or as the
+// authority records them — writes an archived record.
 @id("P-write-archived-as-admin")
 permit (
   principal,
@@ -54,8 +57,10 @@ permit (
   context.now <= principal.expiry &&
   principal.scopes.contains("write") &&
   resource has viewers && resource.viewers.contains(principal) &&
-  context has subject && context.subject has role && context.subject.role == "admin" &&
-  context has resource && context.resource has status && context.resource.status == "archived"
+  ((context has subject && context.subject has role && context.subject.role == "admin") ||
+   (principal has roles && principal.roles.contains("admin"))) &&
+  ((context has resource && context.resource has status && context.resource.status == "archived") ||
+   (resource has status && resource.status == "archived"))
 };
 
 // Rules 7 and 8: an owner deletes softly; a hard delete is denied.

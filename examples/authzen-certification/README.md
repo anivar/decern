@@ -3,7 +3,7 @@
 
 The fixture of the OpenID AuthZEN *Authorization API 1.0* certification scenario
 (`openid/authzen`, `certification/authorization-api-1_0-scenario.md`), in decern's vocabulary:
-subjects `alice` and `bob`, resources `record-1` and `record-2`, actions `read`, `write` and
+subjects `alice` and `bob`, resources `record-1` (active) and `record-2` (archived), actions `read`, `write` and
 `delete`, and decision rules 1–8 — alice owns both records and may read, write and softly delete
 them; bob views both and may read them; nobody writes a record the PEP describes as archived,
 except a viewer it describes as an admin. (The scenario's rule 6 says any subject described
@@ -37,8 +37,14 @@ curl -s localhost:8080/access/v1/evaluations -H 'content-type: application/json'
   "resource": {"type":"record","id":"record-1"},
   "evaluations": [{"action":{"name":"read"}}, {"action":{"name":"write"}}]
 }'
+curl -s localhost:8080/access/v1/search/subject -H 'content-type: application/json' -d '{
+  "subject":  {"type":"user"},
+  "action":   {"name":"read"},
+  "resource": {"type":"record","id":"record-1"}
+}'
 ```
 
-The scenario's Basic and Batch levels (Core and Properties) and Discovery run in
-`cargo test -p decern-server authzen_certification` against this model. Search is not
-implemented, and decern has not been through the OpenID Foundation's certification program.
+The scenario's Basic, Batch and Search levels (Core and Properties) and Discovery run in
+`cargo test -p decern-server authzen_certification` against this model. Search returns
+every result in one page (pagination is optional in the scenario), and decern has not been
+through the OpenID Foundation's certification program.

@@ -19,6 +19,7 @@ mod discovery;
 mod mission;
 mod record;
 mod routes;
+mod search;
 mod sig;
 mod spiffe;
 #[cfg(test)]

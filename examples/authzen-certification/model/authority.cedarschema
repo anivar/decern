@@ -10,7 +10,10 @@
 // as `context.subject`, `context.resource` and `context.action`, kept only where an action
 // declares them: `write` reads the subject's role and the resource's status (rules 5 and
 // 6), `delete` reads whether the delete is soft (rules 7 and 8), and `read` declares none,
-// so properties sent with a read are dropped before evaluation.
+// so properties sent with a read are dropped before evaluation. The same two facts live on
+// the entities too — a resource's `status`, a principal's `roles` — because a search has
+// no request properties for the side it is searching (S4, S5), and the policies read
+// either source.
 
 entity Organization {
   tenant: String,
@@ -38,6 +41,7 @@ entity Resource {
   residency?: String,
   required_role?: String,
   viewers?: Set<Principal>,
+  status?: String,
 };
 
 action Read appliesTo {

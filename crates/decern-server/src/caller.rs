@@ -211,13 +211,14 @@ pub(crate) fn refuse_unless_admits(
     }
 }
 
-/// A request that describes its subject, resource or action (`properties`) makes a claim
-/// about a party. A caller bound to itself may not make one — the bind that keeps it from
-/// naming another principal keeps it from describing one — so the request is refused with
-/// the same `caller_mismatch` as a name that is not theirs. A PEP in `--pep`, a bearer
-/// caller and a trusted front may describe.
-pub(crate) fn refuse_description_unless_pep(
+/// An act only a PEP may perform — describing a party, searching for subjects — refused
+/// to a caller bound to itself with the same `caller_mismatch` as a name that is not
+/// theirs: the bind that keeps a workload from naming another principal keeps it from
+/// speaking for, or enumerating, others. A PEP in `--pep`, a bearer caller and a trusted
+/// front may.
+pub(crate) fn refuse_unless_pep(
     caller: &Option<axum::Extension<Authenticated>>,
+    what: &str,
 ) -> Option<Response> {
     match caller {
         Some(axum::Extension(who)) if who.bind == Bind::SelfOnly => Some(
@@ -226,8 +227,7 @@ pub(crate) fn refuse_description_unless_pep(
                 Json(json!({
                     "error": "caller_mismatch",
                     "detail": format!(
-                        "caller {} is bound to itself and cannot describe the subject, \
-                         resource or action; a PEP listed in --pep can",
+                        "caller {} is bound to itself and cannot {what}; a PEP listed in --pep can",
                         brief(&who.subject)
                     ),
                 })),
@@ -236,6 +236,14 @@ pub(crate) fn refuse_description_unless_pep(
         ),
         _ => None,
     }
+}
+
+/// A request that describes its subject, resource or action (`properties`) makes a claim
+/// about a party, which a caller bound to itself may not make.
+pub(crate) fn refuse_description_unless_pep(
+    caller: &Option<axum::Extension<Authenticated>>,
+) -> Option<Response> {
+    refuse_unless_pep(caller, "describe the subject, resource or action")
 }
 
 /// The layer over the protected routes.

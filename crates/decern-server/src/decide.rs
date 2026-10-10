@@ -191,7 +191,7 @@ impl Refusal {
         }
     }
 
-    fn unprocessable(error: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub(crate) fn unprocessable(error: impl Into<String>, detail: impl Into<String>) -> Self {
         Refusal::new(StatusCode::UNPROCESSABLE_ENTITY, error, detail)
     }
 
@@ -299,7 +299,7 @@ pub(crate) fn admit_named(
 /// (the rest is pruned before the check); those three keys are reserved for the
 /// `properties` the description gate admits, so whatever a caller wrote there directly is
 /// removed first and there is no second way to describe a party.
-fn kernel_context(
+pub(crate) fn kernel_context(
     context: serde_json::Map<String, Value>,
     described: [(&str, Option<serde_json::Map<String, Value>>); 3],
     now_s: u64,
@@ -641,7 +641,7 @@ fn record_of(
 }
 
 /// Outcome of resolving `context.mission` against the registry.
-enum MissionBind {
+pub(crate) enum MissionBind {
     /// No mission named, `--require-mission` is off, and the action is not
     /// MoveMoney (which requires a Mission unconditionally).
     None,
@@ -689,7 +689,7 @@ fn apply_mission_context(ctx: &mut Value, action: &str) {
     }
 }
 
-fn bind_mission(
+pub(crate) fn bind_mission(
     registry: &dyn MissionRegistry,
     require: bool,
     subject_id: &str,
