@@ -379,9 +379,32 @@ struct MissionOutcome {
     named: Option<Value>,
 }
 
-/// Search will reuse the context half of this — through the prune, without the owner
-/// lookup the decision subject needs — as its own `prepare_context` when it lands; the
-/// seam is intended, so split here rather than bending this to fit.
+/// The context half of preparing a request, shared with search: who asserted it, the
+/// clock, the context the kernel will see with the parties' descriptions in place, and
+/// the size bound — everything before the parties and the server's own keys.
+pub(crate) fn prepare_context(
+    caller: &Option<axum::Extension<crate::caller::Authenticated>>,
+    context: serde_json::Map<String, Value>,
+    described: [(&str, Option<serde_json::Map<String, Value>>); 3],
+) -> Result<(Value, u64, Option<decern_ledger::AssertedBy>), Refusal> {
+    // Who asserted this request, when the guard verified a token. Under a trusted
+    // front there is no extension and the column stays off the record: an assertion
+    // this server did not verify itself does not belong on a permanent one.
+    let asserted_by = caller
+        .as_ref()
+        .map(|axum::Extension(who)| decern_ledger::AssertedBy {
+            sub: who.subject.clone(),
+            client_id: who.client_id.clone(),
+            iss: who.issuer.clone(),
+        });
+    let now_s = now_secs();
+    let ctx = kernel_context(context, described, now_s);
+    if context_too_large(&ctx) {
+        return Err(Refusal::context_too_large());
+    }
+    Ok((ctx, now_s, asserted_by))
+}
+
 fn prepare(
     st: &AppState,
     caller: &Option<axum::Extension<crate::caller::Authenticated>>,
@@ -396,21 +419,8 @@ fn prepare(
         ("action", req.action.properties.take()),
     ]
     .map(|(key, p)| (key, p.filter(|m| !m.is_empty())));
-    // Who asserted this request, when the guard verified a token. Under a trusted
-    // front there is no extension and the column stays off the record: an assertion
-    // this server did not verify itself does not belong on a permanent one.
-    let asserted_by = caller
-        .as_ref()
-        .map(|axum::Extension(who)| decern_ledger::AssertedBy {
-            sub: who.subject.clone(),
-            client_id: who.client_id.clone(),
-            iss: who.issuer.clone(),
-        });
-    let now_s = now_secs();
-    let mut ctx = kernel_context(req.context.take().unwrap_or_default(), described, now_s);
-    if context_too_large(&ctx) {
-        return Err(Refusal::context_too_large());
-    }
+    let (mut ctx, now_s, asserted_by) =
+        prepare_context(caller, req.context.take().unwrap_or_default(), described)?;
     // A request names entity types in its own terms (`user`, `record`); the deployment
     // maps them onto the model's (`--authzen-type-alias`). The record carries the type the
     // kernel decided on, not the spelling the caller used.
@@ -651,7 +661,7 @@ pub(crate) enum MissionBind {
     Deny(Vec<String>),
 }
 
-fn strip_client_approval_flags(ctx: &mut Value) {
+pub(crate) fn strip_client_approval_flags(ctx: &mut Value) {
     if let Some(obj) = ctx.as_object_mut() {
         obj.remove("human_approved");
         obj.remove("consent");

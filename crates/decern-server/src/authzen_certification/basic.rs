@@ -322,3 +322,17 @@ async fn the_record_carries_the_mission_pair_not_the_object_sent() {
         "{mission}"
     );
 }
+
+/// Chosen, not incidental: the certification model's `status` and `roles` live on the
+/// authority's side as well as in a PEP's description, so with no `properties` at all
+/// alice cannot write the archived `record-2` and bob, an admin who views it, can. The
+/// scenario fixes neither case; a search needs both to find what an evaluation permits.
+#[tokio::test]
+async fn the_authority_side_decides_the_archived_record_without_properties() {
+    let (st, _base) = fixture_state();
+    for (subject, expect) in [("alice", false), ("bob", true)] {
+        let (status, resp) = decision(&st, &fixture(subject, "write", "record-2")).await;
+        assert_eq!(status, StatusCode::OK, "{resp}");
+        assert_eq!(resp["decision"], expect, "{subject} write record-2: {resp}");
+    }
+}

@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 
 pub use graph::{Directory, RESERVED_TENANT};
 
-use context::{Declared, declared_context_shape, prune};
+use context::{Declared, declared_context_shape, prune, union};
 
 /// The authority model: schema + policies + entity graph. Pure data —
 /// adding principals, tenants or resources never touches code.
@@ -124,6 +124,8 @@ pub struct Kernel {
     /// Per action, the shape of the context the schema declares — the only context a
     /// validated policy can read.
     context_shape: BTreeMap<String, Declared>,
+    /// What any action declares: the most an action search's record may carry.
+    context_union: Declared,
     policies: PolicySet,
     entities: Entities,
     directory: Directory,
@@ -138,6 +140,11 @@ impl Kernel {
         let (schema, _warnings) = Schema::from_cedarschema_str(&model.schema)
             .map_err(|e| KernelError::Schema(e.to_string()))?;
         let context_shape = declared_context_shape(&model.schema)?;
+        let context_union = context_shape
+            .values()
+            .fold(Declared::Record(BTreeMap::new()), |acc, shape| {
+                union(&acc, shape)
+            });
 
         let policies =
             PolicySet::from_str(&model.policies).map_err(|e| KernelError::Policy(e.to_string()))?;
@@ -190,6 +197,7 @@ impl Kernel {
         Ok(Kernel {
             schema,
             context_shape,
+            context_union,
             policies,
             entities,
             directory,
@@ -212,14 +220,30 @@ impl Kernel {
     /// attributes, so an undeclared one cannot bear on the decision; what it can do is
     /// make `check` refuse the whole context as malformed. AuthZEN 1.0 (§10.1.1) has a
     /// PDP ignore what it does not know, and this is how a server does that without
-    /// loosening `check`, which stays strict. An action the schema does not declare, or
-    /// whose context is not a record this kernel can read, is left untouched.
+    /// loosening `check`, which stays strict. An action the schema does not declare
+    /// declares no context either: everything but `now` goes, since no policy could have
+    /// read any of it and `check` will say the action is unknown. A declared action whose
+    /// context is not a record this kernel can read is left untouched.
     pub fn prune_undeclared_context(&self, action: &str, context: &mut Value) -> Vec<String> {
         let mut dropped = Vec::new();
-        if let Some(shape) = self.context_shape.get(action) {
-            prune(shape, context, "", &mut dropped);
+        match self.context_shape.get(action) {
+            Some(shape) => prune(shape, context, "", &mut dropped),
+            None => {
+                let only_now =
+                    Declared::Record(BTreeMap::from([("now".to_owned(), Declared::Opaque)]));
+                prune(&only_now, context, "", &mut dropped);
+            }
         }
         // Named in one order whatever order the caller sent them in.
+        dropped.sort();
+        dropped
+    }
+
+    /// Drop what no action declares, at every level: the most a record of an action
+    /// search — which decided every action over this context — may carry.
+    pub fn prune_to_any_declared(&self, context: &mut Value) -> Vec<String> {
+        let mut dropped = Vec::new();
+        prune(&self.context_union, context, "", &mut dropped);
         dropped.sort();
         dropped
     }
@@ -299,20 +323,14 @@ impl Kernel {
         }
     }
 
-    /// AuthZEN subject search (§8.4): the principals of entity type `ty` that `check`
-    /// allows for (`action`, `resource`) under `context`, which the caller has pruned for
-    /// that action. Only `Principal` is a type principals have, so any other `ty` finds
-    /// nothing — a type the model does not know is an empty result, not an error.
+    /// AuthZEN subject search (§8.4): the principals that `check` allows for (`action`,
+    /// `resource`) under `context`, which the caller has pruned for that action.
     pub fn search_subjects(
         &self,
-        ty: &str,
         action: &str,
         resource: &EntityRef,
         context: &Value,
     ) -> Vec<EntityRef> {
-        if ty != "Principal" {
-            return Vec::new();
-        }
         self.directory
             .principals
             .keys()
@@ -335,19 +353,14 @@ impl Kernel {
             .collect()
     }
 
-    /// AuthZEN resource search (§8.5): the resources of entity type `ty` that `check`
-    /// allows for (`subject`, `action`) under `context`, pruned for that action by the
-    /// caller. Only `Resource` is a type resources have.
+    /// AuthZEN resource search (§8.5): the resources that `check` allows for (`subject`,
+    /// `action`) under `context`, pruned for that action by the caller.
     pub fn search_resources(
         &self,
         subject: &EntityRef,
         action: &str,
-        ty: &str,
         context: &Value,
     ) -> Vec<EntityRef> {
-        if ty != "Resource" {
-            return Vec::new();
-        }
         self.directory
             .resources
             .keys()
@@ -581,10 +594,16 @@ mod tests {
                 .decision
         );
 
-        // An action the schema does not declare is left alone, and `check` says why.
+        // An action the schema does not declare declares no context: everything but
+        // `now` goes, nothing having been readable, and `check` says the action is unknown.
         let mut unknown = json!({ "now": 100, "anything": 1 });
-        assert!(k.prune_undeclared_context("Nope", &mut unknown).is_empty());
-        assert_eq!(unknown, json!({ "now": 100, "anything": 1 }));
+        assert_eq!(
+            k.prune_undeclared_context("Nope", &mut unknown),
+            vec!["anything".to_owned()]
+        );
+        assert_eq!(unknown, json!({ "now": 100 }));
+        let r = k.check(&sub("agent1"), "Nope", &res("claim1"), &unknown);
+        assert!(!r.decision, "{r:?}");
     }
 
     #[test]
@@ -654,7 +673,7 @@ mod tests {
     #[test]
     fn subject_search_finds_expected() {
         let k = kernel();
-        let subs = k.search_subjects("Principal", "Read", &res("claim1"), &json!({"now": 100}));
+        let subs = k.search_subjects("Read", &res("claim1"), &json!({"now": 100}));
         let ids: Vec<_> = subs.iter().map(|s| s.id.as_str()).collect();
         assert!(ids.contains(&"corp"));
         assert!(ids.contains(&"agent1"));

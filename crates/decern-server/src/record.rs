@@ -186,6 +186,22 @@ pub(crate) fn append_all_to_backend(
     }
 }
 
+/// The ledger shard for a record about a tenant's resource rather than a principal's act —
+/// a subject search, which names no subject: the resource's tenant, or the unattributed
+/// shard when the resource is unknown. The reserved name fails closed, as on a decision.
+pub(crate) fn shard_for_tenant(backend: &LedgerBackend, tenant: Option<&str>) -> Shard {
+    match backend {
+        LedgerBackend::Sharded(_) => Some(match tenant.filter(|t| !t.is_empty()) {
+            Some(t) if t == UNATTRIBUTED_SHARD => Err(format!(
+                "the resource's tenant collides with the reserved shard {UNATTRIBUTED_SHARD:?}"
+            )),
+            Some(t) => Ok(t.to_owned()),
+            None => Ok(UNATTRIBUTED_SHARD.to_owned()),
+        }),
+        LedgerBackend::Single(_) => None,
+    }
+}
+
 /// The ledger shard for a subject: `Some(resolve_shard(...))` on the sharded backend
 /// (derived server-side from the directory), `None` on the single-file backend.
 pub(crate) fn shard_for(backend: &LedgerBackend, dir: &Directory, subject_id: &str) -> Shard {

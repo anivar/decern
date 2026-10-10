@@ -11,6 +11,9 @@
   to 1000) and the count. Discovery advertises the three endpoints. The certification scenario's
   Search Core and Search Properties tests run against `examples/authzen-certification/model`,
   whose resources now carry `status` and whose policies read it, or a PEP's description, so a
-  search finds what an evaluation would permit. `decern-kernel`'s `search_subjects` and
-  `search_resources` take the entity type to search, and `search_actions` is new. Authored by
-  @anivar.
+  search finds what an evaluation would permit. The searched side's id reaches neither the
+  decision nor the record, which names no subject for a subject search and lands in the
+  resource's tenant's shard; a record carries the context pruned to what the searched action
+  (or, for an action search, any action) declares. `decern-kernel` gains `search_actions`
+  (which prunes per action) and `prune_to_any_declared`; an action the schema does not declare
+  now prunes everything but `now`. Authored by @anivar.

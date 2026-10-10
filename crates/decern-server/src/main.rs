@@ -4,8 +4,7 @@
 
 mod aauth;
 mod audit;
-/// The AuthZEN 1.0 certification scenario — the Basic and Batch levels, and Discovery —
-/// driven end to end
+/// The AuthZEN 1.0 certification scenario — every level, and Discovery — driven end to end
 /// against the certification model in `examples/authzen-certification/model`.
 #[cfg(test)]
 mod authzen_certification;

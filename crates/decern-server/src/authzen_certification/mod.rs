@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
 //! The OpenID AuthZEN *Authorization API 1.0* certification scenario
-//! (`openid/authzen`, `certification/authorization-api-1_0-scenario.md`): the Basic and
-//! Batch levels, Core and Properties, and Discovery, run in-process against the certification model in
+//! (`openid/authzen`, `certification/authorization-api-1_0-scenario.md`): every level,
+//! Core and Properties, and Discovery, run in-process against the certification model in
 //! `examples/authzen-certification/model`. Each test names the scenario test it is; the
 //! requests are the scenario's own, byte for byte where it gives them.
-//!
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
