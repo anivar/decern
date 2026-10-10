@@ -82,7 +82,7 @@ echo
 echo "== 4b. An earlier-revision client (initialize, no _meta) is served too =="
 # The transport spec's backward-compatibility clause: a request without the
 # protocolVersion _meta key is treated as an earlier revision. Shipping clients
-# (Claude Code among them) still speak this shape; this beat is what they send.
+# still speak this shape; this beat is what they send.
 LEGACY=$(curl -s -m 5 "$MCP" -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H "Authorization: Bearer $TOKEN" \
