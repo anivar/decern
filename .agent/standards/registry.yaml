@@ -54,8 +54,11 @@ standards:
       evaluation is decision false with the reason in its context (§7.2.1). The three
       search endpoints (§8.4–8.6) decide every candidate of the searched type as an
       evaluation would be, over the same prepared context, answer in the request's type
-      spelling, ignore the searched side's id, return every result in one page (no
-      pagination, §8.2; a page.token is 400), bind no Mission, and are recorded once each.
+      spelling, ignore the searched side's id (it reaches neither the decision nor the
+      record), return every result in one page (no pagination, §8.2; a page.token is 400),
+      bind no Mission and never list an action a decision would refuse for want of one,
+      and are recorded once each over the context pruned to what the searched action (or
+      any action) declares.
       The certification scenario's Basic, Batch and Search levels (Core and Properties)
       and Discovery run as tests against examples/authzen-certification/model. Reasons
       carry named policy ids on the builtin model, and

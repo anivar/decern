@@ -24,6 +24,26 @@ pub(crate) enum Declared {
     Opaque,
 }
 
+/// The shape that declares what any of two shapes declares: a record where both are
+/// records, attribute by attribute; opaque where either is, since opaque means "do not
+/// look inside", and a union must not look inside what one side would not.
+pub(crate) fn union(a: &Declared, b: &Declared) -> Declared {
+    match (a, b) {
+        (Declared::Record(x), Declared::Record(y)) => {
+            let mut out = x.clone();
+            for (key, shape) in y {
+                let merged = match out.get(key) {
+                    Some(have) => union(have, shape),
+                    None => shape.clone(),
+                };
+                out.insert(key.clone(), merged);
+            }
+            Declared::Record(out)
+        }
+        _ => Declared::Opaque,
+    }
+}
+
 /// Remove from `value` what `shape` does not declare, naming each removal by its path.
 pub(crate) fn prune(shape: &Declared, value: &mut Value, path: &str, dropped: &mut Vec<String>) {
     let Declared::Record(attrs) = shape else {

@@ -449,3 +449,134 @@ async fn each_search_is_recorded_once_with_what_came_back() {
     assert!(entry["context"].get("ip").is_none(), "pruned: {entry}");
     assert!(entry.get("decision_subject").is_none(), "{entry}");
 }
+
+/// An action search decides every action over the context, so its record carries what
+/// any action declares and nothing more: a declared description stays, an undeclared one
+/// and an undeclared attribute go — as on a decision's record.
+#[tokio::test]
+async fn an_action_search_records_only_what_some_action_declares() {
+    let (st, base) = fixture_state();
+    let (status, resp) = search(
+        &st,
+        "action",
+        &json!({
+            "subject": { "type": "user", "id": "bob",
+                         "properties": { "role": "admin", "email": "bob@corp.example" } },
+            "resource": { "type": "record", "id": "record-2",
+                          "properties": { "status": "archived", "owner": "alice" } },
+            "context": { "ip": "192.168.1.1", "time": "2025-06-27T18:03-07:00" },
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert!(has(&resp, "write"), "{resp}");
+    let records = records_in(&base, &st);
+    let ctx = &records.last().expect("recorded")["entry"]["context"];
+    assert_eq!(ctx["subject"], json!({ "role": "admin" }), "{ctx}");
+    assert_eq!(ctx["resource"], json!({ "status": "archived" }), "{ctx}");
+    for absent in ["ip", "time"] {
+        assert!(ctx.get(absent).is_none(), "{absent} is undeclared: {ctx}");
+    }
+}
+
+/// An action the model does not declare declares no context: the search finds nothing,
+/// and its record carries the clock and nothing the caller sent.
+#[tokio::test]
+async fn an_unknown_action_finds_nothing_and_records_only_the_clock() {
+    let (st, base) = fixture_state();
+    let (status, resp) = search(
+        &st,
+        "subject",
+        &json!({
+            "subject": { "type": "user" },
+            "action": { "name": "fly" },
+            "resource": { "type": "record", "id": "record-1" },
+            "context": { "ip": "192.168.1.1", "consent": true },
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(resp["results"], json!([]), "{resp}");
+    let records = records_in(&base, &st);
+    let ctx = &records.last().expect("recorded")["entry"]["context"];
+    let keys: Vec<&String> = ctx.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["now", "search"], "{ctx}");
+}
+
+/// The searched side's id is ignored all the way down: it reaches neither the decision
+/// nor the record, which names no subject (or no resource) and no sponsor.
+#[tokio::test]
+async fn the_searched_side_id_reaches_neither_the_decision_nor_the_record() {
+    let (st, base) = fixture_state();
+    let (status, resp) = search(
+        &st,
+        "subject",
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "resource": { "type": "record", "id": "record-1" },
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert!(has(&resp, "bob"), "{resp}");
+    let (status, resp) = search(
+        &st,
+        "resource",
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "resource": { "type": "record", "id": "record-1" },
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert!(has(&resp, "record-2"), "{resp}");
+    let records = records_in(&base, &st);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["entry"]["subject_id"], "", "{}", records[0]);
+    assert!(
+        records[0]["entry"].get("sponsor").is_none(),
+        "{}",
+        records[0]
+    );
+    assert_eq!(records[1]["entry"]["resource_id"], "", "{}", records[1]);
+    assert_eq!(records[1]["entry"]["subject_id"], "alice", "{}", records[1]);
+}
+
+/// An action search carries no `action` (§8.6.1): one sent is 400, not an input whose
+/// name is ignored and whose properties are not.
+#[tokio::test]
+async fn an_action_in_an_action_search_is_400() {
+    let (st, _base) = fixture_state();
+    let (status, resp) = search(
+        &st,
+        "action",
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "resource": { "type": "record", "id": "record-1" },
+            "action": { "name": "read", "properties": { "soft": true } },
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+}
+
+/// A `mission` that is null names no Mission, as it names none on an evaluation.
+#[tokio::test]
+async fn a_null_mission_is_no_mission() {
+    let (st, _base) = fixture_state();
+    let (status, resp) = search(
+        &st,
+        "resource",
+        &json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "resource": { "type": "record" },
+            "context": { "mission": null },
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert!(has(&resp, "record-1"), "{resp}");
+}
