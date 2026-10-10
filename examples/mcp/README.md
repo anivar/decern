@@ -82,8 +82,8 @@ a request without the protocol-version metadata as an earlier revision. It does:
 client speaking the 2025-06-18 lifecycle — `initialize`, no per-request `_meta` — is
 served through a clearly-marked legacy path that adds no authorization surface (the
 bearer check runs before dispatch either way). This is what lets a shipping client
-connect today; Claude Code has run this example's whole allow/deny/step-up matrix
-end-to-end. Delete `legacy_dispatch` when the clients you care about carry `_meta`,
+connect today; the example's whole allow/deny/step-up matrix has been run end-to-end
+with one. Delete `legacy_dispatch` when the clients you care about carry `_meta`,
 and the example is single-revision again.
 
 ## Why decern's `decide` is not an MCP tool

@@ -364,7 +364,7 @@ standards:
       business-logic denials. Earlier-revision clients (the
       2025-06-18 lifecycle: initialize, no per-request _meta) are served through
       the transport spec's backward-compatibility clause via a clearly-marked
-      legacy path, verified end to end with Claude Code as the client. Sampling,
+      legacy path, verified end to end with a shipping client. Sampling,
       elicitation, resources, prompts and subscriptions are not implemented.
       Verified against the spec 2026-08-09, including the backward-compatibility
       clause.

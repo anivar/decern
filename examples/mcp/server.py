@@ -426,8 +426,8 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------- earlier-revision clients
     # The 2026-07-28 transport spec's own backward-compatibility clause: a server MAY
     # treat a request without the protocol-version header as revision 2025-03-26. As of
-    # this example's writing, shipping clients (Claude Code included) still speak the
-    # 2025-06-18 lifecycle — initialize, notifications/initialized, no per-request
+    # this example's writing, shipping clients still speak the 2025-06-18
+    # lifecycle — initialize, notifications/initialized, no per-request
     # _meta — so this block is what lets a real client connect today. It adds no
     # authorization surface: the bearer check ran before dispatch, and tools/call joins
     # the same guarded path. Delete this method when the clients you care about carry
