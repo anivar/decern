@@ -78,6 +78,36 @@ class Parse(unittest.TestCase):
         self.assertEqual(reg.standards[-1].surface, ["crates/decern-proof/src/"])
         self.assertEqual(reg.standards[-1].conformance, "Pinned.")
 
+    def entry(self, url="https://x.invalid/", extra="", tail=""):
+        return standards._parse_registry(
+            "rule: >-\n  r\n\nstandards:\n  - name: A\n"
+            f"    url: {url}\n    verified: 2026-01-01\n{extra}"
+            "    surface:\n      - crates/decern-server/src/jose.rs\n" + tail
+        )
+
+    def test_a_value_with_an_inline_comment_reads_as_absent(self):
+        self.assertEqual(self.entry(url="https://x.invalid/ # note").standards[0].url, "")
+
+    def test_a_block_without_the_folded_marker_reads_as_absent(self):
+        self.assertEqual(standards._parse_registry(SAMPLE.replace("rule: >-", "rule: >")).rule, "")
+        reg = standards._parse_registry(SAMPLE.replace("conformance: >-\n      Pinned.", "conformance: Pinned."))
+        self.assertEqual(reg.standards[1].conformance, "")
+
+    def test_the_first_copy_of_a_field_is_the_one_read(self):
+        reg = self.entry(extra="    url: https://second.invalid/\n")
+        self.assertEqual(reg.standards[0].url, "https://x.invalid/")
+
+    def test_a_blank_line_does_not_end_a_list(self):
+        reg = standards._parse_registry(
+            SAMPLE.replace("  - crates/decern-server/src/main.rs\n", "  - a.rs\n\n  - b.rs\n", 1)
+        )
+        self.assertEqual(reg.non_surface, ["a.rs", "b.rs"])
+
+    def test_an_unknown_top_level_key_does_not_join_the_entry_above_it(self):
+        reg = self.entry(tail="non-surface:\n  - crates/leak.rs\n")
+        self.assertEqual(reg.standards[0].surface, ["crates/decern-server/src/jose.rs"])
+        self.assertEqual(reg.unknown, ["non-surface"])
+
     def test_a_registry_without_standards_is_refused(self):
         with self.assertRaises(SystemExit):
             standards._parse_registry("rule: >-\n  x\n")
@@ -93,6 +123,9 @@ class Check(unittest.TestCase):
         code, err = run_check(reg)
         self.assertEqual(code, 1, err)
         self.assertIn(needle, err)
+
+    def test_unknown_top_level_key(self):
+        self.assert_refused(lambda r: setattr(r, "unknown", ["non-surface"]), "unknown top-level key")
 
     def test_missing_url(self):
         self.assert_refused(lambda r: setattr(r.standards[0], "url", ""), "missing url")

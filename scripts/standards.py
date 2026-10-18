@@ -77,6 +77,7 @@ class Registry:
     rule: str
     standards: list[Standard]
     non_surface: list[str]
+    unknown: list[str] = field(default_factory=list)  # top-level keys the schema does not have
 
 
 def _sections(text: str) -> dict[str, list[str]]:
@@ -87,7 +88,7 @@ def _sections(text: str) -> dict[str, list[str]]:
     for line in text.splitlines():
         if line.lstrip().startswith("#"):
             continue
-        m = re.match(r"([a-z_]+):\s*(.*)$", line)
+        m = re.match(r"([A-Za-z0-9_-]+):\s*(.*)$", line)
         if m:
             current = sections.setdefault(m.group(1), [])
             if m.group(2):
@@ -113,15 +114,20 @@ def _entries(lines: list[str]) -> list[tuple[str, dict[str, list[str]]]]:
             continue
         f = re.match(r"    ([a-z_]+):\s*(.*)$", line)
         if f:
-            key = f.group(1)
-            fields[key] = [f.group(2)] if f.group(2) else []
+            # The first copy of a field is the one read; a later copy is dropped whole.
+            key = None if f.group(1) in fields else f.group(1)
+            if key is not None:
+                fields[key] = [f.group(2)] if f.group(2) else []
         elif key is not None:
             fields[key].append(line)
     return entries
 
 
 def _scalar(lines: list[str]) -> str:
-    return lines[0].strip() if lines else ""
+    """A one-token value. Anything else — two tokens, or a value with an inline comment
+    after it — reads as absent, so `check` refuses it rather than accepting the whole line."""
+    tokens = lines[0].split() if lines else []
+    return tokens[0] if len(tokens) == 1 else ""
 
 
 def _items(lines: list[str]) -> list[str]:
@@ -129,8 +135,11 @@ def _items(lines: list[str]) -> list[str]:
 
 
 def _folded(lines: list[str]) -> str:
-    """A `>-` block scalar: its lines joined by single spaces."""
-    return " ".join(l.strip() for l in lines if l.strip() and l.strip() != ">-")
+    """A `>-` block scalar: its lines joined by single spaces. A block that does not open with
+    `>-` reads as absent, so its text is never taken with the marker in it."""
+    if not lines or lines[0].strip() != ">-":
+        return ""
+    return " ".join(l.strip() for l in lines[1:] if l.strip())
 
 
 def _parse_registry(text: str) -> Registry:
@@ -158,6 +167,7 @@ def _parse_registry(text: str) -> Registry:
         rule=_folded(sections.get("rule", [])),
         standards=standards,
         non_surface=_items(sections.get("non_surface", [])),
+        unknown=sorted(set(sections) - {"rule", "non_surface", "standards"}),
     )
 
 
@@ -295,6 +305,8 @@ def cmd_check(reg: Registry) -> int:
 
     if not reg.rule:
         bad("missing top-level rule")
+    for key in reg.unknown:
+        bad(f"unknown top-level key: {key}")
 
     seen_names: set[str] = set()
     all_surfaces: list[str] = []
