@@ -1,0 +1,10 @@
+- **Standing tokens refuse `crit` and honour `nbf`.** A standing token whose header names a
+  critical extension is refused, where it was ignored and the token verified — RFC 7515 §4.1.11
+  requires the refusal of a recipient that implements no extension. An `nbf` in the future
+  refuses the token, and `exp` and `nbf` are read as RFC 7519 NumericDates: a fractional `exp`
+  is checked rather than read as missing, and a non-numeric `exp` is refused as
+  `standing_token exp is not a number` in place of `standing_token has no exp`. A forged or early
+  standing token never changed a decision — a challenge is taken out of the context before the
+  kernel runs — but it could put a false challenge answer on the record. Still open: a standing
+  token needs no `typ` (only an access-token `typ` is refused), and header parameters that are
+  not critical are ignored, as RFC 7515 §4 requires. Authored by @anivar.
