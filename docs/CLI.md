@@ -210,7 +210,7 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 | `GET` | `/audit/v1/subject?handle=<h>` | open | What was decided *about* one party, with inclusion proofs. |
 | `GET` | `/directory/v1/principals/{id}/descendants` | guarded | Who else loses authority if this principal is revoked. |
 | `POST` | `/mission/v1/approve` | guarded | Grant a scoped, fail-closed-attenuated Mission. |
-| `GET` | `/mission/v1/{s256}` | guarded | Its state. |
+| `GET` | `/mission/v1/{s256}` | guarded | Its approver, state and expiry, to every established caller — a workload bound to itself included, so a reference a caller can compute or obtain answers who approved what and until when. Open because a PEP consults mission state before honoring a grant, and binding the read to the approver would refuse the agent a Mission authorizes. |
 | `POST` | `/mission/v1/{s256}/terminate` | guarded | End it. A terminated Mission never revives. |
 | `GET` | `/.well-known/decern-subject-side-disclosure` | open | What this deployment does about challenges and callers, read from its running configuration. |
 | `GET` | `/.well-known/authzen-configuration` | open | AuthZEN 1.0 PDP metadata: the decision point and its evaluation endpoint, when `--public-url` is set; 404 otherwise. |
