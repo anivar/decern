@@ -26,6 +26,20 @@ pub(crate) fn decode_json<T: for<'de> Deserialize<'de>>(
     serde_json::from_slice(&bytes).map_err(|_| format!("{what} is not JSON"))
 }
 
+/// Refuse a header that names `crit`. RFC 7515 §4.1.11: the extensions it lists MUST be
+/// understood and processed, and a JWS naming one the recipient does not understand is
+/// invalid. A reader calling this implements none, so any `crit` is refused; §4.1.11 also
+/// lets a recipient refuse a list naming a parameter RFC 7515 itself defines. Header
+/// parameters that are not critical stay ignored, as §4 requires.
+pub(crate) fn refuse_crit(header: &BTreeMap<String, Value>, what: &str) -> Result<(), String> {
+    if header.contains_key("crit") {
+        return Err(format!(
+            "{what} names a critical header extension this server does not implement"
+        ));
+    }
+    Ok(())
+}
+
 /// A claim that must be a number when present (RFC 7519 §2 NumericDate, which JSON permits
 /// to be fractional, so it is read as `f64`). Absent is `None`; present and not a number is
 /// refused rather than read as absent. The reason reads "`what` `name` is not a number".
@@ -82,6 +96,22 @@ mod tests {
             alg: Option<String>,
         }
         assert!(decode_json::<Header>(&dup, "token header").is_err());
+    }
+
+    #[test]
+    fn any_crit_is_refused_and_other_parameters_are_not_looked_at() {
+        let named: BTreeMap<String, Value> =
+            serde_json::from_value(json!({ "alg": "EdDSA", "crit": ["exp"], "exp": 1 })).unwrap();
+        assert_eq!(
+            refuse_crit(&named, "standing_token"),
+            Err(
+                "standing_token names a critical header extension this server does not implement"
+                    .to_owned()
+            )
+        );
+        let open: BTreeMap<String, Value> =
+            serde_json::from_value(json!({ "alg": "EdDSA", "x-anything": true })).unwrap();
+        assert_eq!(refuse_crit(&open, "standing_token"), Ok(()));
     }
 
     #[test]

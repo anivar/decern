@@ -60,7 +60,7 @@ pub(crate) struct Standing {
     pub(crate) decision_ref: String,
     /// The pseudonymous handle of the party, matched against what the record already says.
     pub(crate) decision_subject: String,
-    /// Expiry, epoch seconds.
+    /// Expiry, whole epoch seconds; a fractional `exp` is checked whole and kept truncated.
     pub(crate) exp: u64,
     /// The capacity the party holds standing in, recorded but not interpreted here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -220,6 +220,8 @@ fn verify_standing(
             "an access token is not a standing token".into(),
         ));
     }
+    crate::jose::refuse_crit(&header, "standing_token")
+        .map_err(ChallengeError::StandingNotProved)?;
 
     let sig_bytes = URL_SAFE_NO_PAD
         .decode(sig_b64)
@@ -241,20 +243,29 @@ fn verify_standing(
 
     let claims: BTreeMap<String, Value> = crate::jose::decode_json(payload_b64, "claims")
         .map_err(ChallengeError::StandingNotProved)?;
-    let exp = claims
-        .get("exp")
-        .and_then(Value::as_u64)
+    // NumericDates (RFC 7519 §2), so a fractional `exp` is an expiry, not a missing one, and
+    // an `nbf` that is present gates (§4.1.5).
+    let exp = crate::jose::numeric_date(&claims, "exp", "standing_token")
+        .map_err(ChallengeError::StandingNotProved)?
         .ok_or_else(|| ChallengeError::StandingNotProved("standing_token has no exp".into()))?;
-    if exp <= now {
+    if now as f64 >= exp {
         return Err(ChallengeError::StandingNotProved(format!(
             "standing_token expired at {exp}"
+        )));
+    }
+    if let Some(nbf) = crate::jose::numeric_date(&claims, "nbf", "standing_token")
+        .map_err(ChallengeError::StandingNotProved)?
+        && (now as f64) < nbf
+    {
+        return Err(ChallengeError::StandingNotProved(format!(
+            "standing_token is not valid before {nbf}"
         )));
     }
 
     Ok(Standing {
         decision_ref: string_claim(&claims, "decision_ref")?,
         decision_subject: string_claim(&claims, "decision_subject")?,
-        exp,
+        exp: exp as u64,
         affected_party_role: claims
             .get("affected_party_role")
             .and_then(Value::as_str)
@@ -316,11 +327,27 @@ mod tests {
     use decern_crypto::generate;
 
     fn sign(claims: Value, key: &decern_crypto::SigningKey) -> String {
+        sign_with(r#"{"alg":"EdDSA","typ":"JWT"}"#, claims, key)
+    }
+
+    /// A validly signed token under any header, so a refusal is the header's doing.
+    fn sign_with(header: &str, claims: Value, key: &decern_crypto::SigningKey) -> String {
         use ed25519_dalek::Signer as _;
-        let h = URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA","typ":"JWT"}"#);
+        let h = URL_SAFE_NO_PAD.encode(header);
         let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
         let s = URL_SAFE_NO_PAD.encode(key.sign(format!("{h}.{p}").as_bytes()).to_bytes());
         format!("{h}.{p}.{s}")
+    }
+
+    fn parse_at_1000(
+        token: &str,
+        key: &decern_crypto::SigningKey,
+    ) -> Result<Challenge, ChallengeError> {
+        parse(
+            &challenge_json(token, "dec-1", "factual-error"),
+            &[key.verifying_key()],
+            1_000,
+        )
     }
 
     fn claims(decision_ref: &str, exp: u64) -> Value {
@@ -345,22 +372,98 @@ mod tests {
     /// standing token must fail on its `typ`, not verify on its signature.
     #[test]
     fn an_access_token_does_not_prove_standing() {
-        use ed25519_dalek::Signer as _;
         let key = generate().unwrap();
-        let h = URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA","typ":"at+jwt"}"#);
-        let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims("dec-1", 2_000)).unwrap());
-        let s = URL_SAFE_NO_PAD.encode(key.sign(format!("{h}.{p}").as_bytes()).to_bytes());
-        let e = parse(
-            &challenge_json(&format!("{h}.{p}.{s}"), "dec-1", "factual-error"),
-            &[key.verifying_key()],
-            1_000,
-        )
-        .unwrap_err();
+        let token = sign_with(
+            r#"{"alg":"EdDSA","typ":"at+jwt"}"#,
+            claims("dec-1", 2_000),
+            &key,
+        );
+        let e = parse_at_1000(&token, &key).unwrap_err();
         assert!(
             e.detail().contains("access token"),
             "refusal must name the confusion: {}",
             e.detail()
         );
+    }
+
+    /// RFC 7515 Appendix E, with `EdDSA` for its `none` (which is refused earlier, on the
+    /// algorithm): a JWS naming an extension the recipient does not understand is invalid,
+    /// however well signed.
+    #[test]
+    fn a_token_naming_a_critical_extension_is_refused() {
+        let key = generate().unwrap();
+        let token = sign_with(
+            r#"{"alg":"EdDSA","crit":["http://example.invalid/UNDEFINED"],"http://example.invalid/UNDEFINED":true}"#,
+            claims("dec-1", 2_000),
+            &key,
+        );
+        let e = parse_at_1000(&token, &key).unwrap_err();
+        assert_eq!(e.kind(), "standing_not_proved");
+        assert!(
+            e.detail().contains("critical header extension"),
+            "{}",
+            e.detail()
+        );
+    }
+
+    /// RFC 7515 §4: a header parameter that is not critical and not understood is ignored,
+    /// so the header set stays open.
+    #[test]
+    fn a_header_parameter_that_is_not_critical_is_ignored() {
+        let key = generate().unwrap();
+        let token = sign_with(
+            r#"{"alg":"EdDSA","typ":"JWT","kid":"k1","x-issuer-note":"anything"}"#,
+            claims("dec-1", 2_000),
+            &key,
+        );
+        assert!(parse_at_1000(&token, &key).is_ok());
+    }
+
+    /// RFC 7519 §4.1.5: an `nbf` that is present gates; one in the past does not.
+    #[test]
+    fn a_token_not_yet_valid_proves_nothing() {
+        let key = generate().unwrap();
+        let mut early = claims("dec-1", 2_000);
+        early["nbf"] = serde_json::json!(1_500);
+        let e = parse_at_1000(&sign(early, &key), &key).unwrap_err();
+        assert!(e.detail().contains("not valid before"), "{}", e.detail());
+
+        let mut ready = claims("dec-1", 2_000);
+        ready["nbf"] = serde_json::json!(999.5);
+        assert!(parse_at_1000(&sign(ready, &key), &key).is_ok());
+    }
+
+    /// RFC 7519 §2: a NumericDate may be fractional, so a fractional `exp` is an expiry to
+    /// check, not a missing one.
+    #[test]
+    fn a_fractional_exp_is_checked_as_an_expiry() {
+        let key = generate().unwrap();
+        let mut live = claims("dec-1", 0);
+        live["exp"] = serde_json::json!(1_999.5);
+        assert_eq!(
+            parse_at_1000(&sign(live, &key), &key).unwrap().standing.exp,
+            1_999
+        );
+
+        let mut gone = claims("dec-1", 0);
+        gone["exp"] = serde_json::json!(999.5);
+        let e = parse_at_1000(&sign(gone, &key), &key).unwrap_err();
+        assert!(e.detail().contains("expired"), "{}", e.detail());
+    }
+
+    #[test]
+    fn an_exp_or_nbf_that_is_not_a_number_is_refused() {
+        let key = generate().unwrap();
+        for (claim, value) in [("exp", "soon"), ("nbf", "soon")] {
+            let mut c = claims("dec-1", 2_000);
+            c[claim] = serde_json::json!(value);
+            let e = parse_at_1000(&sign(c, &key), &key).unwrap_err();
+            assert_eq!(
+                e.detail(),
+                format!("standing_token {claim} is not a number"),
+                "{claim}"
+            );
+        }
     }
 
     #[test]
