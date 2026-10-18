@@ -52,12 +52,15 @@ DEFAULT_DIMENSIONS = [
     "tests: assertions that cannot fail, or paths nothing asserts on",
 ]
 
-POSTURE_FILES = {
-    "crates/decern-server/src/sig.rs",
-    "crates/decern-server/src/bearer.rs",
-    "crates/decern-server/src/spiffe.rs",
-    "crates/decern-server/src/caller.rs",
-}
+def posture_files() -> set[str]:
+    """The caller postures: every module with a `CallerAuth` implementation, plus `caller.rs`,
+    which holds the trait and its guard. Read from the source so that a posture added later is
+    one without anyone remembering to list it."""
+    found = {"crates/decern-server/src/caller.rs"}
+    for f in (ROOT / "crates" / "decern-server" / "src").glob("*.rs"):
+        if "impl CallerAuth for" in f.read_text():
+            found.add(str(f.relative_to(ROOT)))
+    return found
 
 
 @dataclass
@@ -195,7 +198,8 @@ def standards_for(reg: Registry, paths: list[str]) -> list[Standard]:
 
 def dimensions_for(paths: list[str], stds: list[Standard]) -> list[str]:
     rels = [_rel(p) for p in paths]
-    if any(r in POSTURE_FILES or any(r.startswith(f[:-3]) for f in POSTURE_FILES) for r in rels):
+    postures = posture_files()
+    if any(r in postures or any(r.startswith(f[:-3]) for f in postures) for r in rels):
         # posture surfaces: use the three independent auth dimensions
         dims = list(POSTURE_DIMENSIONS)
     else:

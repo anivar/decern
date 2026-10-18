@@ -129,6 +129,29 @@ class Check(unittest.TestCase):
         self.assert_refused(drop_jose, "watched file in no surface")
 
 
+class Dimensions(unittest.TestCase):
+    def test_every_caller_auth_module_is_a_posture(self):
+        src = standards.ROOT / "crates" / "decern-server" / "src"
+        implementing = {
+            str(f.relative_to(standards.ROOT))
+            for f in src.glob("*.rs")
+            if "impl CallerAuth for" in f.read_text()
+        }
+        self.assertGreaterEqual(len(implementing), 4, implementing)
+        self.assertTrue(implementing <= standards.posture_files())
+        self.assertIn("crates/decern-server/src/aauth.rs", standards.posture_files())
+
+    def test_a_posture_gets_the_posture_dimensions_and_other_files_do_not(self):
+        self.assertEqual(
+            standards.dimensions_for(["crates/decern-server/src/aauth.rs"], []),
+            standards.POSTURE_DIMENSIONS,
+        )
+        self.assertEqual(
+            standards.dimensions_for(["crates/decern-ledger/src/merkle.rs"], []),
+            standards.DEFAULT_DIMENSIONS,
+        )
+
+
 class Lookup(unittest.TestCase):
     def test_files_and_directory_prefixes_match(self):
         reg = standards._parse_registry(SAMPLE)
