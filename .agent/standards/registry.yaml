@@ -101,7 +101,7 @@ standards:
       - crates/decern-kernel/model/
     conformance: >-
       The policy, schema, and entities in model/ are Cedar; the engine is pinned
-      to cedar-policy =4.11.2 in Cargo.toml.
+      to cedar-policy =4.13.0 in Cargo.toml.
 
   - name: Cedar symbolic compiler (cedar-policy-symcc)
     url: https://github.com/cedar-policy/cedar-spec
@@ -112,7 +112,7 @@ standards:
       decern-proof compiles the Cedar model to SMT with cedar-policy-symcc — the
       Lean-verified symbolic compiler — and discharges the nine invariants as policy
       subsumption. The "proven" claim rests on this crate, so it is exact-pinned
-      =0.5.3 in Cargo.toml, as tightly as the evaluator.
+      =0.7.0 in Cargo.toml, as tightly as the evaluator.
 
   - name: cvc5 SMT solver
     url: https://cvc5.github.io/
@@ -147,10 +147,11 @@ standards:
       - crates/decern-ledger/src/sharded.rs
     conformance: >-
       `decern_ledger::merkle` implements MTH, PATH and PROOF/SUBPROOF from §2.1 and the
-      verifiers from §2.1.3, over leaves that are the per-record chain hashes, with the
-      0x00/0x01 leaf/node domain separation. Only the tree and its proofs are taken from
-      the RFC — decern is not a certificate log and issues no SCTs. Verified against the
-      spec 2026-08-08.
+      verifiers from §2.1.3.2 and §2.1.4.2, over leaves that are the per-record chain
+      hashes, with the 0x00/0x01 leaf/node domain separation. Only the tree and its proofs
+      are taken from the RFC — decern is not a certificate log and issues no SCTs. Verified
+      against the spec 2026-08-08. Erratum 8670 (held for document update) read 2026-10-19:
+      the verifiers keep the original text's `fn == 0` loop exit, which is never taken.
 
   - name: JSON Web Signature (RFC 7515)
     url: https://www.rfc-editor.org/rfc/rfc7515
@@ -178,7 +179,8 @@ standards:
       (ECMAScript `Number::toString`), verified against V8 over 3.1M doubles. The
       hash chain itself does not canonicalize: it hashes each entry's exact stored
       bytes, and verification re-reads those same bytes. Verified against the spec
-      2026-08-08.
+      2026-08-08. Erratum 7920 (verified) read 2026-10-19: it has a parser raise an
+      error on `-0`, as a SHOULD; `jcs` serializes `-0` as `0` and refuses nothing.
 
   - name: JWT Profile for OAuth 2.0 Access Tokens (RFC 9068)
     url: https://www.rfc-editor.org/rfc/rfc9068

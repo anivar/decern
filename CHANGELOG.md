@@ -92,11 +92,9 @@ what the proofs cover — with two additions:
   not normalize `s` and RFC 7518 does not require it, so refusing the high-S form would refuse
   honest issuers. Nothing here keys on a token's bytes, so the twin is one more replay form,
   which the replay limit already covers.
-- **The AAuth posture was verified against draft `-10`.** Draft `-11` (September 2026) keeps
-  the agent-token mode this release implements and renumbers its sections; it adds the
-  `AAuth-Requirement: requirement=agent-token` challenge on a token-less request and
-  `Signature-Error: error=clock_skew` on an `iat` ahead of the clock, neither of which this
-  release sends.
+- **The AAuth posture does not detect replay.** `jti` is required and shape-checked but
+  nothing keys on it, so a captured request verifies again until 60 seconds after its
+  `created`, and a replayed allow records again.
 
 ## [0.3.1] - 2026-08-17
 

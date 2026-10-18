@@ -18,7 +18,10 @@
 //! resistance. `k` is always the largest power of two STRICTLY less than `n`. The generator
 //! functions ([`tree_hash`], [`inclusion_proof`], [`consistency_proof`]) mirror the RFC's
 //! MTH / PATH / PROOF recursions; the verifiers ([`verify_inclusion`], [`verify_consistency`])
-//! mirror §2.1.3.1–2 exactly, so a third party can re-derive them from the RFC alone.
+//! mirror §2.1.3.2 and §2.1.4.2 exactly, so a third party can re-derive them from the RFC alone.
+//! That includes the right-shift loop's exit on `fn == 0`, which RFC 9162 erratum 8670 (held
+//! for document update) shows is never taken: the loop runs only when `fn == sn`, after
+//! `sn == 0` has already failed the proof, so it always ends with `fn` odd.
 //!
 //! These run on the audit/export path (evidence-bundle production and offline
 //! verification), never the decision hot path, so the straightforward recursive
