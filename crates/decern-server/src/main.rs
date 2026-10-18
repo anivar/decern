@@ -15,6 +15,7 @@ mod challenge;
 mod decide;
 mod deployment;
 mod discovery;
+mod jose;
 mod mission;
 mod record;
 mod routes;

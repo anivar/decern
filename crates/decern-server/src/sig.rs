@@ -416,7 +416,7 @@ pub(crate) fn authenticate(
         (Some(h), Some(p), Some(sig), None) => (h, p, sig),
         _ => return Err(Denied::Invalid("bound token is not a compact JWS".into())),
     };
-    let header: Header = decode_json(h, "header")?;
+    let header: Header = crate::jose::decode_json(h, "token header").map_err(Denied::Invalid)?;
     match header.typ.as_deref() {
         Some(t) if t.eq_ignore_ascii_case("dpop-bound+jwt") => {}
         Some(other) => {
@@ -438,7 +438,8 @@ pub(crate) fn authenticate(
         None => return Err(Denied::Invalid("bound token names no algorithm".into())),
     }
 
-    let claims: BTreeMap<String, Value> = decode_json(p, "claims")?;
+    let claims: BTreeMap<String, Value> =
+        crate::jose::decode_json(p, "token claims").map_err(Denied::Invalid)?;
     let subject = claims
         .get("sub")
         .and_then(Value::as_str)
@@ -590,13 +591,6 @@ fn audience_contains(aud: Option<&Value>, want: &str) -> bool {
         Some(Value::Array(xs)) => xs.iter().any(|x| x.as_str() == Some(want)),
         _ => false,
     }
-}
-
-fn decode_json<T: for<'de> Deserialize<'de>>(part: &str, what: &str) -> Result<T, Denied> {
-    let raw = URL_SAFE_NO_PAD
-        .decode(part)
-        .map_err(|_| Denied::Invalid(format!("token {what} is not base64url")))?;
-    serde_json::from_slice(&raw).map_err(|_| Denied::Invalid(format!("token {what} is not JSON")))
 }
 
 fn brief(s: &str) -> String {

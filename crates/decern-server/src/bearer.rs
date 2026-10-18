@@ -194,18 +194,6 @@ fn bearer_token(header: Option<&str>) -> Result<&str, Denied> {
     Ok(token)
 }
 
-/// A claim that must be a number (RFC 7519 §2 NumericDate, which JSON permits to be
-/// fractional). Present-but-not-a-number is a refusal, never a skipped check.
-fn numeric_date(claims: &BTreeMap<String, Value>, name: &str) -> Result<Option<f64>, Denied> {
-    match claims.get(name) {
-        None => Ok(None),
-        Some(v) => v
-            .as_f64()
-            .map(Some)
-            .ok_or_else(|| Denied::Invalid(format!("token {name} is not a number"))),
-    }
-}
-
 /// Validate a JWT access token in the order RFC 9068 §4 sets out: `typ`, then issuer, then
 /// audience, then the signature, then time, then what this deployment requires of the claims.
 ///
@@ -231,7 +219,7 @@ pub(crate) fn authenticate(
         _ => return Err(Denied::Invalid("token is not a compact JWS".into())),
     };
 
-    let header: Header = decode_json(h, "header")?;
+    let header: Header = crate::jose::decode_json(h, "token header").map_err(Denied::Invalid)?;
 
     // 1. typ — an access token, not an ID token or anything else the issuer signs. Without
     //    this an ID token for the same audience would sail through every later check.
@@ -266,7 +254,8 @@ pub(crate) fn authenticate(
         ));
     }
 
-    let claims: BTreeMap<String, Value> = decode_json(p, "claims")?;
+    let claims: BTreeMap<String, Value> =
+        crate::jose::decode_json(p, "token claims").map_err(Denied::Invalid)?;
 
     // 3. iss — exact match.
     let iss = string_claim(&claims, "iss")?;
@@ -305,12 +294,14 @@ pub(crate) fn authenticate(
 
     // 6. exp, and nbf where present. Only now, because until the signature verified these
     //    were numbers an unauthenticated party chose.
-    let exp = numeric_date(&claims, "exp")?
+    let exp = crate::jose::numeric_date(&claims, "exp", "token")
+        .map_err(Denied::Invalid)?
         .ok_or_else(|| Denied::Invalid("token carries no expiry".into()))?;
     if now_secs as f64 >= exp {
         return Err(Denied::Invalid("token has expired".into()));
     }
-    if let Some(nbf) = numeric_date(&claims, "nbf")?
+    if let Some(nbf) =
+        crate::jose::numeric_date(&claims, "nbf", "token").map_err(Denied::Invalid)?
         && (now_secs as f64) < nbf
     {
         return Err(Denied::Invalid("token is not yet valid".into()));
@@ -322,7 +313,10 @@ pub(crate) fn authenticate(
     let subject = string_claim(&claims, "sub")?;
     let client_id = string_claim(&claims, "client_id")?;
     string_claim(&claims, "jti")?;
-    if numeric_date(&claims, "iat")?.is_none() {
+    if crate::jose::numeric_date(&claims, "iat", "token")
+        .map_err(Denied::Invalid)?
+        .is_none()
+    {
         return Err(Denied::Invalid("token carries no iat".into()));
     }
 
@@ -350,13 +344,6 @@ fn audience_contains(aud: Option<&Value>, want: &str) -> bool {
         Some(Value::Array(xs)) => xs.iter().any(|x| x.as_str() == Some(want)),
         _ => false,
     }
-}
-
-fn decode_json<T: for<'de> Deserialize<'de>>(part: &str, what: &str) -> Result<T, Denied> {
-    let raw = URL_SAFE_NO_PAD
-        .decode(part)
-        .map_err(|_| Denied::Invalid(format!("token {what} is not base64url")))?;
-    serde_json::from_slice(&raw).map_err(|_| Denied::Invalid(format!("token {what} is not JSON")))
 }
 
 fn string_claim(claims: &BTreeMap<String, Value>, name: &str) -> Result<String, Denied> {
