@@ -59,7 +59,7 @@ pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
         // outsider may be able to guess — it is not a subject-side surface. Guarded is not
         // bound: every established caller may read any Mission, a workload bound to itself
         // included, so a reference it can compute or obtain tells it who approved what and
-        // until when. The read stays open because binding it to the approver would refuse
+        // until when. The read stays unbound because binding it to the approver would refuse
         // the agent a Mission authorizes; `a_self_only_workload_reads_a_mission_it_does_not_own`
         // pins it, so binding it is a change of its own.
         .route("/mission/v1/approve", post(mission_approve))

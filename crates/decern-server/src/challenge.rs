@@ -60,7 +60,8 @@ pub(crate) struct Standing {
     pub(crate) decision_ref: String,
     /// The pseudonymous handle of the party, matched against what the record already says.
     pub(crate) decision_subject: String,
-    /// Expiry, whole epoch seconds; a fractional `exp` is checked whole and kept truncated.
+    /// Expiry in whole epoch seconds. The check uses `exp` as sent, fraction included; what is
+    /// kept is truncated, and an `exp` past `u64::MAX` is kept as `u64::MAX`.
     pub(crate) exp: u64,
     /// The capacity the party holds standing in, recorded but not interpreted here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -431,6 +432,33 @@ mod tests {
         let mut ready = claims("dec-1", 2_000);
         ready["nbf"] = serde_json::json!(999.5);
         assert!(parse_at_1000(&sign(ready, &key), &key).is_ok());
+    }
+
+    /// RFC 7519 §4.1.4 and §4.1.5 at the instant itself: a token is refused at its `exp`,
+    /// and accepted at its `nbf`.
+    #[test]
+    fn exp_and_nbf_hold_at_their_own_instant() {
+        let key = generate().unwrap();
+        let mut at_exp = claims("dec-1", 1_000);
+        at_exp["nbf"] = serde_json::json!(900);
+        let e = parse_at_1000(&sign(at_exp, &key), &key).unwrap_err();
+        assert!(e.detail().contains("expired"), "{}", e.detail());
+
+        let mut at_nbf = claims("dec-1", 2_000);
+        at_nbf["nbf"] = serde_json::json!(1_000);
+        assert!(parse_at_1000(&sign(at_nbf, &key), &key).is_ok());
+    }
+
+    /// An `exp` beyond what `u64` holds is a far expiry under RFC 7519, not a missing one.
+    #[test]
+    fn an_exp_past_u64_is_a_far_expiry() {
+        let key = generate().unwrap();
+        let mut far = claims("dec-1", 0);
+        far["exp"] = serde_json::json!(1e300);
+        assert_eq!(
+            parse_at_1000(&sign(far, &key), &key).unwrap().standing.exp,
+            u64::MAX
+        );
     }
 
     /// RFC 7519 §2: a NumericDate may be fractional, so a fractional `exp` is an expiry to

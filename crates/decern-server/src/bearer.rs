@@ -151,8 +151,8 @@ struct Header {
     /// RFC 7515 §4.1.11: a header extension the recipient MUST understand. This
     /// implementation understands none, so a token that names any is refused rather than
     /// verified under an assumption about what the extension meant.
-    #[serde(default)]
-    crit: Option<Value>,
+    #[serde(default, deserialize_with = "crate::jose::present")]
+    crit: bool,
 }
 
 /// The `Authorization` header value, if it is a well-formed bearer presentation.
@@ -236,7 +236,7 @@ pub(crate) fn authenticate(
         }
         None => return Err(Denied::Invalid("token names no algorithm".into())),
     }
-    if header.crit.is_some() {
+    if header.crit {
         return Err(Denied::Invalid(
             "token names a critical header extension this server does not implement".into(),
         ));
@@ -480,9 +480,11 @@ mod tests {
     #[test]
     fn a_critical_header_extension_is_refused() {
         let k = decern_crypto::generate().unwrap();
-        let h = json!({ "typ": "at+jwt", "alg": "EdDSA", "crit": ["exp"] });
-        let e = auth(&signed(&k, h, claims()), &cfg(&k)).unwrap_err();
-        assert!(e.detail().contains("critical"), "{}", e.detail());
+        for crit in [json!(["exp"]), json!(null)] {
+            let h = json!({ "typ": "at+jwt", "alg": "EdDSA", "crit": crit });
+            let e = auth(&signed(&k, h, claims()), &cfg(&k)).unwrap_err();
+            assert!(e.detail().contains("critical"), "{crit}: {}", e.detail());
+        }
     }
 
     #[test]

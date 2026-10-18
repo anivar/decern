@@ -13,9 +13,9 @@ use serde_json::Value;
 
 /// A JWS segment decoded as JSON: base64url without padding (RFC 7515 §2), then strict
 /// JSON — trailing characters after the value are refused (§10.12). A duplicated member
-/// name resolves to the lexically last into a map and is refused into a derived struct;
-/// §4 permits either. The reason names `what` — "`what` is not base64url" or "`what` is
-/// not JSON".
+/// name resolves to the lexically last into a map; into a derived struct it is refused if the
+/// struct declares that member and ignored if not. §4 permits either. The reason names `what`
+/// — "`what` is not base64url" or "`what` is not JSON".
 pub(crate) fn decode_json<T: for<'de> Deserialize<'de>>(
     part: &str,
     what: &str,
@@ -34,6 +34,12 @@ pub(crate) fn audience_contains(aud: Option<&Value>, want: &str) -> bool {
         Some(Value::Array(xs)) => xs.iter().any(|x| x.as_str() == Some(want)),
         _ => false,
     }
+}
+
+/// For a derived header: whether a member is there at all, `null` included. `Option` reads
+/// `"crit": null` as absent, where RFC 7515 §4.1.11 turns on `crit` being present.
+pub(crate) fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    <serde::de::IgnoredAny as Deserialize>::deserialize(d).map(|_| true)
 }
 
 /// Refuse a header that names `crit`. RFC 7515 §4.1.11: the extensions it lists MUST be
@@ -92,9 +98,10 @@ mod tests {
     }
 
     /// §4: a parser rejects a duplicated name or keeps the lexically last. Into a map it
-    /// keeps the last; into a derived struct it rejects.
+    /// keeps the last; into a derived struct it rejects a member the struct declares and ignores
+    /// one it does not.
     #[test]
-    fn a_duplicated_member_name_keeps_the_last_in_a_map_and_fails_a_struct() {
+    fn a_duplicated_member_name_keeps_the_last_in_a_map_and_fails_a_struct_that_declares_it() {
         let dup = URL_SAFE_NO_PAD.encode(r#"{"alg":"none","alg":"EdDSA"}"#);
         let map: BTreeMap<String, Value> = decode_json(&dup, "token header").unwrap();
         assert_eq!(map["alg"], "EdDSA");
@@ -106,6 +113,8 @@ mod tests {
             alg: Option<String>,
         }
         assert!(decode_json::<Header>(&dup, "token header").is_err());
+        let undeclared = URL_SAFE_NO_PAD.encode(r#"{"alg":"EdDSA","kid":"a","kid":"b"}"#);
+        assert!(decode_json::<Header>(&undeclared, "token header").is_ok());
     }
 
     #[test]
