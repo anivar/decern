@@ -1,4 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
+#
+# Every Rust-side check a pull request into main reports lives here; the SDK suites are in
+# sdks.yml. Which of them are required is the branch ruleset's call, not this file's.
+#
+# Nothing here skips itself by what a pull request touched: the jobs run in parallel and a
+# public repository's runners are not billed, so a skip would save neither time nor money.
 name: CI
 
 on:
@@ -6,9 +12,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # A weekly run on an unchanged tree: the supply-chain gate (`cargo deny`) and the
-  # proofs can go red without a commit — a new advisory, a yanked crate, a solver
-  # release — and a badge that only reflects the last push would keep reading green.
+  # A weekly run on an unchanged tree: the supply-chain gates (`cargo deny`, for the
+  # workspace and for the adapter) and the proofs can go red without a commit — a new
+  # advisory, a yanked crate, a solver release — and a badge that only reflects the last
+  # push would keep reading green.
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
@@ -18,7 +25,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # cvc5 static release used by the proof suite.
+  # cvc5 static release, for the proofs in `ci` and the mcp walkthrough.
   CVC5_TAG: cvc5-1.3.4
 
 jobs:
@@ -103,3 +110,120 @@ jobs:
           echo "Add one (see changelog.d/README.md), or apply the 'no-changelog' label if a user"
           echo "would notice nothing — a refactor, a test, a comment."
           exit 1
+
+  # The worked examples, end to end. The mcp walkthrough installs cvc5 and always proves:
+  # its model and the AuthZEN certification model differ from the proven builtin, so "the
+  # invariants hold over them" is untested until this runs, and a prove-skipping pass here
+  # would be the mistaken green scripts/verify.sh's --skip-proofs comment forbids. The
+  # other three serve the builtin policies unmodified and need no solver.
+  walkthrough:
+    name: ${{ matrix.example }} walkthrough
+    runs-on: ubuntu-latest
+    strategy:
+      # One broken walkthrough must not cancel the others: each is its own check.
+      fail-fast: false
+      matrix:
+        example: [mcp, signed-request, spiffe, aauth]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain (honors rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ matrix.example }}
+
+      - name: Install cvc5
+        if: matrix.example == 'mcp'
+        run: |
+          curl -sSfL -o /tmp/cvc5.zip \
+            "https://github.com/cvc5/cvc5/releases/download/${CVC5_TAG}/cvc5-Linux-x86_64-static.zip"
+          unzip -q /tmp/cvc5.zip -d /tmp/cvc5
+          sudo install -m 0755 /tmp/cvc5/cvc5-Linux-x86_64-static/bin/cvc5 /usr/local/bin/cvc5
+          cvc5 --version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v9
+
+      - name: Run the walkthrough
+        run: examples/${{ matrix.example }}/run.sh
+
+      - name: Prove the invariants over the AuthZEN certification model
+        if: matrix.example == 'mcp'
+        run: cargo run -q -p decern-cli -- prove --model examples/authzen-certification/model
+
+  # examples/ext_authz_adapter is its own Cargo project, outside the workspace
+  # scripts/verify.sh builds, so it gets its own build, lints, supply-chain check and tests.
+  ext-authz-adapter:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/ext_authz_adapter
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain (honors rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add clippy rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: examples/ext_authz_adapter
+
+      - name: Build adapter
+        run: cargo build
+
+      - name: Lint adapter (Clippy)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Check supply-chain (cargo-deny)
+        run: cargo deny check
+
+      - name: Run integration tests
+        run: cargo test
+
+  # decern-store-postgres's DB-backed tests, against a Postgres service container. They
+  # skip when DECERN_TEST_POSTGRES_URL is unset, which is why the variable is set on this
+  # job alone: `ci` never touches a database and the core build stays pure Rust.
+  store-postgres:
+    runs-on: ubuntu-latest
+    env:
+      DECERN_TEST_POSTGRES_URL: postgres://decern:decern@127.0.0.1:5432/decern_test?sslmode=disable
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: decern
+          POSTGRES_PASSWORD: decern
+          POSTGRES_DB: decern_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U decern"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain (honors rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Lint the feature-gated decern-serve wiring (`--sharded postgres://…`)
+        run: cargo clippy -p decern-server --features postgres --all-targets -- -D warnings
+
+      - name: Test the Postgres ledger-head store against the service container
+        run: cargo test -p decern-store-postgres
