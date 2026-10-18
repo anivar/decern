@@ -63,6 +63,9 @@ jobs:
     name: changelog fragment
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -72,11 +75,20 @@ jobs:
         run: ./scripts/changelog.sh --check
 
       - name: A user-visible change carries an entry
-        if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-changelog') }}
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          # The labels as they are when this runs, not as the triggering event carried them:
+          # Dependabot labels a pull request a moment after opening it, so the opening event's
+          # copy can miss the label, and a label added later is seen by a re-run of this job.
+          labels="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq '.labels[].name')"
+          if grep -qx 'no-changelog' <<<"${labels}"; then
+            echo "Labelled no-changelog — no fragment needed."
+            exit 0
+          fi
           changed="$(git diff --name-only "${BASE}" "${HEAD}")"
           # Shipped code is anything a reader of the release notes can run. The crates and the
           # SDKs, plus the two examples that are components rather than walkthroughs:
@@ -107,8 +119,8 @@ jobs:
           fi
           echo "::error::This pull request changes shipped code (crates/, sdks/, or an example"
           echo "component) but adds no changelog.d/ entry."
-          echo "Add one (see changelog.d/README.md), or apply the 'no-changelog' label if a user"
-          echo "would notice nothing — a refactor, a test, a comment."
+          echo "Add one (see changelog.d/README.md), or apply the 'no-changelog' label and re-run"
+          echo "this job if a user would notice nothing — a refactor, a test, a comment."
           exit 1
 
   # The worked examples, end to end. The mcp walkthrough installs cvc5 and always proves:
