@@ -155,17 +155,39 @@ standards:
 
   - name: JSON Web Signature (RFC 7515)
     url: https://www.rfc-editor.org/rfc/rfc7515
-    verified: 2026-08-08
+    verified: 2026-10-19
     surface:
       - crates/decern-server/src/bearer.rs
       - crates/decern-server/src/spiffe.rs
       - crates/decern-server/src/challenge.rs
+      - crates/decern-server/src/jose.rs
     conformance: >-
       Standing tokens are compact-serialization JWS verified in `decern-server`:
-      `alg` must be `EdDSA` (RFC 8037) and is checked before the signature, per the
-      §5.2 validation order, so no other algorithm reaches a verification path.
-      Base64url decoding rejects padding, which §2 requires be omitted. Only
-      verification is implemented; decern issues no JWS. Verified 2026-08-08.
+      `alg` must be `EdDSA` (RFC 8037) and is checked before the signature, so no
+      other algorithm reaches a verification path. Every reader decodes its segments
+      through `jose.rs`: base64url without padding (§2) into strict JSON, trailing
+      characters refused (§10.12), a duplicated member name kept last in a map and
+      refused in a derived struct (§4 permits either). `crit` (§4.1.11, MUST be
+      understood and processed): bearer refuses it, SPIFFE refuses every header
+      outside `alg`/`kid`/`typ` under JWT-SVID §2, and standing tokens and AAuth agent
+      tokens ignore it, which §4.1.11 does not allow. Only verification is
+      implemented; decern issues no JWS. Read in full 2026-10-19; of its errata, only
+      7767 is open (reported, §6) and it does not bear on these surfaces.
+
+  - name: JSON Web Token (RFC 7519)
+    url: https://www.rfc-editor.org/rfc/rfc7519
+    verified: 2026-10-19
+    surface:
+      - crates/decern-server/src/jose.rs
+    conformance: >-
+      `jose.rs` reads a NumericDate claim (§2) as any JSON number, fractional
+      included, and refuses a present claim that is not a number rather than reading
+      it as absent; claim sets decode as §7.2 steps 9–10 require. Which claims are
+      required, and the `exp`/`nbf` checks themselves, are each reader's own. Read in
+      full 2026-10-19 with its errata: verified erratum 8060 makes §7.2 step 5 defer
+      to RFC 7515, under which a header parameter not understood is ignored unless
+      `crit` names it; reported erratum 7720 (never reject an `iat` in the future) is
+      not adopted: the AAuth posture refuses one past its skew window.
 
   - name: JSON Canonicalization Scheme (RFC 8785)
     url: https://www.rfc-editor.org/rfc/rfc8785
@@ -285,7 +307,7 @@ standards:
 
   - name: SPIFFE JWT-SVID
     url: https://github.com/spiffe/spiffe/blob/main/standards/JWT-SVID.md
-    verified: 2026-08-17
+    verified: 2026-10-19
     surface:
       - crates/decern-server/src/spiffe.rs
     conformance: >-
@@ -300,7 +322,7 @@ standards:
       `sub`, `aud` and `exp`, so the issuer recorded is derived from the trust domain inside
       the verified `sub` rather than read from a claim. Trust domains match exactly; `kid` is
       mandatory on bundle entries (§6.1) even though optional on the token, and an ambiguous
-      selection is refused rather than guessed. Verified against the spec 2026-08-17.
+      selection is refused rather than guessed. Read in full 2026-10-19.
 
   - name: Signature-Key HTTP header (draft-hardt-httpbis-signature-key)
     url: https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/

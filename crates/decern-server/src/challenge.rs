@@ -195,7 +195,8 @@ fn verify_standing(
     }
     let (header_b64, payload_b64, sig_b64) = (parts[0], parts[1], parts[2]);
 
-    let header: BTreeMap<String, Value> = decode_json(header_b64, "header")?;
+    let header: BTreeMap<String, Value> = crate::jose::decode_json(header_b64, "header")
+        .map_err(ChallengeError::StandingNotProved)?;
     match header.get("alg").and_then(Value::as_str) {
         Some("EdDSA") => {}
         Some(other) => {
@@ -238,7 +239,8 @@ fn verify_standing(
         ));
     }
 
-    let claims: BTreeMap<String, Value> = decode_json(payload_b64, "claims")?;
+    let claims: BTreeMap<String, Value> = crate::jose::decode_json(payload_b64, "claims")
+        .map_err(ChallengeError::StandingNotProved)?;
     let exp = claims
         .get("exp")
         .and_then(Value::as_u64)
@@ -258,14 +260,6 @@ fn verify_standing(
             .and_then(Value::as_str)
             .map(str::to_owned),
     })
-}
-
-fn decode_json<T: for<'de> Deserialize<'de>>(part: &str, what: &str) -> Result<T, ChallengeError> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(part)
-        .map_err(|_| ChallengeError::StandingNotProved(format!("{what} is not base64url")))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|_| ChallengeError::StandingNotProved(format!("{what} is not JSON")))
 }
 
 fn string_claim(claims: &BTreeMap<String, Value>, name: &str) -> Result<String, ChallengeError> {

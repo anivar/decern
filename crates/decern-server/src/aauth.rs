@@ -309,7 +309,8 @@ pub(crate) fn authenticate(
         _ => return Err(Denied::Invalid("agent token is not a compact JWS".into())),
     };
 
-    let head: BTreeMap<String, Value> = decode_json(h, "header")?;
+    let head: BTreeMap<String, Value> =
+        crate::jose::decode_json(h, "agent token header").map_err(Denied::Invalid)?;
     if let Some(unknown) = head
         .keys()
         .find(|k| !PERMITTED_HEADERS.contains(&k.as_str()))
@@ -341,7 +342,8 @@ pub(crate) fn authenticate(
     }
     let token_kid = head.get("kid").and_then(Value::as_str);
 
-    let claims: BTreeMap<String, Value> = decode_json(p, "claims")?;
+    let claims: BTreeMap<String, Value> =
+        crate::jose::decode_json(p, "agent token claims").map_err(Denied::Invalid)?;
 
     let issuer = claims
         .get("iss")
@@ -425,12 +427,14 @@ pub(crate) fn authenticate(
     {
         return Err(Denied::Invalid("agent token carries no jti".into()));
     }
-    let exp = numeric_date(&claims, "exp")?
+    let exp = crate::jose::numeric_date(&claims, "exp", "agent token")
+        .map_err(Denied::Invalid)?
         .ok_or_else(|| Denied::Invalid("agent token carries no exp".into()))?;
     if now_secs as f64 >= exp {
         return Err(Denied::Invalid("agent token has expired".into()));
     }
-    let iat = numeric_date(&claims, "iat")?
+    let iat = crate::jose::numeric_date(&claims, "iat", "agent token")
+        .map_err(Denied::Invalid)?
         .ok_or_else(|| Denied::Invalid("agent token carries no iat".into()))?;
     // Draft -11 §11.5.2: `iat` is not a validity check. A verifier that refuses an `iat`
     // ahead of its clock bounds the refusal by its signature validity window rather than
@@ -449,7 +453,8 @@ pub(crate) fn authenticate(
     // token honoured before the window it chose. Refused rather than skipped when malformed,
     // for the reason both sibling postures give: silently ignoring it admits a token that is
     // not yet valid.
-    if let Some(nbf) = numeric_date(&claims, "nbf")?
+    if let Some(nbf) =
+        crate::jose::numeric_date(&claims, "nbf", "agent token").map_err(Denied::Invalid)?
         && (now_secs as f64) < nbf
     {
         return Err(Denied::Invalid("agent token is not yet valid".into()));
@@ -515,26 +520,6 @@ pub(crate) fn authenticate(
     } else {
         who.self_only()
     })
-}
-
-/// RFC 7519 NumericDate, which may be fractional. A claim present but non-numeric is a
-/// refusal rather than an absence, so a malformed `exp` cannot read as "no expiry".
-fn numeric_date(claims: &BTreeMap<String, Value>, name: &str) -> Result<Option<f64>, Denied> {
-    match claims.get(name) {
-        None => Ok(None),
-        Some(v) => v
-            .as_f64()
-            .map(Some)
-            .ok_or_else(|| Denied::Invalid(format!("agent token {name} is not a number"))),
-    }
-}
-
-fn decode_json<T: for<'de> Deserialize<'de>>(part: &str, what: &str) -> Result<T, Denied> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(part)
-        .map_err(|_| Denied::Invalid(format!("agent token {what} is not base64url")))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|_| Denied::Invalid(format!("agent token {what} is not JSON")))
 }
 
 /// Bounded by characters, never bytes: the string is attacker-chosen, and a byte bound that

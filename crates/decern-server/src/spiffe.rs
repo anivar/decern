@@ -276,7 +276,8 @@ pub(crate) fn authenticate(
 
     // The JOSE header is a closed set (§2). Checked before anything in it is trusted, so a
     // parameter this module does not interpret cannot ride along unexamined.
-    let head: BTreeMap<String, Value> = decode_json(h, "header")?;
+    let head: BTreeMap<String, Value> =
+        crate::jose::decode_json(h, "token header").map_err(Denied::Invalid)?;
     if let Some(unknown) = head
         .keys()
         .find(|k| !PERMITTED_HEADERS.contains(&k.as_str()))
@@ -310,7 +311,8 @@ pub(crate) fn authenticate(
     }
     let token_kid = head.get("kid").and_then(Value::as_str);
 
-    let claims: BTreeMap<String, Value> = decode_json(p, "claims")?;
+    let claims: BTreeMap<String, Value> =
+        crate::jose::decode_json(p, "token claims").map_err(Denied::Invalid)?;
     // §3.1–3.3: exactly these three are required. `iss` is deliberately not among them.
     let subject = claims
         .get("sub")
@@ -390,7 +392,8 @@ pub(crate) fn authenticate(
     // Exact, with no leeway. §6 of RFC 7519 permits a little; `bearer.rs` takes none, and
     // two JWT paths in one binary disagreeing about expiry is worth more confusion than the
     // leeway is worth.
-    let exp = numeric_date(&claims, "exp")?
+    let exp = crate::jose::numeric_date(&claims, "exp", "token")
+        .map_err(Denied::Invalid)?
         .ok_or_else(|| Denied::Invalid("token carries no exp".into()))?;
     if now_secs as f64 >= exp {
         return Err(Denied::Invalid("token has expired".into()));
@@ -398,7 +401,8 @@ pub(crate) fn authenticate(
     // §3 permits registered claims beyond the three it requires, so an `nbf` here carries
     // its RFC 7519 meaning and must gate. SPIRE commonly sets one; without this a token
     // that is not yet valid would be accepted right up until it expired.
-    if let Some(nbf) = numeric_date(&claims, "nbf")?
+    if let Some(nbf) =
+        crate::jose::numeric_date(&claims, "nbf", "token").map_err(Denied::Invalid)?
         && (now_secs as f64) < nbf
     {
         return Err(Denied::Invalid("token is not yet valid".into()));
@@ -425,32 +429,12 @@ pub(crate) fn authenticate(
     })
 }
 
-/// RFC 7519 NumericDate, which may be fractional. A claim present but non-numeric is a
-/// refusal rather than an absence: silently skipping a malformed `nbf` would let a token
-/// that is not yet valid through. Mirrors `bearer.rs`.
-fn numeric_date(claims: &BTreeMap<String, Value>, name: &str) -> Result<Option<f64>, Denied> {
-    match claims.get(name) {
-        None => Ok(None),
-        Some(v) => v
-            .as_f64()
-            .map(Some)
-            .ok_or_else(|| Denied::Invalid(format!("token {name} is not a number"))),
-    }
-}
-
 fn audience_contains(aud: Option<&Value>, want: &str) -> bool {
     match aud {
         Some(Value::String(s)) => s == want,
         Some(Value::Array(xs)) => xs.iter().any(|x| x.as_str() == Some(want)),
         _ => false,
     }
-}
-
-fn decode_json<T: for<'de> Deserialize<'de>>(part: &str, what: &str) -> Result<T, Denied> {
-    let raw = URL_SAFE_NO_PAD
-        .decode(part)
-        .map_err(|_| Denied::Invalid(format!("token {what} is not base64url")))?;
-    serde_json::from_slice(&raw).map_err(|_| Denied::Invalid(format!("token {what} is not JSON")))
 }
 
 fn brief(s: &str) -> String {
