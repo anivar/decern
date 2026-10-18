@@ -51,6 +51,10 @@ send() {
     -d "$payload"
 }
 
+# Built before anything is signed: a signature's `created` starts its 60-second window, and
+# a cold compile inside `cargo run` below can outlast it, refusing the first request as stale.
+cargo build -q -p decern-server
+
 echo "== 1. Start the PDP with ONE agent's key pinned =="
 GOOD=$(mk)
 PUB=$(g "$GOOD" pub_hex)
