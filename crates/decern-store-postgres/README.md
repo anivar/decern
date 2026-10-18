@@ -72,5 +72,5 @@ DECERN_TEST_POSTGRES_URL=postgres://user@127.0.0.1:5432/db?sslmode=disable \
   cargo test -p decern-store-postgres
 ```
 
-The `store-postgres` GitHub workflow runs these against a Postgres service
-container as a **non-required** check.
+The `store-postgres` job in `.github/workflows/ci.yml` runs these against a
+Postgres service container on every pull request.
