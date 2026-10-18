@@ -82,6 +82,7 @@ step "no-lineage"     no_lineage
 # listed or explicitly non_surface, every entry carries a machine-readable verified date.
 # This is what turns `.agent/standards/registry.yaml` into something an agent graph can ground on.
 step "standards"      python3 scripts/standards.py check
+step "standards tests" python3 -I scripts/test_standards.py
 
 echo
 if [ "${skip_proofs}" -eq 1 ]; then

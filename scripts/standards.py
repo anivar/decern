@@ -76,85 +76,98 @@ class Registry:
     non_surface: list[str]
 
 
-def _parse_registry(text: str) -> Registry:
-    """Parse the constrained registry schema. Not a general YAML parser."""
-    # Strip comments that are full-line; keep inline alone.
-    lines = []
+def _sections(text: str) -> dict[str, list[str]]:
+    """The registry's top-level keys, each with the lines under it. A key starts in column 0;
+    full-line comments are dropped first, so they neither end a block nor join one."""
+    sections: dict[str, list[str]] = {}
+    current: list[str] | None = None
     for line in text.splitlines():
         if line.lstrip().startswith("#"):
             continue
-        lines.append(line)
-    text = "\n".join(lines)
+        m = re.match(r"([a-z_]+):\s*(.*)$", line)
+        if m:
+            current = sections.setdefault(m.group(1), [])
+            if m.group(2):
+                current.append(m.group(2))
+        elif current is not None:
+            current.append(line)
+    return sections
 
-    rule_m = re.search(r"^rule:\s*>-\s*\n((?:[ \t]+.+\n?)+)", text, re.M)
-    rule = ""
-    if rule_m:
-        rule = " ".join(l.strip() for l in rule_m.group(1).splitlines() if l.strip())
 
-    non_surface: list[str] = []
-    ns_m = re.search(r"^non_surface:\s*\n((?:[ \t]+-.+\n?)+)", text, re.M)
-    if ns_m:
-        non_surface = re.findall(r"-\s+(\S+)", ns_m.group(1))
-
-    standards: list[Standard] = []
-    # Split on top-level list entries under standards:
-    body_m = re.search(r"^standards:\s*\n([\s\S]*)", text, re.M)
-    if not body_m:
-        raise SystemExit("registry: missing standards: key")
-    body = body_m.group(1)
-    # Cut off non_surface if it appears after standards (shouldn't when ordered first)
-    if "\nnon_surface:" in body:
-        body = body.split("\nnon_surface:")[0]
-
-    chunks = re.split(r"\n  - name: ", body)
-    for i, chunk in enumerate(chunks):
-        chunk = chunk.strip("\n")
-        if not chunk.strip():
+def _entries(lines: list[str]) -> list[tuple[str, dict[str, list[str]]]]:
+    """The `- name:` entries of a list block, each as its name and its fields. A field starts
+    at `key:` four spaces in, and the lines under it — a list or a folded scalar — are its."""
+    entries: list[tuple[str, dict[str, list[str]]]] = []
+    fields: dict[str, list[str]] | None = None
+    key: str | None = None
+    for line in lines:
+        m = re.match(r"  - name:\s*(.*)$", line)
+        if m:
+            fields, key = {}, None
+            entries.append((m.group(1).strip(), fields))
             continue
-        # Split drops the delimiter; the first chunk still starts with "  - name: ".
-        if i == 0:
-            m = re.match(r"\s*- name:\s*", chunk)
-            if not m:
-                continue
-            chunk = chunk[m.end() :]
-        name_line, _, rest = chunk.partition("\n")
-        name = name_line.strip()
-        url_m = re.search(r"^\s+url:\s+(\S+)\s*$", rest, re.M)
-        url = url_m.group(1) if url_m else ""
-        verified_m = re.search(r"^\s+verified:\s+(\S+)\s*$", rest, re.M)
-        verified = verified_m.group(1) if verified_m else None
+        if fields is None:
+            continue
+        f = re.match(r"    ([a-z_]+):\s*(.*)$", line)
+        if f:
+            key = f.group(1)
+            fields[key] = [f.group(2)] if f.group(2) else []
+        elif key is not None:
+            fields[key].append(line)
+    return entries
+
+
+def _scalar(lines: list[str]) -> str:
+    return lines[0].strip() if lines else ""
+
+
+def _items(lines: list[str]) -> list[str]:
+    return [m.group(1) for line in lines if (m := re.match(r"\s*-\s+(\S+)", line))]
+
+
+def _folded(lines: list[str]) -> str:
+    """A `>-` block scalar: its lines joined by single spaces."""
+    return " ".join(l.strip() for l in lines if l.strip() and l.strip() != ">-")
+
+
+def _parse_registry(text: str) -> Registry:
+    """Parse the constrained registry schema. Not a general YAML parser."""
+    sections = _sections(text)
+    if "standards" not in sections:
+        raise SystemExit("registry: missing standards: key")
+    standards: list[Standard] = []
+    for name, fields in _entries(sections["standards"]):
+        verified = _scalar(fields.get("verified", [])) or None
         if verified in ("null", "~", "None"):
             verified = None
-
-        surface: list[str] = []
-        surf_m = re.search(r"^\s+surface:\s*\n((?:\s+-\s+\S+\n?)+)", rest, re.M)
-        if surf_m:
-            surface = re.findall(r"-\s+(\S+)", surf_m.group(1))
-
-        conf = ""
-        conf_m = re.search(r"^\s+conformance:\s*>-\s*\n((?:\s+.+\n?)+)", rest, re.M)
-        if conf_m:
-            conf = " ".join(
-                l.strip() for l in conf_m.group(1).splitlines() if l.strip()
-            )
-
         standards.append(
             Standard(
                 name=name,
-                url=url,
-                surface=surface,
+                url=_scalar(fields.get("url", [])),
+                surface=_items(fields.get("surface", [])),
                 verified=verified,
-                conformance=conf,
+                conformance=_folded(fields.get("conformance", [])),
             )
         )
-
     if not standards:
         raise SystemExit("registry: no standards parsed")
-    return Registry(rule=rule, standards=standards, non_surface=non_surface)
+    return Registry(
+        rule=_folded(sections.get("rule", [])),
+        standards=standards,
+        non_surface=_items(sections.get("non_surface", [])),
+    )
 
 
 def load() -> Registry:
     return _parse_registry(REGISTRY.read_text())
+
+
+def _rel(path: str) -> str:
+    """A path as the registry spells it: relative to the repository, forward slashes."""
+    try:
+        return str(Path(path).resolve().relative_to(ROOT))
+    except (ValueError, OSError):
+        return path.replace("\\", "/")
 
 
 def _path_matches(surface: str, path: str) -> bool:
@@ -170,12 +183,7 @@ def standards_for(reg: Registry, paths: list[str]) -> list[Standard]:
     hit: list[Standard] = []
     seen: set[str] = set()
     for p in paths:
-        p = p.replace("\\", "/")
-        # Allow repo-relative or absolute under ROOT
-        try:
-            rel = str(Path(p).resolve().relative_to(ROOT))
-        except Exception:
-            rel = p
+        rel = _rel(p.replace("\\", "/"))
         for std in reg.standards:
             if std.name in seen:
                 continue
@@ -186,12 +194,7 @@ def standards_for(reg: Registry, paths: list[str]) -> list[Standard]:
 
 
 def dimensions_for(paths: list[str], stds: list[Standard]) -> list[str]:
-    rels = []
-    for p in paths:
-        try:
-            rels.append(str(Path(p).resolve().relative_to(ROOT)))
-        except Exception:
-            rels.append(p.replace("\\", "/"))
+    rels = [_rel(p) for p in paths]
     if any(r in POSTURE_FILES or any(r.startswith(f[:-3]) for f in POSTURE_FILES) for r in rels):
         # posture surfaces: use the three independent auth dimensions
         dims = list(POSTURE_DIMENSIONS)
@@ -249,13 +252,6 @@ def emit_graph(reg: Registry, paths: list[str] | None) -> dict:
     stds = reg.standards
     if paths:
         stds = standards_for(reg, paths)
-        # include only surfaces that intersect paths
-        path_set = set()
-        for p in paths:
-            try:
-                path_set.add(str(Path(p).resolve().relative_to(ROOT)))
-            except Exception:
-                path_set.add(p)
 
     nodes = []
     edges = []
@@ -271,9 +267,6 @@ def emit_graph(reg: Registry, paths: list[str] | None) -> dict:
             }
         )
         for surf in s.surface:
-            if paths and not any(_path_matches(surf, p) for p in path_set):
-                # still emit the surface node if the standard was implicated
-                pass
             fid = f"file:{surf}"
             if not any(n["id"] == fid for n in nodes):
                 nodes.append({"id": fid, "kind": "surface", "path": surf})
