@@ -231,9 +231,11 @@ consent, log pinning, `--trust-proxy`, replay, and what the proofs actually cove
   purpose, so treat handles as secrets and rate-limit that route at whatever fronts the
   server. The full map is in
   [docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly).
-- **`FileLedgerHeadStore` is single-host.** The sharded ledger's reference backend uses an
-  exclusive `flock` per shard: correct multi-process exclusion on one host (Unix only), not
-  a distributed store. Multi-host deployments use the Postgres head store instead.
+- **`FileLedgerHeadStore` is single-host.** The sharded ledger's reference backend holds an
+  exclusive file lock per shard (`flock` on Unix, `LockFileEx` on Windows): multi-process
+  exclusion on one host, not a distributed store. Multi-host deployments use the Postgres
+  head store instead. On Windows its files are not written owner-only, and a rename is not
+  synced to its directory.
 - **The default build is not free of compiled native code.** No TLS, no OpenSSL, no cmake —
   but `cedar-policy` → `stacker` → `psm` compiles a small assembly routine through `cc`.
   The honest claim is "no TLS/OpenSSL/cmake in the default build," not "zero compiled

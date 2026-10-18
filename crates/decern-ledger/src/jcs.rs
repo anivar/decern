@@ -17,6 +17,10 @@
 //! `serde_json`'s RFC 8259 writer — minimal escapes, lowercase `\uXXXX` for other
 //! control chars, non-ASCII emitted as-is. NaN and Infinity, which §3.2.2.3 requires
 //! an implementation to reject, are not representable in a [`Value`] to begin with.
+//! Negative zero is representable: `serde_json` parses `-0` as `-0.0`, which serializes
+//! as `0`, as §3.2.2.3 prints it, so `-0` and `0` canonicalize and digest alike. RFC 8785
+//! erratum 7920 (verified) has a parser following the RFC raise an error on `-0`, as a
+//! SHOULD; nothing here does.
 //!
 //! The one place this is wider than a double-based implementation: an integer outside
 //! §3.2.2.3's interoperable range of ±(2^53−1) keeps every digit rather than rounding

@@ -23,8 +23,8 @@ fails [`deny.toml`](deny.toml).
 Two dependencies carry the guarantee, so neither may move without a deliberate change:
 
 ```toml
-cedar-policy      = "=4.11.2"   # the evaluator the kernel decides with
-cedar-policy-symcc = "=0.5.3"   # the symbolic compiler the proofs are discharged through
+cedar-policy      = "=4.13.0"   # the evaluator the kernel decides with
+cedar-policy-symcc = "=0.7.0"   # the symbolic compiler the proofs are discharged through
 ```
 
 `cedar-policy-symcc` is the more load-bearing of the two: it turns the model into the obligations

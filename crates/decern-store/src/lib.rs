@@ -15,8 +15,8 @@
 //!   single in-memory `ApprovedMission` handle.
 //!
 //! Both sit on the same durable substrate: [`StoreError`], atomic JSON writes
-//! (temp file, fsync, rename over the target) hardened to `0600`, a cross-process
-//! file-fingerprint coherent map, and flock-based write locks. The backends are
+//! (temp file, fsync, rename over the target) hardened to `0600` on Unix, a
+//! cross-process file-fingerprint coherent map, and exclusive file locks. The backends are
 //! pure Rust and need no database — sovereign and offline-servable. The optional
 //! multi-host Postgres head store lives in the separate `decern-store-postgres`
 //! crate.
@@ -397,10 +397,9 @@ fn atomic_write_json_impl(
         // KNOWN GAP, not silently accidental: `std::fs` has no portable ACL/owner-only
         // API, so this store's 0600-at-rest guarantee above is unix-only — a durable
         // store file (credential registry included) written from a non-unix build
-        // gets whatever default permissions the platform gives, unhardened. decern's own
-        // CI/release only build unix targets (linux-musl), so this is not reachable
-        // today, but it is a real, named gap should that ever change — mirroring the
-        // pre-existing `FileFingerprint`/`fingerprint_of` non-unix note elsewhere in
+        // gets whatever default permissions the platform gives, unhardened. The release
+        // ships a Windows binary, so the gap is live there — mirroring the
+        // `FileFingerprint`/`fingerprint_of` non-unix note elsewhere in
         // this file (a documented degrade, not the decern-crypto module's refuse-to-write
         // stance, since that would make the entire store layer non-functional on any
         // platform without permission bits, not just the key-file path).
@@ -418,7 +417,8 @@ fn atomic_write_json_impl(
         // is durable. Without this, `sync_all` on the temp file makes the *bytes*
         // durable but not the rename that publishes them: a crash after `rename`
         // returns can reboot to the OLD inode, silently losing a revocation we
-        // already reported as `Ok` — a resurrected killed credential.
+        // already reported as `Ok` — a resurrected killed credential. Skipped on
+        // non-unix targets, so there the rename is not made durable.
         #[cfg(unix)]
         {
             let parent = path
@@ -576,7 +576,7 @@ pub struct StoredRecord {
 ///   reintroduced by a too-narrow fix.
 ///
 /// [`with_shard`](LedgerHeadStore::with_shard) is therefore a held per-shard
-/// lock/transaction (a Postgres `SELECT ... FOR UPDATE` in the real backend),
+/// lock/transaction (`pg_advisory_xact_lock` in the Postgres backend),
 /// generalizing the single-process `Mutex<Ledger>` every `AppState.ledger`
 /// caller already holds today to work correctly across replicas. Hash+sign is
 /// sub-millisecond, so the lock's hold time is short regardless of caller.
@@ -585,7 +585,7 @@ pub struct StoredRecord {
 /// [`MemoryLedgerHeadStore`] here (fast, dependency-free tests, exercised by
 /// `decern-ledger`'s sharded-ledger test suite), and by
 /// [`FileLedgerHeadStore`] (a persistent **single-host, multi-process**
-/// reference: `flock`-held per-shard critical sections on one machine). The
+/// reference: file-lock-held per-shard critical sections on one machine). The
 /// original reasoning still holds and bounds each backend's scope: sharding
 /// exists to solve MULTI-*HOST* coordination, which a single sovereign node
 /// never needs — the existing single-file `Ledger` is untouched and remains
@@ -764,7 +764,7 @@ struct ShardState {
 /// reference backend for the sharded ledger on ONE machine.
 ///
 /// The whole point is the lock. [`with_shard`](FileLedgerHeadStore::with_shard)
-/// holds an **exclusive advisory file lock (`flock` `LOCK_EX`) on a per-shard
+/// holds an **exclusive file lock (`File::lock`) on a per-shard
 /// sidecar for the ENTIRE critical section** — acquire → read the shard's
 /// cursor+records FRESH from disk → run `f` → durably write → release. That
 /// gives cross-process exclusion on one host: two `decern-server` processes (or
@@ -774,11 +774,13 @@ struct ShardState {
 /// a last-writer-wins rename (two writers each read head=N, both write N+1, one
 /// silently clobbered → forked ledger — the exact failure this trait prevents).
 ///
-/// **Scope / honesty.** `flock` is host-local, so this backend is single-host
+/// **Scope / honesty.** The lock is host-local, so this backend is single-host
 /// multi-process. It is NOT a multi-*host* distributed store: a second machine's
-/// `flock` on its own filesystem does not see this one's. Multi-host coordination
-/// is the pluggable Postgres/etcd/Redis backend (a `SELECT … FOR UPDATE` per
-/// shard) behind this SAME trait — not shipped in v0.1. Unix only (`flock`).
+/// lock on its own filesystem does not see this one's. Multi-host coordination is
+/// `decern-store-postgres`, behind this same trait, which serializes a shard with
+/// `pg_advisory_xact_lock`. `File::lock` is `flock` on Unix and `LockFileEx` on
+/// Windows; CI exercises the exclusion, between two handles in one process, on
+/// Linux only.
 ///
 /// **On-disk layout** (all inside `root`, shard ids hex-encoded — see
 /// `shard_to_hex` — so an untrusted tenant id can never traverse out):

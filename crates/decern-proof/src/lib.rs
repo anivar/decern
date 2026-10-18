@@ -165,20 +165,19 @@ pub enum ProofError {
     Timeout(u64),
 }
 
-/// The default bound for [`prove_all`]: without it, a pathological model or a
-/// hung cvc5 process could tie up a prove-request worker indefinitely.
-/// Operator-overridable — see `decern serve --cvc5-timeout-secs`.
+/// The default `timeout` for [`prove_all`]; `decern prove --timeout` overrides it.
 pub const DEFAULT_PROVE_TIMEOUT_SECS: u64 = 120;
 
 /// Prove every invariant in the suite against `model`, bounded by `timeout`.
 /// `cvc5_path` overrides the CVC5 env var / PATH lookup.
 ///
-/// On timeout the proving future is dropped and this call returns promptly, so
-/// the caller's worker is freed — but the underlying cvc5 subprocess is NOT
-/// force-killed: `cedar-policy-symcc`'s `LocalSolver` spawns it without
-/// `kill_on_drop` and does not expose the child handle. The orphaned process
-/// keeps running until it exits or is reaped. The bound is on the worker, not
-/// the OS subprocess.
+/// On timeout the proving future is dropped and this call returns promptly, but
+/// the cvc5 subprocess is not killed from here: `cedar-policy-symcc`'s
+/// `LocalSolver` spawns it without `kill_on_drop` and does not expose the child
+/// handle. cvc5 bounds itself instead. Both solver paths pass `--tlimit=60000`, a
+/// wall-clock limit on the whole cvc5 process rather than on one query, and one
+/// solver serves the whole run, so a cvc5 left running by a timeout stops itself
+/// 60 seconds after it started.
 pub async fn prove_all(
     model: &Model,
     cvc5_path: Option<&Path>,
