@@ -56,7 +56,12 @@ pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
         .route("/access/v1/search/action", post(search_action))
         // Mission lifecycle. The read is guarded with the mutations: mission state is what a
         // PEP consults before honoring a grant, and the reference is a digest of fields an
-        // outsider may be able to guess — it is not a subject-side surface.
+        // outsider may be able to guess — it is not a subject-side surface. Guarded is not
+        // bound: every established caller may read any Mission, a workload bound to itself
+        // included, so a reference it can compute or obtain tells it who approved what and
+        // until when. The read stays open because binding it to the approver would refuse
+        // the agent a Mission authorizes; `a_self_only_workload_reads_a_mission_it_does_not_own`
+        // pins it, so binding it is a change of its own.
         .route("/mission/v1/approve", post(mission_approve))
         .route("/mission/v1/{s256}", get(mission_get))
         .route("/mission/v1/{s256}/terminate", post(mission_terminate))
@@ -189,17 +194,7 @@ mod tests {
 
         let base = mission_base();
         let (st, _pk) = mission_state_at(&base);
-        let mut agents = std::collections::BTreeMap::new();
-        agents.insert(
-            "agent-1".to_owned(),
-            SigningKey::from_bytes(&[9u8; 32]).verifying_key(),
-        );
-        let router = app(
-            st,
-            Arc::new(caller::Caller::Signed(Box::new(
-                crate::sig::SigConfig::new(agents, "https://pdp.example/"),
-            ))),
-        );
+        let router = signed_router(st, &SigningKey::from_bytes(&[9u8; 32]), false);
         let resp = router
             .oneshot(
                 Request::builder()
@@ -261,83 +256,20 @@ mod tests {
     /// `authenticate` cannot catch a middleware that never buffered it.
     #[tokio::test]
     async fn a_captured_signed_post_cannot_swap_its_body_through_the_guard() {
-        use axum::body::Body;
-        use axum::http::Request;
-        use base64::Engine as _;
-        use sha2::{Digest, Sha256};
         use tower::ServiceExt;
 
         let key = decern_crypto::generate().unwrap();
-        let vk = key.verifying_key();
         let base = mission_base();
         let (st, _pk) = mission_state_at(&base);
-        let mut agents = std::collections::BTreeMap::new();
-        agents.insert("agent-1".to_owned(), vk);
-        let router = app(
-            st,
-            Arc::new(caller::Caller::Signed(Box::new(crate::sig::SigConfig {
-                agents,
-                audience: "https://pdp.example/access/v1/evaluation".into(),
-                pep: std::collections::BTreeSet::new(),
-            }))),
-        );
+        let router = signed_router(st, &key, false);
 
         // Named as itself: a subject the caller is not allowed to speak as would 403
         // at admission, and this test is about the digest, not that check.
         let read = br#"{"subject":{"type":"Principal","id":"agent-1"},"action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"}}"#;
         let r#move = br#"{"subject":{"type":"Principal","id":"agent-1"},"action":{"name":"MoveMoney"},"resource":{"type":"Resource","id":"claim1"}}"#;
 
-        let token = {
-            use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-            let header = serde_json::json!({ "typ": "dpop-bound+jwt", "alg": "EdDSA" });
-            let claims = serde_json::json!({
-                "sub": "agent-1",
-                "iss": "https://agent-provider.example/",
-                "aud": "https://pdp.example/access/v1/evaluation",
-                "exp": 4_000_000_000u64,
-                "cnf": { "jwk": {
-                    "kty": "OKP", "crv": "Ed25519",
-                    "x": URL_SAFE_NO_PAD.encode(vk.to_bytes()),
-                }},
-            });
-            let h = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
-            let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
-            format!("{h}.{p}.unverified")
-        };
-        let created = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let digest = format!(
-            "sha-256=:{}:",
-            base64::engine::general_purpose::STANDARD.encode(Sha256::digest(read))
-        );
-        let components =
-            "\"@method\" \"@authority\" \"@path\" \"content-digest\" \"signature-key\"";
-        let input = format!("sig1=({components});created={created}");
-        let base_str = format!(
-            "\"@method\": POST\n\"@authority\": pdp.example\n\"@path\": /access/v1/evaluation\n\"content-digest\": {digest}\n\"signature-key\": {token}\n\"@signature-params\": ({components});created={created}"
-        );
-        use ed25519_dalek::Signer as _;
-        let sig = format!(
-            "sig1=:{}:",
-            base64::engine::general_purpose::STANDARD
-                .encode(key.sign(base_str.as_bytes()).to_bytes())
-        );
-
-        let signed = |body: &'static [u8]| {
-            Request::builder()
-                .method("POST")
-                .uri("/access/v1/evaluation")
-                .header("host", "pdp.example")
-                .header("content-type", "application/json")
-                .header("signature-key", token.as_str())
-                .header("signature-input", input.as_str())
-                .header("signature", sig.as_str())
-                .header("content-digest", digest.as_str())
-                .body(Body::from(body))
-                .unwrap()
-        };
+        let headers = signed_headers(&key, "POST", "/access/v1/evaluation", read);
+        let signed = |body: &[u8]| request_with("POST", "/access/v1/evaluation", &headers, body);
 
         let ok = router.clone().oneshot(signed(read)).await.unwrap();
         assert_eq!(
@@ -549,6 +481,128 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// The Mission read answers every caller the guard admits. A workload bound to itself
+    /// reads a Mission approved by someone else and learns its approver, state and expiry.
+    #[tokio::test]
+    async fn a_self_only_workload_reads_a_mission_it_does_not_own() {
+        use tower::ServiceExt;
+
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                None,
+                Json(approve_req(&["read"], corp_expiry())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+
+        // agent-1 is not in --pep, so the guard admits it bound to itself.
+        let key = SigningKey::from_bytes(&[12u8; 32]);
+        let router = signed_router(st, &key, false);
+        let path = format!("/mission/v1/{s256}");
+        let req = request_with("GET", &path, &signed_headers(&key, "GET", &path, b""), b"");
+        let (status, body) = body_json(router.oneshot(req).await.unwrap()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["reference"]["approver"], "corp", "{body}");
+        assert_eq!(body["state"], "active", "{body}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The audience every signed-request router test configures and signs for.
+    const SIGNED_AUD: &str = "https://pdp.example/access/v1/evaluation";
+
+    /// A router under the signed-request posture with `agent-1` pinned to `key`, listed in
+    /// `--pep` or bound to itself.
+    fn signed_router(st: AppState, key: &SigningKey, pep: bool) -> axum::Router {
+        let mut agents = std::collections::BTreeMap::new();
+        agents.insert("agent-1".to_owned(), key.verifying_key());
+        let mut cfg = crate::sig::SigConfig::new(agents, SIGNED_AUD);
+        if pep {
+            cfg.pep.insert("agent-1".into());
+        }
+        app(st, Arc::new(caller::Caller::Signed(Box::new(cfg))))
+    }
+
+    /// Headers for a request `agent-1` signs with `key`. The RFC 9421 signature base is
+    /// written out here rather than built with `sig::signature_base`, so these tests check
+    /// the base the guard verifies against a rendering of it that shares no code with it.
+    fn signed_headers(
+        key: &SigningKey,
+        method: &str,
+        path: &str,
+        body: &[u8],
+    ) -> Vec<(&'static str, String)> {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+        use ed25519_dalek::Signer as _;
+        use sha2::{Digest, Sha256};
+
+        let header = json!({ "typ": "dpop-bound+jwt", "alg": "EdDSA" });
+        let claims = json!({
+            "sub": "agent-1",
+            "iss": "https://agent-provider.example/",
+            "aud": SIGNED_AUD,
+            "exp": 4_000_000_000u64,
+            "cnf": { "jwk": {
+                "kty": "OKP", "crv": "Ed25519",
+                "x": URL_SAFE_NO_PAD.encode(key.verifying_key().to_bytes()),
+            }},
+        });
+        // The token's own JWS signature is not verified by this posture, so a
+        // placeholder third segment is a valid fixture.
+        let token = format!(
+            "{}.{}.unverified",
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap()),
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap()),
+        );
+        let created = now_secs();
+        let mut headers = vec![("host", "pdp.example".to_owned())];
+        // A POST also covers its body's digest; a GET has no body that is an input.
+        let (components, digest_line) = if method == "POST" {
+            let digest = format!("sha-256=:{}:", STANDARD.encode(Sha256::digest(body)));
+            headers.push(("content-type", "application/json".to_owned()));
+            headers.push(("content-digest", digest.clone()));
+            (
+                "\"@method\" \"@authority\" \"@path\" \"content-digest\" \"signature-key\"",
+                format!("\"content-digest\": {digest}\n"),
+            )
+        } else {
+            (
+                "\"@method\" \"@authority\" \"@path\" \"signature-key\"",
+                String::new(),
+            )
+        };
+        let base = format!(
+            "\"@method\": {method}\n\"@authority\": pdp.example\n\"@path\": {path}\n{digest_line}\"signature-key\": {token}\n\"@signature-params\": ({components});created={created}"
+        );
+        let sig = STANDARD.encode(key.sign(base.as_bytes()).to_bytes());
+        headers.push(("signature-key", token));
+        headers.push((
+            "signature-input",
+            format!("sig1=({components});created={created}"),
+        ));
+        headers.push(("signature", format!("sig1=:{sig}:")));
+        headers
+    }
+
+    fn request_with(
+        method: &str,
+        path: &str,
+        headers: &[(&'static str, String)],
+        body: &[u8],
+    ) -> axum::http::Request<axum::body::Body> {
+        let mut req = axum::http::Request::builder().method(method).uri(path);
+        for (name, value) in headers {
+            req = req.header(*name, value);
+        }
+        req.body(axum::body::Body::from(body.to_vec())).unwrap()
+    }
+
     fn signed_eval_request(
         subject: &str,
         pep: bool,
@@ -557,72 +611,15 @@ mod tests {
         axum::http::Request<axum::body::Body>,
         std::path::PathBuf,
     ) {
-        use axum::body::Body;
-        use axum::http::Request;
-        use base64::Engine as _;
-        use ed25519_dalek::Signer as _;
-        use sha2::{Digest, Sha256};
-
         let key = SigningKey::from_bytes(&[11u8; 32]);
-        let vk = key.verifying_key();
         let base = mission_base();
         let (st, _pk) = mission_state_at(&base);
-        let mut agents = std::collections::BTreeMap::new();
-        agents.insert("agent-1".to_owned(), vk);
-        let mut cfg =
-            crate::sig::SigConfig::new(agents, "https://pdp.example/access/v1/evaluation");
-        if pep {
-            cfg.pep.insert("agent-1".into());
-        }
-        let router = app(st, Arc::new(caller::Caller::Signed(Box::new(cfg))));
+        let router = signed_router(st, &key, pep);
         let body = format!(
             r#"{{"subject":{{"type":"Principal","id":"{subject}"}},"action":{{"name":"Read"}},"resource":{{"type":"Resource","id":"claim1"}}}}"#
         );
-        let token = {
-            use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-            let header = serde_json::json!({ "typ": "dpop-bound+jwt", "alg": "EdDSA" });
-            let claims = serde_json::json!({
-                "sub": "agent-1",
-                "iss": "https://agent-provider.example/",
-                "aud": "https://pdp.example/access/v1/evaluation",
-                "exp": 4_000_000_000u64,
-                "cnf": { "jwk": {
-                    "kty": "OKP", "crv": "Ed25519",
-                    "x": URL_SAFE_NO_PAD.encode(vk.to_bytes()),
-                }},
-            });
-            let h = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
-            let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
-            format!("{h}.{p}.unverified")
-        };
-        let created = now_secs();
-        // Cover this body's digest, or the guard 401s before admission can 403.
-        let digest = format!(
-            "sha-256=:{}:",
-            base64::engine::general_purpose::STANDARD.encode(Sha256::digest(body.as_bytes()))
-        );
-        let components =
-            "\"@method\" \"@authority\" \"@path\" \"content-digest\" \"signature-key\"";
-        let input = format!("sig1=({components});created={created}");
-        let base_str = format!(
-            "\"@method\": POST\n\"@authority\": pdp.example\n\"@path\": /access/v1/evaluation\n\"content-digest\": {digest}\n\"signature-key\": {token}\n\"@signature-params\": ({components});created={created}"
-        );
-        let sig = format!(
-            "sig1=:{}:",
-            base64::engine::general_purpose::STANDARD
-                .encode(key.sign(base_str.as_bytes()).to_bytes())
-        );
-        let req = Request::builder()
-            .method("POST")
-            .uri("/access/v1/evaluation")
-            .header("host", "pdp.example")
-            .header("content-type", "application/json")
-            .header("signature-key", token)
-            .header("signature-input", input)
-            .header("signature", sig)
-            .header("content-digest", digest)
-            .body(Body::from(body))
-            .unwrap();
+        let headers = signed_headers(&key, "POST", "/access/v1/evaluation", body.as_bytes());
+        let req = request_with("POST", "/access/v1/evaluation", &headers, body.as_bytes());
         (router, req, base)
     }
 
