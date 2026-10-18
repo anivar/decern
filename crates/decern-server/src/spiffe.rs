@@ -51,14 +51,11 @@ use p256::ecdsa::{Signature, VerifyingKey};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::caller::{Authenticated, CallerAuth, Denied};
+use crate::caller::{Authenticated, CallerAuth, Denied, MAX_ECHO, printable};
 
 /// Mirrors the ceiling the other two postures apply, for the same reason: an oversized
 /// credential costs its sender a length comparison, not this server an allocation.
 const MAX_TOKEN_BYTES: usize = 8192;
-
-/// How much of an attacker-chosen string may be echoed back in an error.
-const MAX_ECHO: usize = 64;
 
 /// The one algorithm this deployment accepts. See the module note on why the rest of
 /// JWT-SVID §2.1's table is refused rather than supported.
@@ -133,21 +130,21 @@ pub(crate) fn load_bundle(raw: &str) -> Result<Vec<BundleKey>, String> {
             .filter(|k| !k.is_empty())
             .ok_or_else(|| "a jwt-svid bundle entry has no kid (§6.1 requires one)".to_owned())?;
         if !seen.insert(kid.clone()) {
-            return Err(format!("bundle repeats kid {}", brief(&kid)));
+            return Err(format!("bundle repeats kid {}", printable(&kid)));
         }
         if jwk.kty != "EC" || jwk.crv.as_deref() != Some("P-256") {
             return Err(format!(
                 "bundle entry {} is {}/{}, and this deployment verifies {ACCEPTED_ALG} only",
-                brief(&kid),
-                brief(&jwk.kty),
-                brief(jwk.crv.as_deref().unwrap_or("-")),
+                printable(&kid),
+                printable(&jwk.kty),
+                printable(jwk.crv.as_deref().unwrap_or("-")),
             ));
         }
         let (Some(x), Some(y)) = (jwk.x.as_deref(), jwk.y.as_deref()) else {
-            return Err(format!("bundle entry {} carries no x/y", brief(&kid)));
+            return Err(format!("bundle entry {} carries no x/y", printable(&kid)));
         };
         keys.push(BundleKey {
-            key: p256_key(x, y).map_err(|e| format!("bundle entry {}: {e}", brief(&kid)))?,
+            key: p256_key(x, y).map_err(|e| format!("bundle entry {}: {e}", printable(&kid)))?,
             kid,
         });
     }
@@ -284,7 +281,7 @@ pub(crate) fn authenticate(
     {
         return Err(Denied::Invalid(format!(
             "JOSE header {} is not permitted in a JWT-SVID",
-            brief(unknown)
+            printable(unknown)
         )));
     }
     // §2.3: optional, but if set it is `JWT` or `JOSE`. Notably never `at+jwt` — this is
@@ -295,7 +292,7 @@ pub(crate) fn authenticate(
         Some(other) => {
             return Err(Denied::Invalid(format!(
                 "token type {} is not a JWT-SVID type",
-                brief(other)
+                printable(other)
             )));
         }
     }
@@ -304,7 +301,7 @@ pub(crate) fn authenticate(
         Some(other) => {
             return Err(Denied::Invalid(format!(
                 "algorithm {} is not accepted here; this deployment verifies {ACCEPTED_ALG} only",
-                brief(other)
+                printable(other)
             )));
         }
         None => return Err(Denied::Invalid("token names no algorithm".into())),
@@ -323,7 +320,7 @@ pub(crate) fn authenticate(
         .ok_or_else(|| {
             Denied::Invalid(format!(
                 "sub {} is not a SPIFFE ID naming a workload",
-                brief(&subject)
+                printable(&subject)
             ))
         })?
         .to_owned();
@@ -333,7 +330,7 @@ pub(crate) fn authenticate(
     let bundle = cfg.trust_domains.get(&domain).ok_or_else(|| {
         Denied::Invalid(format!(
             "trust domain {} is not configured here",
-            brief(&domain)
+            printable(&domain)
         ))
     })?;
 
@@ -349,8 +346,8 @@ pub(crate) fn authenticate(
             .ok_or_else(|| {
                 Denied::Invalid(format!(
                     "no key {} in the bundle for {}",
-                    brief(kid),
-                    brief(&domain)
+                    printable(kid),
+                    printable(&domain)
                 ))
             })?,
         None if bundle.len() == 1 => &bundle[0].key,
@@ -384,7 +381,7 @@ pub(crate) fn authenticate(
         ));
     }
 
-    if !audience_contains(claims.get("aud"), &cfg.audience) {
+    if !crate::jose::audience_contains(claims.get("aud"), &cfg.audience) {
         return Err(Denied::Invalid(
             "token was not issued for this server as audience".into(),
         ));
@@ -427,21 +424,6 @@ pub(crate) fn authenticate(
     } else {
         who.self_only()
     })
-}
-
-fn audience_contains(aud: Option<&Value>, want: &str) -> bool {
-    match aud {
-        Some(Value::String(s)) => s == want,
-        Some(Value::Array(xs)) => xs.iter().any(|x| x.as_str() == Some(want)),
-        _ => false,
-    }
-}
-
-fn brief(s: &str) -> String {
-    s.chars()
-        .filter(|c| matches!(c, ' '..='~'))
-        .take(MAX_ECHO)
-        .collect()
 }
 
 /// Strip what would break out of a quoted-string in a header value (RFC 7235 §3.1).

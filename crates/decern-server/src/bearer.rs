@@ -32,17 +32,12 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::caller::{Authenticated, CallerAuth, Denied};
+use crate::caller::{Authenticated, CallerAuth, Denied, printable};
 
 /// A compact JWS three parts of which each fit in an HTTP header has no business being
 /// larger. Enforced before anything is decoded, so an oversized token costs its sender a
 /// length comparison, not this server an allocation.
 const MAX_TOKEN_BYTES: usize = 8192;
-
-/// How much of an attacker-chosen string may be echoed back in an error. Enough to
-/// recognise a misconfigured issuer or algorithm name; not enough to use the error
-/// channel as a reflector.
-const MAX_ECHO: usize = 64;
 
 pub(crate) struct Config {
     /// The `iss` a token must carry, matched exactly. §4 requires an exact match, not a
@@ -133,8 +128,9 @@ impl Denied {
 /// A value fit for an RFC 6750 quoted-string: printable ASCII only (control characters are
 /// dropped — a stray one would make the whole header unparseable and it would be silently
 /// omitted), `"` and `\` escaped as quoted-pairs rather than dropped. Bounded loosely: what
-/// arrives here is this module's own sentences, whose attacker-chosen fragments [`brief`]
-/// already cut to [`MAX_ECHO`] — the bound is a backstop, sized not to cut a sentence.
+/// arrives here is this module's own sentences, whose attacker-chosen fragments
+/// [`printable`] already cut to [`MAX_ECHO`](crate::caller::MAX_ECHO) — the bound is a
+/// backstop, sized not to cut a sentence.
 fn quoted(s: &str) -> String {
     let mut out = String::new();
     for c in s.chars().filter(|c| matches!(c, ' '..='~')).take(256) {
@@ -144,14 +140,6 @@ fn quoted(s: &str) -> String {
         out.push(c);
     }
     out
-}
-
-/// An attacker-chosen string as an error may echo it: printable, bounded.
-fn brief(s: &str) -> String {
-    s.chars()
-        .filter(|c| matches!(c, ' '..='~'))
-        .take(MAX_ECHO)
-        .collect()
 }
 
 #[derive(Deserialize)]
@@ -179,7 +167,7 @@ fn bearer_token(header: Option<&str>) -> Result<&str, Denied> {
     if !scheme.eq_ignore_ascii_case("Bearer") {
         return Err(Denied::Invalid(format!(
             "authorization scheme {} is not accepted here",
-            brief(scheme)
+            printable(scheme)
         )));
     }
     let token = token.trim();
@@ -231,7 +219,7 @@ pub(crate) fn authenticate(
         Some(other) => {
             return Err(Denied::Invalid(format!(
                 "token type {} is not an access token",
-                brief(other)
+                printable(other)
             )));
         }
         None => return Err(Denied::Invalid("token names no type".into())),
@@ -243,7 +231,7 @@ pub(crate) fn authenticate(
         Some(other) => {
             return Err(Denied::Invalid(format!(
                 "algorithm {} is not accepted here",
-                brief(other)
+                printable(other)
             )));
         }
         None => return Err(Denied::Invalid("token names no algorithm".into())),
@@ -262,12 +250,12 @@ pub(crate) fn authenticate(
     if iss != cfg.issuer {
         return Err(Denied::Invalid(format!(
             "issuer {} is not the configured issuer",
-            brief(&iss)
+            printable(&iss)
         )));
     }
 
     // 4. aud — RFC 8707 §2. Accepts the string or array form JWT allows.
-    if !audience_contains(claims.get("aud"), &cfg.audience) {
+    if !crate::jose::audience_contains(claims.get("aud"), &cfg.audience) {
         return Err(Denied::Invalid(
             "token was not issued for this server as audience".into(),
         ));
@@ -338,14 +326,6 @@ pub(crate) fn authenticate(
 /// `aud` is a string or an array of strings (RFC 7519 §4.1.3). Compared exactly: a resource
 /// identifier is a URI, and treating a prefix as a match is how one service ends up accepting
 /// another's tokens.
-fn audience_contains(aud: Option<&Value>, want: &str) -> bool {
-    match aud {
-        Some(Value::String(s)) => s == want,
-        Some(Value::Array(xs)) => xs.iter().any(|x| x.as_str() == Some(want)),
-        _ => false,
-    }
-}
-
 fn string_claim(claims: &BTreeMap<String, Value>, name: &str) -> Result<String, Denied> {
     claims
         .get(name)

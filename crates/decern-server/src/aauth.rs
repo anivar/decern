@@ -46,15 +46,12 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::caller::{Authenticated, CallerAuth, Denied};
+use crate::caller::{Authenticated, CallerAuth, Denied, brief};
 use crate::sig;
 
 /// Mirrors the ceiling every other posture applies: an oversized credential costs its sender
 /// a length comparison, not this server an allocation.
 const MAX_TOKEN_BYTES: usize = 8192;
-
-/// How much of an attacker-chosen string may be echoed back in an error.
-const MAX_ECHO: usize = 64;
 
 /// Draft -11 §5.3.1: an agent token SHOULD NOT have a lifetime above 24 hours. The draft
 /// leaves the bound to the verifier's policy; this deployment refuses a token that claims
@@ -520,17 +517,6 @@ pub(crate) fn authenticate(
     } else {
         who.self_only()
     })
-}
-
-/// Bounded by characters, never bytes: the string is attacker-chosen, and a byte bound that
-/// cut a multi-byte character would turn a refusal into a downed request.
-fn brief(s: &str) -> String {
-    let kept: Vec<char> = s.trim().chars().filter(|c| !c.is_control()).collect();
-    let mut out: String = kept.iter().take(MAX_ECHO).collect();
-    if kept.len() > MAX_ECHO {
-        out.push('…');
-    }
-    out
 }
 
 #[cfg(test)]

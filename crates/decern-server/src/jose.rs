@@ -26,6 +26,16 @@ pub(crate) fn decode_json<T: for<'de> Deserialize<'de>>(
     serde_json::from_slice(&bytes).map_err(|_| format!("{what} is not JSON"))
 }
 
+/// RFC 7519 §4.1.3: `aud` is one string or an array of them, and a recipient that does not
+/// find itself among them rejects the token. Matched exactly, never as a prefix.
+pub(crate) fn audience_contains(aud: Option<&Value>, want: &str) -> bool {
+    match aud {
+        Some(Value::String(s)) => s == want,
+        Some(Value::Array(xs)) => xs.iter().any(|x| x.as_str() == Some(want)),
+        _ => false,
+    }
+}
+
 /// Refuse a header that names `crit`. RFC 7515 §4.1.11: the extensions it lists MUST be
 /// understood and processed, and a JWS naming one the recipient does not understand is
 /// invalid. A reader calling this implements none, so any `crit` is refused; §4.1.11 also
@@ -96,6 +106,26 @@ mod tests {
             alg: Option<String>,
         }
         assert!(decode_json::<Header>(&dup, "token header").is_err());
+    }
+
+    #[test]
+    fn the_audience_is_one_string_or_an_array_and_matches_exactly() {
+        let want = "https://pdp.example/";
+        assert!(audience_contains(Some(&json!(want)), want));
+        assert!(audience_contains(
+            Some(&json!(["https://other.example/", want])),
+            want
+        ));
+        assert!(!audience_contains(
+            Some(&json!("https://pdp.example/x")),
+            want
+        ));
+        assert!(!audience_contains(
+            Some(&json!("https://pdp.example")),
+            want
+        ));
+        assert!(!audience_contains(Some(&json!([1, null])), want));
+        assert!(!audience_contains(None, want));
     }
 
     #[test]
