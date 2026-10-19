@@ -9,10 +9,10 @@ one of these rules fails the build rather than being noticed later.
 
 ## What is allowed
 
-**Licences.** Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, Unicode-3.0,
-Unicode-DFS-2016, CC0-1.0, and MPL-2.0. MPL is file-level copyleft and acceptable while the
-MPL-licensed files are used unmodified; modifying one obliges publishing that file. Anything else
-fails [`deny.toml`](deny.toml).
+**Licences.** Apache-2.0, Apache-2.0 WITH LLVM-exception, MIT, BSD-2-Clause, BSD-3-Clause, ISC,
+Zlib, Unicode-3.0, Unicode-DFS-2016, CC0-1.0, and MPL-2.0. MPL is file-level copyleft and
+acceptable while the MPL-licensed files are used unmodified; modifying one obliges publishing
+that file. Anything else fails [`deny.toml`](deny.toml).
 
 **Sources.** crates.io only. No git dependencies, no alternative registries.
 
@@ -31,9 +31,10 @@ cedar-policy-symcc = "=0.7.0"   # the symbolic compiler the proofs are discharge
 cvc5 discharges. A patch release of it could change what gets proved, so it is pinned as tightly
 as the evaluator.
 
-**cvc5** is not a Cargo dependency. It is an external solver invoked by `decern prove`, developed
-against 1.3.1, and `decern prove` fails closed when it is absent rather than reporting a success
-it did not establish.
+**cvc5** is not a Cargo dependency. It is an external solver invoked by `decern prove`; CI runs
+the proofs against the release `CVC5_TAG` names in [`ci.yml`](.github/workflows/ci.yml), and
+`decern prove` fails closed when it is absent rather than reporting a success it did not
+establish.
 
 The Rust toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml).
 

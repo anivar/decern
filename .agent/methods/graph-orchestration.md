@@ -41,18 +41,17 @@ same branch name with different contents.
 
 ## Verify what was claimed, not what was run
 
-A gate is only worth what it actually exercises. Three failures from this repo, each caught after a
-green report:
+A gate is only worth what it actually exercises, and a green report says nothing about the rest:
 
-- A traversal documented as breadth-first was implemented depth-first. Its two tests used a linear
-  chain, where both orders produce the same answer, so neither test could fail. **A test that cannot
-  distinguish the bug from the fix is not coverage.** The replacement uses a branching tree, where
-  the orders differ.
-- A route registered with an outdated path syntax compiled cleanly and panicked when the router was
-  built. The report said "builds successfully", and it did. **Building is not running.** The
-  endpoint is now driven through the router in a test.
-- An explanation printed `not checked (verified)` for a signature it had not checked. Every test
-  passed, because none asserted on that line. **Output nobody asserts on is not tested.**
+- If a traversal documented as breadth-first is implemented depth-first and its tests use a
+  linear chain, both orders produce the same answer, so neither test can fail. **A test that
+  cannot distinguish the bug from the fix is not coverage.** Test on a branching tree, where the
+  orders differ.
+- A route registered with an outdated path syntax can compile cleanly and panic when the router
+  is built, while the report says "builds successfully", which it does. **Building is not
+  running.** Drive the endpoint through the router in a test.
+- An explanation can print `not checked (verified)` for a signature it did not check while every
+  test passes, because none asserts on that line. **Output nobody asserts on is not tested.**
 
 Write the failing test first, and prove it fails for the stated reason before trusting it green. A
 negative control — an equivalent input the check must reject — is what turns a passing test into

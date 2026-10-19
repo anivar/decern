@@ -102,7 +102,7 @@ Every decision lands in an append-only, Ed25519-signed, hash-chained ledger, and
 **only if its record was written** — an unrecordable decision returns 503, never a bare
 allow. A crash-torn tail heals; truncating committed history is detected.
 
-<p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: one of four postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p>
+<p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: one of five postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p>
 
 Here a caller in one tenant is refused a `Read` on another's resource — the tenant-isolation
 forbid fires by name, the `sponsor` resolves to the principal ultimately answerable, the exact
@@ -164,10 +164,17 @@ read from its running configuration so the claim cannot drift from the binary.
 ## Missions
 
 `decern-serve` also serves a **Mission lifecycle**: an approver grants an agent a scoped,
-fail-closed-attenuated authorization context — "these tools, until this time." A Mission
+fail-closed-attenuated authorization context — "these scopes, until this time." A Mission
 exceeding what its approver holds is refused; every accepted transition is recorded before
-it is reported; a terminated Mission never revives. The registry is durable and local —
-sovereign, consulted in-perimeter, no phone-home.
+it is reported; a terminated Mission never revives on the host that terminated it. The
+registry is a durable local file, consulted in-perimeter with no phone-home, so under
+`--sharded postgres://…` each replica has its own. A Mission binds only the built-in actions
+`Read`, `MoveMoney` and `AccessPII`; under a Mission any other action is denied. The approver
+is not checked to differ from the agent.
+
+decern records an approval it is given and holds decisions to it; it does not render one. The
+approval screen, the consent record and the tokens belong outside decern, and the enforcement
+point calls `/mission/v1/approve` once they exist (see the ROADMAP non-goals).
 
 ```
 POST /mission/v1/approve            {approver, agent, description, approved_tools, capabilities?, expiry}
@@ -178,19 +185,20 @@ POST /mission/v1/{s256}/terminate   -> {reference, state: terminated}
 ## Deployment
 
 `decern-serve` refuses to start unless told how its callers are established, and naming two
-postures is also a startup failure. It validates RFC 9068 bearer tokens (`--bearer-issuer`),
-RFC 9421 signed requests (`--signed-agent-key`) or SPIFFE JWT-SVIDs
-(`--spiffe-trust-domain`) itself — all against keys configured at startup, never fetched —
-or `--trust-proxy` states that something in front already authenticates them. The two
-workload postures additionally bind a caller to the principals it may name. Which routes are
-guarded, which stay open on purpose, and why is in [docs/CLI.md](docs/CLI.md)'s
-trust-boundary section.
+postures is also a startup failure. It validates RFC 9068 bearer tokens (`--bearer-issuer`), RFC
+9421 signed requests (`--signed-agent-key`), SPIFFE JWT-SVIDs (`--spiffe-trust-domain`) or AAuth
+agent tokens (`--aauth-provider`) itself — all against keys configured at startup, never fetched
+— or `--trust-proxy` states that something in front already authenticates them. The three
+workload postures (signed request, SPIFFE, AAuth) additionally bind a caller to the principals
+it may name. Which routes are guarded, which stay open on purpose, and why is in
+[docs/CLI.md](docs/CLI.md)'s trust-boundary section.
 
-Four worked examples ship, all runnable and CI-tested and none published as crates:
+Five worked examples ship, all runnable and CI-tested and none published as crates:
 [`mcp/`](examples/mcp/) consults decern before every tool call,
 [`ext_authz_adapter/`](examples/ext_authz_adapter/) puts it behind NGINX, Traefik or Envoy,
-and [`signed-request/`](examples/signed-request/) and [`spiffe/`](examples/spiffe/) each run
-a workload posture end to end, minting their own credentials.
+and [`signed-request/`](examples/signed-request/), [`spiffe/`](examples/spiffe/) and
+[`aauth/`](examples/aauth/) each run a workload posture end to end, minting their own
+credentials.
 
 The HTTP surface is AuthZEN 1.0's: single and batch evaluation, subject, resource and
 action search, and discovery. The certification scenario's Basic, Batch and Search levels
@@ -207,15 +215,17 @@ through `properties`.
 
 `--sharded <dir>` replaces the single file with a per-tenant sharded ledger several
 processes on one host extend safely (`flock` head store); `--sharded postgres://…` does the
-same across hosts (`--features postgres` — the one optional TLS dependency). Audit either
-with `decern verify --sharded`.
+same across hosts (`--features postgres` — the one optional TLS dependency, not built into
+the release binaries). Audit either with `decern verify --sharded`. What a deployment has to
+supply around the server — TLS, key rollover, logging, retention, high availability — is in
+[docs/CLI.md](docs/CLI.md#what-a-deployment-supplies).
 
 ## Architecture
 
 Two binaries over seven small crates: a proven decision core, an SMT proof harness, a
 tamper-evident ledger, and pure-Rust persistence and primitives.
 
-<p align="center"><img src="docs/img/architecture.png" alt="decern architecture: decern and decern-serve (four postures) over the kernel, identity, proof, ledger, store, and crypto crates" width="860"></p>
+<p align="center"><img src="docs/img/architecture.png" alt="decern architecture: decern and decern-serve (five postures) over the kernel, identity, proof, ledger, store, and crypto crates" width="860"></p>
 
 ## Known limitations
 
@@ -231,11 +241,25 @@ consent, log pinning, `--trust-proxy`, replay, and what the proofs actually cove
   purpose, so treat handles as secrets and rate-limit that route at whatever fronts the
   server. The full map is in
   [docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly).
+- **Bearer validation verifies `EdDSA` tokens only.** An identity provider that signs access
+  tokens `RS256` cannot authenticate to `decern-serve` directly; RSA support needs
+  a crate the supply-chain gate refuses. Put the provider in front, and authenticate the
+  enforcement point to decern with its own credential
+  ([docs/CLI.md](docs/CLI.md#pairing-with-an-identity-provider)).
+- **No key, bundle or key set reloads without a restart, and the server logs nothing after
+  startup.** It also speaks plain HTTP. See
+  [what a deployment supplies](docs/CLI.md#what-a-deployment-supplies).
 - **`FileLedgerHeadStore` is single-host.** The sharded ledger's reference backend holds an
   exclusive file lock per shard (`flock` on Unix, `LockFileEx` on Windows): multi-process
   exclusion on one host, not a distributed store. Multi-host deployments use the Postgres
   head store instead. On Windows its files are not written owner-only, and a rename is not
   synced to its directory.
+- **The AAuth posture does not yet meet draft-hardt-oauth-aauth-protocol-11.** It covers agent
+  identity access only, and an agent built to -11 is refused: the posture requires the agent
+  token's `alg` to be `EdDSA`, which -11 replaces with `Ed25519`, and it takes the token from
+  the `Signature-Key` member labelled `sig` while verifying the signature labelled `sig1`. The
+  drafts pair the two by label, so no conformant agent satisfies both. The [standards
+  registry](.agent/standards/registry.yaml) lists each gap.
 - **The default build is not free of compiled native code.** No TLS, no OpenSSL, no cmake —
   but `cedar-policy` → `stacker` → `psm` compiles a small assembly routine through `cc`.
   The honest claim is "no TLS/OpenSSL/cmake in the default build," not "zero compiled

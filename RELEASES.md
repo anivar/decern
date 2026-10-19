@@ -10,19 +10,21 @@ archives the source for citation, and writes the release notes from `CHANGELOG.m
    [`changelog.d/`](changelog.d/README.md); fold them into a dated section and delete them:
 
    ```sh
-   ./scripts/changelog.sh --release 0.3.0
+   ./scripts/changelog.sh --release X.Y.Z
    ```
 
    Read the result. Assembly is mechanical, and ordering inside a section is only alphabetical
    by filename.
 
 2. **Set the version** in `Cargo.toml` (workspace and the inter-crate pins),
-   `sdks/python/pyproject.toml`, `sdks/typescript/package.json` and its
-   `package-lock.json` (both `version` fields — the lockfile has been missed before),
-   and `examples/ext_authz_adapter/Cargo.toml`, which sits outside the workspace so the
-   workspace version does not reach it. The website's at-a-glance version badge
-   (`docs/index.html`) is hand-maintained — bump it in the same commit. All of them must equal the tag, or the publish
-   workflow stops before touching a registry.
+   `sdks/python/pyproject.toml`, `sdks/typescript/package.json` and both `version` fields of its
+   `package-lock.json`, `examples/ext_authz_adapter/Cargo.toml` (outside the workspace, so the
+   workspace version does not reach it), and the website's at-a-glance version badge in
+   `docs/index.html`. `publish-crates.yml` stops before crates.io when `Cargo.toml`, an
+   inter-crate pin or the `CHANGELOG.md` section disagrees with the tag; `publish-sdks.yml`
+   stops before PyPI and npm when `pyproject.toml` or `package.json` does. Neither checks the
+   other's files, so one mismatch can still leave the other registries published. Nothing checks
+   the lockfile, the example or the badge; they are on whoever cuts the release.
 
 3. **Verify**, with no flags, so the proofs run:
 
@@ -33,15 +35,16 @@ archives the source for citation, and writes the release notes from `CHANGELOG.m
 4. **Merge, then tag the merged commit.**
 
    ```sh
-   git tag -a v0.3.0 -m "decern 0.3.0" && git push origin v0.3.0
+   git tag -a vX.Y.Z -m "decern X.Y.Z" && git push origin vX.Y.Z
    ```
 
 ## What the tag sets off
 
 | Workflow | Produces |
 |---|---|
-| `release.yml` | Binaries for four targets, each with a cosign signature and certificate; a combined `SHA256SUMS`; a CycloneDX SBOM per crate; a GitHub release whose body is the `CHANGELOG.md` section for the tag |
+| `release.yml` | Binaries for four targets, each with a Sigstore bundle (`<file>.sigstore.json`: signature, certificate and transparency-log entry); a combined `SHA256SUMS`, signed the same way; a CycloneDX SBOM per crate; a GitHub release whose body is the `CHANGELOG.md` section for the tag |
 | `publish-sdks.yml` | `decern` on PyPI and on npm |
+| `publish-crates.yml` | The nine workspace crates on crates.io, in dependency order |
 | Zenodo | An archived copy and a DOI, from the GitHub integration |
 
 A tag whose version has no `CHANGELOG.md` section fails the release build rather than publishing
@@ -87,16 +90,9 @@ a scoped token, after which the entry replaces it. Existing crates never need a 
 
 ## Verifying a release
 
-Every artifact is signed. Nothing here requires trusting the person who tagged it:
-
-```sh
-cosign verify-blob \
-  --certificate decern-aarch64-apple-darwin.pem \
-  --signature   decern-aarch64-apple-darwin.sig \
-  --certificate-identity-regexp 'https://github.com/anivar/decern/.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  decern-aarch64-apple-darwin
-```
+Every binary and `SHA256SUMS` is signed by the release workflow's identity, so checking one
+requires no trust in the person who tagged it; the SBOMs are not signed. The command, and the
+form for releases before 0.4.0, is in [SECURITY.md](SECURITY.md#verifying-a-release).
 
 **Builds are not byte-reproducible.** A local `cargo build --release` of a tag does not produce the
 same hash as the released binary — absolute paths and build metadata differ between machines. The

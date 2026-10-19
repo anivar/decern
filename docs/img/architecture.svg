@@ -9,12 +9,12 @@
   <rect x="40" y="52" width="200" height="100" rx="6" fill="#D7E8E3" stroke="#0E7C6B" stroke-width="1.5"/>
   <text x="140" y="88" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern</text>
   <text x="140" y="110" text-anchor="middle" class="t" font-size="11" fill="#5E6B67">CLI</text>
-  <text x="140" y="130" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">prove / decide / verify</text>
+  <text x="140" y="130" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">prove/decide/explain/verify</text>
 
   <rect x="40" y="172" width="200" height="100" rx="6" fill="#D7E8E3" stroke="#0E7C6B" stroke-width="1.5"/>
   <text x="140" y="208" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-serve</text>
   <text x="140" y="230" text-anchor="middle" class="t" font-size="11" fill="#5E6B67">AuthZEN PDP</text>
-  <text x="140" y="248" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">fail-closed / 4 postures</text>
+  <text x="140" y="248" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">fail-closed / 5 postures</text>
 
   <text x="280" y="36" class="t" font-size="11" font-weight="600" fill="#849490">PROOF</text>
   <rect x="280" y="52" width="240" height="88" rx="6" fill="#E4F3EF" stroke="#0E7C6B" stroke-width="1.5"/>

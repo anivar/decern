@@ -11,7 +11,7 @@ message: If you refer to decern, please cite it as below.
 type: software
 abstract: >-
   An authorization kernel whose decision function carries nine invariants discharged over the
-  whole input space by an SMT solver, and a tamper-evident ledger that records each decision so
+  policy model's symbolic input space by an SMT solver, and a tamper-evident ledger that records each decision so
   a third party can verify what was decided and that the record was not altered afterwards.
 authors:
   - family-names: Aravind
