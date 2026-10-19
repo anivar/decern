@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Worked examples
 
-Runnable end to end, tested in CI, never published as crates.
+Runnable end to end, never published as crates. CI runs every one of them on each pull request
+except `quickstart.sh`, which is for running by hand.
 
 - [`quickstart.sh`](quickstart.sh) — prove → serve → decide → verify → tamper-is-rejected,
   in one script.

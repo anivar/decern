@@ -159,6 +159,8 @@ standards:
     surface:
       - crates/decern-server/src/bearer.rs
       - crates/decern-server/src/spiffe.rs
+      - crates/decern-server/src/aauth.rs
+      - crates/decern-server/src/sig.rs
       - crates/decern-server/src/challenge.rs
       - crates/decern-server/src/jose.rs
     conformance: >-
@@ -166,12 +168,17 @@ standards:
       `alg` must be `EdDSA` (RFC 8037) and is checked before the signature, so no
       other algorithm reaches a verification path. Every reader decodes its segments
       through `jose.rs`: base64url without padding (§2) into strict JSON, trailing
-      characters refused (§10.12), a duplicated member name kept last in a map and
-      refused in a derived struct (§4 permits either). `crit` (§4.1.11, MUST be
-      understood and processed): bearer and standing tokens refuse it, SPIFFE refuses
-      every header outside `alg`/`kid`/`typ` under JWT-SVID §2, and AAuth agent tokens
-      ignore it, which §4.1.11 does not allow. A standing token's other header
-      parameters are ignored, as §4 requires of ones not understood. Only verification is
+      characters refused (§10.12), a duplicated member name kept last in a map and,
+      for a member a derived struct declares, refused there (§4 permits either; a
+      member the struct does not declare is ignored). `crit` (§4.1.11, MUST be
+      understood and processed): bearer and standing tokens refuse it whatever its
+      value. SPIFFE and AAuth refuse every header outside `alg`/`kid`/`typ`, `crit`
+      included: JWT-SVID §2 forbids an SVID any other, while the AAuth draft names
+      those three (§11.5.1) without closing the set, so for AAuth the closed set is
+      this deployment's own. The signed-request bound token is not verified as a JWS —
+      the request signature covers it — and its header is read for `typ` and `alg`
+      alone. A standing token's other header parameters are ignored, as §4 requires of
+      ones not understood. Only verification is
       implemented; decern issues no JWS. Read in full 2026-10-19; of its errata, only
       7767 is open (reported, §6) and it does not bear on these surfaces.
 
@@ -181,14 +188,18 @@ standards:
     surface:
       - crates/decern-server/src/jose.rs
       - crates/decern-server/src/challenge.rs
+      - crates/decern-server/src/bearer.rs
+      - crates/decern-server/src/spiffe.rs
+      - crates/decern-server/src/aauth.rs
     conformance: >-
       `jose.rs` reads a NumericDate claim (§2) as any JSON number, fractional
       included, and refuses a present claim that is not a number rather than reading
       it as absent; reads `aud` as one string or an array of them, matched exactly
       (§4.1.3); claim sets decode as §7.2 steps 9–10 require. Which claims are
       required, and the `exp`/`nbf` checks themselves, are each reader's own; a
-      standing token, a JWT no other spec here profiles, requires `exp` (§4.1.4) and
-      is refused before an `nbf` that is present (§4.1.5), with no leeway. Read in
+      standing token, a JWT no other spec here profiles, requires `exp`, which §4.1.4
+      leaves optional, and is refused before an `nbf` that is present (§4.1.5), with
+      no leeway beyond the whole second the server's clock is read in. Read in
       full 2026-10-19 with its errata: verified erratum 8060 makes §7.2 step 5 defer
       to RFC 7515, under which a header parameter not understood is ignored unless
       `crit` names it; reported erratum 7720 (never reject an `iat` in the future) is
@@ -362,8 +373,13 @@ standards:
       request**, which the draft's example component list does not carry; RFC 9421 §1.4 assigns
       component requirements to the application profile, and every AuthZEN evaluation is a POST,
       so without it one captured signature would authorize any body at that path — the defect
-      closed in 0.3.0. An agent that does not sign `content-digest` is refused. `EdDSA` only, of
-      the algorithms the draft permits, and `none` is refused as the draft requires. The agent
+      closed in 0.3.0. An agent that does not sign `content-digest` is refused. The agent token
+      is accepted under `alg: EdDSA` only, and `none` is refused. That does not meet the draft:
+      -10 and -11 (§11.3.1, §11.5.1) require a fully-specified identifier — `Ed25519` for this
+      key — and forbid accepting the polymorphic `EdDSA`, and §11.3.1 has a verifier reject a
+      JWK with no `alg`, which this posture does not read. A conformant agent token is refused
+      today; a token the draft forbids is accepted. §11.3.1 and §11.5 of -10 and -11 read
+      2026-10-19; the rest of -11 is not re-read on that date. The agent
       token's own signature IS verified against the provider key, unlike the signed-request
       posture where the outer signature already covers a self-carried token. An agent token
       carries no `aud`, so `--aauth-audience` is required and the request's `Host` must equal

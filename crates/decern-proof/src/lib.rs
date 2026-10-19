@@ -165,7 +165,9 @@ pub enum ProofError {
     Timeout(u64),
 }
 
-/// The default `timeout` for [`prove_all`]; `decern prove --timeout` overrides it.
+/// The default `timeout` for [`prove_all`]; `decern prove --timeout` overrides it. It bounds the
+/// whole run, compilation included. The solver is bounded separately, at 60 seconds by its own
+/// `--tlimit`, so a larger value adds no solver time.
 pub const DEFAULT_PROVE_TIMEOUT_SECS: u64 = 120;
 
 /// Prove every invariant in the suite against `model`, bounded by `timeout`.

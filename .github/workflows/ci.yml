@@ -40,7 +40,7 @@ jobs:
           rustup component add clippy rustfmt
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Install cvc5
         run: |
@@ -89,7 +89,10 @@ jobs:
             echo "Labelled no-changelog — no fragment needed."
             exit 0
           fi
-          changed="$(git diff --name-only "${BASE}" "${HEAD}")"
+          # From the merge base, not from the base branch's tip: once main moves past where the
+          # branch was cut, a two-point diff also lists what main added since, a fragment
+          # included, and a change with no fragment of its own would read as carrying one.
+          changed="$(git diff --name-only "${BASE}...${HEAD}")"
           # Shipped code is anything a reader of the release notes can run. The crates and the
           # SDKs, plus the two examples that are components rather than walkthroughs:
           # ext_authz_adapter (a binary people deploy in front of a gateway) and the MCP
@@ -143,7 +146,7 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.example }}
 
@@ -182,7 +185,7 @@ jobs:
           rustup component add clippy rustfmt
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: examples/ext_authz_adapter
 
@@ -232,7 +235,7 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Lint the feature-gated decern-serve wiring (`--sharded postgres://…`)
         run: cargo clippy -p decern-server --features postgres --all-targets -- -D warnings

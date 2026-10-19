@@ -31,7 +31,8 @@ enum Cmd {
         /// Path to the cvc5 solver, if not on PATH.
         #[arg(long)]
         cvc5: Option<PathBuf>,
-        /// Per-suite timeout in seconds.
+        /// Bound on the whole run, in seconds. cvc5 also stops itself 60 seconds after it
+        /// starts, so solver work past that fails the run however high this is set.
         #[arg(long, default_value_t = decern_proof::DEFAULT_PROVE_TIMEOUT_SECS)]
         timeout: u64,
     },
