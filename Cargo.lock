@@ -799,6 +799,7 @@ dependencies = [
  "p256",
  "serde",
  "serde_json",
+ "sfv",
  "sha2",
  "tokio",
  "tower",
@@ -2364,6 +2365,17 @@ checksum = "66cf8fedced2fcf12406bcb34223dffb92eaf34908ede12fed414c82b7f00b3e"
 dependencies = [
  "base16ct",
  "serde",
+]
+
+[[package]]
+name = "sfv"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "459c6f5820787bedb86fee2279ad39e89c31a3ede6354a0f6439a012467c5416"
+dependencies = [
+ "base64",
+ "indexmap 2.14.0",
+ "ref-cast",
 ]
 
 [[package]]

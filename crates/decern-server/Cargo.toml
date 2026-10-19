@@ -29,6 +29,7 @@ base64 = { workspace = true }
 hex = { workspace = true }
 getrandom = { workspace = true }
 sha2 = { workspace = true }
+sfv = { workspace = true }
 # Optional: multi-host sharded head store. Off by default so `decern-serve`
 # stays pure Rust; enabling it pulls in the one documented C-FFI stack (TLS).
 decern-store-postgres = { workspace = true, optional = true }

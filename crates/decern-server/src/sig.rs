@@ -29,11 +29,12 @@
 //! time — accepting an unconfigured identity here would be a credential this deployment
 //! cannot account for, decided about a principal the kernel has no policy for either.
 //!
-//! Verification only, over a fixed, small shape rather than RFC 9421's full generality:
-//! exactly one signature, exactly the covered components named below, `ed25519` only,
-//! and `sha-256` only for `Content-Digest`. A request naming a different component set,
-//! a different algorithm, or more than one signature is refused rather than accepted
-//! under a shape this module does not enforce everywhere else.
+//! Verification only, over a fixed, small profile of RFC 9421 applied through
+//! [`crate::httpsig`]: exactly one signature, labelled `sig1`, covering exactly the
+//! components named below, `ed25519` only, and `sha-256` only for `Content-Digest`. A
+//! request naming a different component set, a different algorithm, or more than one
+//! signature is refused rather than accepted under a shape this module does not enforce
+//! everywhere else.
 
 use std::collections::BTreeMap;
 
@@ -108,81 +109,6 @@ pub(crate) struct Signed {
     pub(crate) issuer: String,
 }
 
-/// Parsed `Signature-Input` value for a single signature. RFC 9421 §2.3 permits several
-/// labelled signatures in one header; this deployment accepts exactly one.
-pub(crate) struct SignatureInput {
-    pub(crate) components: Vec<String>,
-    pub(crate) created: i64,
-    /// Parsed for shape validation only — this deployment pins keys by agent id
-    /// (`SigConfig::agents`), not by `keyid`, so the value itself is never consulted.
-    _keyid: Option<String>,
-}
-
-/// A minimal, fixed-shape parser for one RFC 8941 inner-list-with-params value of the
-/// form `("comp1" "comp2" ...);created=NNN;keyid="..."`. Not a general structured-field
-/// parser: this module accepts exactly this shape and refuses anything else, the same
-/// discipline `bearer.rs` applies to `alg`/`typ`.
-pub(crate) fn parse_signature_input(label: &str, raw: &str) -> Result<SignatureInput, Denied> {
-    let prefix = format!("{label}=(");
-    let rest = raw
-        .trim()
-        .strip_prefix(&prefix)
-        .ok_or_else(|| Denied::Invalid("Signature-Input is not a recognised shape".into()))?;
-    let (list, params) = rest
-        .split_once(')')
-        .ok_or_else(|| Denied::Invalid("Signature-Input component list is unterminated".into()))?;
-    let components: Vec<String> = list
-        .split_whitespace()
-        .map(|c| c.trim_matches('"').to_owned())
-        .collect();
-
-    let mut created = None;
-    let mut keyid = None;
-    for part in params.split(';').map(str::trim).filter(|p| !p.is_empty()) {
-        let (k, v) = part
-            .split_once('=')
-            .ok_or_else(|| Denied::Invalid("Signature-Input parameter is malformed".into()))?;
-        match k {
-            "created" => {
-                created = Some(v.parse::<i64>().map_err(|_| {
-                    Denied::Invalid("Signature-Input created is not an integer".into())
-                })?);
-            }
-            "keyid" => keyid = Some(v.trim_matches('"').to_owned()),
-            // An unrecognised parameter is refused rather than ignored: RFC 9421 §2.3
-            // lets a signer attach any parameter, and silently accepting one this
-            // deployment does not interpret would let it claim a property (e.g. `nonce`,
-            // `tag`) that was never actually checked.
-            other => {
-                return Err(Denied::Invalid(format!(
-                    "Signature-Input names an unsupported parameter {other}"
-                )));
-            }
-        }
-    }
-    let created =
-        created.ok_or_else(|| Denied::Invalid("Signature-Input carries no created".into()))?;
-    Ok(SignatureInput {
-        components,
-        created,
-        _keyid: keyid,
-    })
-}
-
-/// Extract the base64 signature bytes for `label` from a `Signature` header value of the
-/// form `label=:base64:`.
-pub(crate) fn parse_signature(label: &str, raw: &str) -> Result<Vec<u8>, Denied> {
-    let prefix = format!("{label}=:");
-    let rest = raw
-        .trim()
-        .strip_prefix(&prefix)
-        .and_then(|s| s.strip_suffix(':'))
-        .ok_or_else(|| Denied::Invalid("Signature is not a recognised shape".into()))?;
-    base64::engine::general_purpose::STANDARD
-        .decode(rest)
-        .map_err(|_| Denied::Invalid("Signature is not valid base64".into()))
-}
-
 /// Which components this request must cover.
 ///
 /// Driven by the body as well as the method, deliberately. Keying on `POST` alone would
@@ -227,30 +153,6 @@ pub(crate) fn content_digest_header_value(body: &[u8]) -> String {
         "sha-256=:{}:",
         base64::engine::general_purpose::STANDARD.encode(sha256_of(body))
     )
-}
-
-/// Build the RFC 9421 §2.5 signature base for the components this method requires,
-/// then append the `@signature-params` line reconstructed from the same
-/// `Signature-Input` value that was parsed — never a value this function invents,
-/// so the base matches byte-for-byte what the signer actually covered.
-pub(crate) fn signature_base(
-    components: &[&str],
-    values: &[&str],
-    signature_input_label: &str,
-    signature_input_raw: &str,
-) -> String {
-    let mut base = String::new();
-    for (component, value) in components.iter().zip(values.iter()) {
-        base.push_str(&format!("\"{component}\": {value}\n"));
-    }
-    base.push_str(&format!(
-        "\"@signature-params\": {}",
-        signature_input_raw
-            .trim()
-            .strip_prefix(&format!("{signature_input_label}="))
-            .unwrap_or(signature_input_raw)
-    ));
-    base
 }
 
 #[derive(Deserialize)]
@@ -298,20 +200,8 @@ impl CallerAuth for SigConfig {
         now_secs: u64,
         body: &[u8],
     ) -> Result<Authenticated, Denied> {
-        fn header<'a>(req: &'a axum::extract::Request, name: &str) -> Option<&'a str> {
-            req.headers().get(name).and_then(|v| v.to_str().ok())
-        }
-        let presented = SignedRequest {
-            method: req.method().as_str(),
-            authority: header(req, "host").unwrap_or_default(),
-            path: req.uri().path(),
-            signature_key_header: header(req, "signature-key"),
-            signature_input_header: header(req, "signature-input"),
-            signature_header: header(req, "signature"),
-            content_digest_header: header(req, "content-digest"),
-            body,
-        };
-        let signed = authenticate(&presented, self, now_secs as i64)?;
+        let fields = SignatureFields::from_request(req)?;
+        let signed = authenticate(&fields.request(req, body), self, now_secs as i64)?;
         // A signed request names one agent, which is both the party and the client
         // acting for it — there is no separate delegating client to distinguish.
         let who = Authenticated::new(signed.agent.clone(), signed.agent.clone(), signed.issuer);
@@ -334,6 +224,49 @@ impl CallerAuth for SigConfig {
     }
 }
 
+/// The header fields a signature posture reads, each combined across its lines
+/// ([`crate::httpsig::field`]), and the authority, owned so a [`SignedRequest`] can
+/// borrow them. Shared with the AAuth posture, which reads the same fields. A field that
+/// is not visible ASCII refuses the request here, where it once read as absent: a malformed
+/// value is not the same thing as no value.
+pub(crate) struct SignatureFields {
+    authority: String,
+    signature_key: Option<String>,
+    signature_input: Option<String>,
+    signature: Option<String>,
+    content_digest: Option<String>,
+}
+
+impl SignatureFields {
+    pub(crate) fn from_request(req: &axum::extract::Request) -> Result<Self, Denied> {
+        let headers = req.headers();
+        Ok(Self {
+            authority: crate::httpsig::authority(req.uri(), headers)?,
+            signature_key: crate::httpsig::field(headers, "signature-key")?,
+            signature_input: crate::httpsig::field(headers, "signature-input")?,
+            signature: crate::httpsig::field(headers, "signature")?,
+            content_digest: crate::httpsig::field(headers, "content-digest")?,
+        })
+    }
+
+    pub(crate) fn request<'a>(
+        &'a self,
+        req: &'a axum::extract::Request,
+        body: &'a [u8],
+    ) -> SignedRequest<'a> {
+        SignedRequest {
+            method: req.method().as_str(),
+            authority: &self.authority,
+            path: req.uri().path(),
+            signature_key_header: self.signature_key.as_deref(),
+            signature_input_header: self.signature_input.as_deref(),
+            signature_header: self.signature.as_deref(),
+            content_digest_header: self.content_digest.as_deref(),
+            body,
+        }
+    }
+}
+
 /// Everything needed from the request to verify a signed presentation, gathered by the
 /// caller (an axum extractor/middleware) so this function stays a pure, testable
 /// verifier over plain values rather than reaching into a framework request type itself.
@@ -346,6 +279,100 @@ pub(crate) struct SignedRequest<'a> {
     pub(crate) signature_header: Option<&'a str>,
     pub(crate) content_digest_header: Option<&'a str>,
     pub(crate) body: &'a [u8],
+}
+
+impl<'a> SignedRequest<'a> {
+    /// `Signature-Key`, `Signature-Input` and `Signature`, each present and within the size
+    /// either posture allows. No `Signature-Key` is no credential at all, which a posture
+    /// answers with its own challenge; the others missing, or any oversized, is a bad one.
+    pub(crate) fn signature_headers(&self) -> Result<SignatureHeaders<'a>, Denied> {
+        let key = self.signature_key_header.ok_or(Denied::NoCredentials)?;
+        let input = self
+            .signature_input_header
+            .ok_or_else(|| Denied::Invalid("request carries no Signature-Input".into()))?;
+        let signature = self
+            .signature_header
+            .ok_or_else(|| Denied::Invalid("request carries no Signature".into()))?;
+        if key.len() > MAX_TOKEN_BYTES || input.len() > MAX_TOKEN_BYTES {
+            return Err(Denied::Invalid(
+                "signature material exceeds the accepted size".into(),
+            ));
+        }
+        Ok(SignatureHeaders {
+            key,
+            input,
+            signature,
+        })
+    }
+
+    /// The one signature this request carries, held to the profile both postures share:
+    /// exactly the covered components for this method and body, and `created` inside the
+    /// freshness window. Parsing only; no key is consulted yet.
+    pub(crate) fn presented(
+        &self,
+        headers: &SignatureHeaders<'_>,
+        now_secs: i64,
+    ) -> Result<crate::httpsig::Presented, Denied> {
+        let presented = crate::httpsig::presented(LABEL, headers.input, headers.signature)?;
+        presented.covers_exactly(required_components(self.method, self.body))?;
+        presented.fresh(now_secs, MAX_SIGNATURE_AGE_SECS, MAX_CLOCK_SKEW_AHEAD_SECS)?;
+        Ok(presented)
+    }
+
+    /// The signature base over the fields a signature posture lets a request cover: the
+    /// request line, `Signature-Key`, and `Content-Digest`. Call it after
+    /// [`Self::presented`] has held the covered components to the profile: whether
+    /// `Content-Digest` is bound is read from them. A covered `Content-Digest` is bound to
+    /// the body first, so a POST whose body does not match its digest is refused without
+    /// running Ed25519.
+    pub(crate) fn signature_base(
+        &self,
+        signature_key: &str,
+        presented: &crate::httpsig::Presented,
+    ) -> Result<String, Denied> {
+        let authority = self.authority.to_ascii_lowercase();
+        let mut fields = vec![("signature-key", signature_key)];
+        if presented.components.iter().any(|c| c == "content-digest") {
+            fields.push(("content-digest", self.bound_content_digest()?));
+        }
+        let msg = crate::httpsig::Message {
+            method: self.method,
+            authority: &authority,
+            path: self.path,
+            fields: &fields,
+        };
+        crate::httpsig::signature_base(&msg, presented)
+    }
+
+    /// `Content-Digest`, present, `sha-256` only, and equal to the hash of the body bytes the
+    /// handler will see. Only a covered digest is bound: a stray one on a GET is not checked
+    /// against anything. Like every field a signature posture reads, it must still be visible
+    /// ASCII: [`SignatureFields::from_request`] refuses one that is not, rather than reading
+    /// it as absent.
+    fn bound_content_digest(&self) -> Result<&'a str, Denied> {
+        let raw = self
+            .content_digest_header
+            .ok_or_else(|| Denied::Invalid("POST carries no Content-Digest".into()))?;
+        if raw.len() > MAX_TOKEN_BYTES {
+            return Err(Denied::Invalid(
+                "Content-Digest exceeds the accepted size".into(),
+            ));
+        }
+        let claimed = parse_sha256_content_digest(raw)?;
+        if claimed != sha256_of(self.body) {
+            return Err(Denied::Invalid(
+                "Content-Digest does not match the request body".into(),
+            ));
+        }
+        Ok(raw)
+    }
+}
+
+/// The three signature headers a request carries, from [`SignedRequest::signature_headers`].
+pub(crate) struct SignatureHeaders<'a> {
+    pub(crate) key: &'a str,
+    pub(crate) input: &'a str,
+    pub(crate) signature: &'a str,
 }
 
 /// Validate a signed request and its bound access token, in the order that keeps every
@@ -361,43 +388,12 @@ pub(crate) fn authenticate(
     if cfg.agents.is_empty() {
         return Err(Denied::Invalid("no agent keys are configured".into()));
     }
-    let key_header = req.signature_key_header.ok_or(Denied::NoCredentials)?;
-    let input_header = req
-        .signature_input_header
-        .ok_or_else(|| Denied::Invalid("request carries no Signature-Input".into()))?;
-    let sig_header = req
-        .signature_header
-        .ok_or_else(|| Denied::Invalid("request carries no Signature".into()))?;
-
-    if key_header.len() > MAX_TOKEN_BYTES || input_header.len() > MAX_TOKEN_BYTES {
-        return Err(Denied::Invalid(
-            "signature material exceeds the accepted size".into(),
-        ));
-    }
-
+    let headers = req.signature_headers()?;
     // `Signature-Key` conveys the bearer token this signature is over; this deployment
     // accepts the token itself, verbatim. No separate size check here: trimming can only
-    // shrink it, and `key_header` is already bounded above.
-    let token = key_header.trim();
-
-    // Both headers are labelled dictionaries; this deployment accepts exactly one label,
-    // named `sig1`, and refuses anything with more than one signature attached.
-    const LABEL: &str = "sig1";
-    let input = parse_signature_input(LABEL, input_header)?;
-    let sig_bytes = parse_signature(LABEL, sig_header)?;
-
-    let components = required_components(req.method, req.body);
-    if input.components.as_slice() != components {
-        return Err(Denied::Invalid(
-            "Signature-Input does not cover exactly the required components".into(),
-        ));
-    }
-    let age = now_secs - input.created;
-    if !(-MAX_CLOCK_SKEW_AHEAD_SECS..=MAX_SIGNATURE_AGE_SECS).contains(&age) {
-        return Err(Denied::Invalid(
-            "signature is outside the accepted freshness window".into(),
-        ));
-    }
+    // shrink it, and the header is already bounded above.
+    let token = headers.key.trim();
+    let presented = req.presented(&headers, now_secs)?;
 
     // Decode the bound token far enough to find its `cnf.jwk` — the key the signature
     // must verify against — before trusting anything else it claims.
@@ -495,28 +491,16 @@ pub(crate) fn authenticate(
         return Err(Denied::Invalid("bound token has expired".into()));
     }
 
-    // Bound and checked before it is placed in the signature base, so a POST whose
-    // body does not match its digest is refused without running Ed25519.
-    let digest_header = bind_content_digest(components, req)?;
-    let method = req.method.to_ascii_uppercase();
-    let authority = req.authority.to_ascii_lowercase();
-    let covered = Covered {
-        method: &method,
-        authority: &authority,
-        path: req.path,
-        content_digest: digest_header,
-        signature_key: key_header,
-    };
-    let values: Result<Vec<&str>, Denied> = components.iter().map(|c| covered.value(c)).collect();
-    let values = values?;
+    let base = req.signature_base(headers.key, &presented)?;
 
     // Finally, the expensive check: does the signature over this exact request verify
     // against the key this deployment already knows for the claimed identity. Every
     // check above is cheap and self-asserted; this is the one that actually proves
     // possession, so it runs last, over a key this function chose, never one the
     // request supplied for its own verification.
-    let base = signature_base(components, &values, LABEL, input_header);
-    let sig_arr: [u8; 64] = sig_bytes
+    let sig_arr: [u8; 64] = presented
+        .signature
+        .as_slice()
         .try_into()
         .map_err(|_| Denied::Invalid("signature is not 64 bytes".into()))?;
     let signature = Signature::from_bytes(&sig_arr);
@@ -535,63 +519,17 @@ pub(crate) fn authenticate(
     })
 }
 
-/// The values RFC 9421 §2.5 puts on the signature base, one per covered component.
-pub(crate) struct Covered<'a> {
-    pub(crate) method: &'a str,
-    pub(crate) authority: &'a str,
-    pub(crate) path: &'a str,
-    pub(crate) content_digest: Option<&'a str>,
-    pub(crate) signature_key: &'a str,
-}
-
-impl<'a> Covered<'a> {
-    pub(crate) fn value(&self, component: &str) -> Result<&'a str, Denied> {
-        match component {
-            "@method" => Ok(self.method),
-            "@authority" => Ok(self.authority),
-            "@path" => Ok(self.path),
-            "content-digest" => self
-                .content_digest
-                .ok_or_else(|| Denied::Invalid("POST carries no Content-Digest".into())),
-            "signature-key" => Ok(self.signature_key),
-            other => Err(Denied::Invalid(format!(
-                "internal: unexpected covered component {other}"
-            ))),
-        }
-    }
-}
-
-/// If this method covers `content-digest`, the header must be present, `sha-256` only,
-/// and equal to the hash of the body bytes the handler will see. GET has no such
-/// component, so a stray `Content-Digest` on a GET is ignored rather than checked.
-pub(crate) fn bind_content_digest<'a>(
-    components: &[&str],
-    req: &SignedRequest<'a>,
-) -> Result<Option<&'a str>, Denied> {
-    if !components.contains(&"content-digest") {
-        return Ok(None);
-    }
-    let raw = req
-        .content_digest_header
-        .ok_or_else(|| Denied::Invalid("POST carries no Content-Digest".into()))?;
-    if raw.len() > MAX_TOKEN_BYTES {
-        return Err(Denied::Invalid(
-            "Content-Digest exceeds the accepted size".into(),
-        ));
-    }
-    let claimed = parse_sha256_content_digest(raw)?;
-    if claimed != sha256_of(req.body) {
-        return Err(Denied::Invalid(
-            "Content-Digest does not match the request body".into(),
-        ));
-    }
-    Ok(Some(raw))
-}
+/// The one label either signature posture accepts. RFC 9421 §4 has the signer choose the
+/// label, and §7.2.5 advises an application not to rely on a specific one, since an
+/// intermediary may relabel; these profiles depart from that, so a relabelled signature is
+/// refused. [`crate::httpsig::presented`] refuses a request carrying more than one
+/// signature; the fixed label is what lets that check name the member it reads.
+pub(crate) const LABEL: &str = "sig1";
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use decern_crypto::{Signer, SigningKey};
+    use decern_crypto::SigningKey;
     use serde_json::json;
 
     const AGENT: &str = "agent-1";
@@ -666,30 +604,21 @@ mod tests {
         body: &[u8],
     ) -> (String, String, String, String) {
         let digest = content_digest_header_value(body);
-        let component_list = components
+        let lines: Vec<(&str, &str)> = components
             .iter()
-            .map(|c| format!("\"{c}\""))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let input_value = format!("sig1=({component_list});created={created}");
-        let method_u = method.to_ascii_uppercase();
-        let covered = Covered {
-            method: &method_u,
-            authority: AUTHORITY,
-            path: PATH,
-            content_digest: Some(digest.as_str()),
-            signature_key: token,
-        };
-        let values: Vec<&str> = components
-            .iter()
-            .map(|c| covered.value(c).expect("test fixture component"))
+            .map(|c| {
+                let value = match *c {
+                    "@method" => method,
+                    "@authority" => AUTHORITY,
+                    "@path" => PATH,
+                    "content-digest" => digest.as_str(),
+                    "signature-key" => token,
+                    other => panic!("test fixture component {other}"),
+                };
+                (*c, value)
+            })
             .collect();
-        let base = signature_base(components, &values, "sig1", &input_value);
-        let signature = signing_key.sign(base.as_bytes());
-        let sig_value = format!(
-            "sig1=:{}:",
-            base64::engine::general_purpose::STANDARD.encode(signature.to_bytes())
-        );
+        let (input_value, sig_value) = crate::httpsig::sign_for_test(signing_key, &lines, created);
         (token.to_owned(), input_value, sig_value, digest)
     }
 
@@ -963,5 +892,85 @@ mod tests {
         )
         .unwrap_err();
         assert!(e.detail().contains("required components"), "{}", e.detail());
+    }
+
+    /// A GET as the guard receives it, so the fields are read the way a live request's are.
+    fn get_request(
+        uri: &str,
+        headers: &[(&str, axum::http::HeaderValue)],
+    ) -> axum::extract::Request {
+        let mut req = axum::http::Request::builder().method("GET").uri(uri);
+        for (name, value) in headers {
+            req = req.header(*name, value.clone());
+        }
+        req.body(axum::body::Body::empty()).unwrap()
+    }
+
+    /// The headers of a GET `agent-1` signed, with `extra` lines appended.
+    fn signed_get_headers(
+        k: &SigningKey,
+        extra: &[(&'static str, axum::http::HeaderValue)],
+    ) -> Vec<(&'static str, axum::http::HeaderValue)> {
+        let token = bound_token(&k.verifying_key(), |_| {});
+        let (key_h, input_h, sig_h) = sign_get(k, &token, &UNBODIED_COMPONENTS, CREATED);
+        let mut headers = vec![
+            ("host", AUTHORITY.parse().unwrap()),
+            ("signature-key", key_h.parse().unwrap()),
+            ("signature-input", input_h.parse().unwrap()),
+            ("signature", sig_h.parse().unwrap()),
+        ];
+        headers.extend_from_slice(extra);
+        headers
+    }
+
+    fn authenticate_live(k: &SigningKey, req: &axum::extract::Request) -> Result<Signed, Denied> {
+        let fields = SignatureFields::from_request(req)?;
+        authenticate(&fields.request(req, b""), &cfg(&k.verifying_key()), NOW)
+    }
+
+    /// RFC 9421 §2.1: every line of a field is read. A second `Signature-Input` line, which
+    /// reading the first line alone never saw, makes this two signatures and is refused.
+    #[test]
+    fn a_second_signature_input_line_is_read() {
+        let k = decern_crypto::generate().unwrap();
+        let req = get_request(PATH, &signed_get_headers(&k, &[]));
+        authenticate_live(&k, &req).expect("one line each");
+
+        let second = (
+            "signature-input",
+            r#"sig2=("@method");created=1000"#.parse().unwrap(),
+        );
+        let req = get_request(PATH, &signed_get_headers(&k, &[second]));
+        let e = authenticate_live(&k, &req).unwrap_err();
+        assert!(
+            e.detail().contains("exactly one signature"),
+            "{}",
+            e.detail()
+        );
+    }
+
+    /// A field that is not visible ASCII is malformed, not absent: a stray `Content-Digest`
+    /// on a GET is not checked against the body, and is still refused when it cannot be read.
+    #[test]
+    fn a_field_that_is_not_visible_ascii_is_refused() {
+        let k = decern_crypto::generate().unwrap();
+        let stray = (
+            "content-digest",
+            axum::http::HeaderValue::from_bytes(b"sha-256=:\xff:").unwrap(),
+        );
+        let req = get_request(PATH, &signed_get_headers(&k, &[stray]));
+        let e = authenticate_live(&k, &req).unwrap_err();
+        assert!(e.detail().contains("not visible ASCII"), "{}", e.detail());
+    }
+
+    /// An absolute-form target carries the authority the signer covered; a `Host` that
+    /// disagrees with it is not what `@authority` is read from.
+    #[test]
+    fn an_absolute_form_target_supplies_the_authority() {
+        let k = decern_crypto::generate().unwrap();
+        let mut headers = signed_get_headers(&k, &[]);
+        headers[0].1 = "elsewhere.example".parse().unwrap();
+        let req = get_request(&format!("http://{AUTHORITY}{PATH}"), &headers);
+        authenticate_live(&k, &req).expect("signed over the target's authority");
     }
 }

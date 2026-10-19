@@ -15,6 +15,7 @@ mod challenge;
 mod decide;
 mod deployment;
 mod discovery;
+mod httpsig;
 mod jose;
 mod mission;
 mod record;
@@ -181,7 +182,7 @@ struct Args {
         requires = "aauth_audience"
     )]
     aauth_providers: Vec<String>,
-    /// This deployment's authority, which a request's `Host` must equal. Required with
+    /// This deployment's authority, which a request's authority must equal. Required with
     /// `--aauth-provider`, and not optional: an agent token carries no `aud`, so without this
     /// a request signed for one deployment would verify at another that pins the same
     /// provider.

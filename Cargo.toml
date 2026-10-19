@@ -55,6 +55,9 @@ ed25519-dalek = "3"
 # deny.toml runs with `ignore = []`.
 p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
 sha2 = "0.11"
+# RFC 9651 structured fields, for the RFC 9421 signature headers. Adds one crate:
+# its dependencies, `ref-cast` and `indexmap`, were already in the tree.
+sfv = "0.16"
 base64 = "0.22"
 hex = "0.4"
 getrandom = "0.4"
