@@ -11,7 +11,7 @@ signs both the agent token and the request, so it works from a fresh checkout.
 agent ──Signature-Key: sig=jwt; jwt="<aa-agent+jwt>"──▶ decern-serve ──▶ ledger
         Signature-Input: ("@method" "@authority" "@path"   (--aauth-provider
                           "content-digest" "signature-key")  ISS=jwks.json
-        Content-Digest:  sha-256=:<SHA-256 of the body>:     --aauth-audience HOST)
+        Content-Digest:  sha-256=:<SHA-256 of the body>:     --aauth-audience AUTHORITY)
         Signature:       sig1=:<Ed25519 over the base>:
 ```
 
@@ -31,14 +31,24 @@ deployment refused**; no credentials refused; the deployment disclosing `mode: a
 
 ## Which mode of AAuth this is
 
-**Identity-based access**, the mode where the resource applies its own policy to a verified
-agent identity and no Person Server is involved. The PS-asserted and federated modes require a
-Person Server, which decern does not implement and does not intend to — it decides and records;
-it does not broker consent.
+**Agent identity access** (§4.2.1 of draft -11), the resource's half: the resource applies its
+own policy to a verified agent identity. Person identity access is not implemented.
+Resource-managed access has the resource run its own authorization interaction, and PS
+authorization and federated access need it to work with a Person Server's resource tokens.
+decern runs no interaction and issues no token — it decides and records; it does not broker
+consent.
 
-## Two things this deployment does that the draft does not require
+## Where this deployment departs from the draft
 
-Both are stated here rather than discovered as a `401`.
+Stated here rather than discovered as a `401`.
+
+**A conformant draft -11 agent is refused today.** The agent token's header must carry `alg:
+EdDSA`, which -11 forbids in favour of `Ed25519`. The token is taken from the `Signature-Key`
+member labelled `sig` while the signature verified is labelled `sig1`; the drafts pair the token
+with the signature by label, so no conformant agent satisfies both. The covered components must
+be exactly this profile's list, in its order, and `created` may be at most 5 seconds ahead.
+[`.agent/standards/registry.yaml`](../../.agent/standards/registry.yaml) lists every departure,
+including what this deployment accepts that the draft refuses.
 
 **Providers are pinned, never discovered.** The draft has a verifier discover the issuer's JWKS
 at `{iss}/.well-known/{dwk}`. decern checks that `dwk` names that document and then selects a
@@ -47,12 +57,14 @@ not depend on a third party being reachable. That departs from the draft, which 
 no such option, and the consequence is an interoperability limit: an agent whose provider this
 deployment was never told about is refused before any cryptography runs (beat 6).
 
-**`content-digest` is required on a request with a body.** The draft's example component list
-covers `@method`, `@authority`, `@path` and `signature-key`, and not the body. Every AuthZEN
-evaluation is a POST, so accepting that list would mean one captured signature authorizing any
-body at the same path — the defect decern closed in 0.3.0. RFC 9421 §1.4 assigns component
-requirements to the application profile, so requiring the digest is conformant rather than a
-departure. An AAuth agent must sign it to talk to decern (beat 5).
+**`content-digest` is required on a request with a body.** The draft requires a resource's
+requests to cover `@method`, `@authority`, `@path` and `signature-key`, and not the body. Every
+AuthZEN evaluation is a POST, so accepting that list would mean one captured signature
+authorizing any body at the same path. RFC 9421 §1.4 assigns component requirements to the
+application profile, and the draft lets a resource require further components, so requiring the
+digest is conformant rather than a departure. This deployment publishes no resource metadata,
+and the refusal names no component, so an agent learns of the requirement only from this README.
+An AAuth agent must sign it to talk to decern (beat 5).
 
 ## Why there is an `--aauth-audience`
 

@@ -9,7 +9,14 @@ decern's default ledger-head stores are sovereign and database-free:
 multi-process, `flock`-held). Both stop at one machine. This crate is a third
 backend behind the same trait, for hosted, horizontally-scaled deployments where
 more than one `decern-serve` replica must safely extend the **same** tenant hash
-chain (and gate the same cumulative money-budget) without forking it.
+chain without forking it.
+
+It holds the ledger and nothing else. Under `--sharded postgres://…` the Mission registry is
+still a file, `decern-missions.json` in each host's working directory unless `--missions`
+names another path, so a Mission approved or terminated through one replica is unknown to, or
+still live on, the others. The release binaries are built without this crate: build
+`decern-serve` with `--features postgres`. The connection URL is a command-line argument, so
+any password in it is visible in the process list to other users of the host.
 
 ## How the exclusive, cross-host critical section works
 
@@ -29,8 +36,7 @@ The advisory lock is **held across the whole read-then-decide-then-write critica
 section**, not just the final write — the same guarantee `FileLedgerHeadStore`'s
 `flock` gives on one host, now across hosts. A second host calling `with_shard`
 on the same shard blocks inside `pg_advisory_xact_lock` until the first commits,
-so the chain can't fork and a read-then-append critical section can't double-read
-the same total.
+so the chain can't fork.
 
 ## The sync-client-in-async design (why the dedicated thread)
 
@@ -48,18 +54,18 @@ duplicate seq instead of trusting the caller).
 
 ## The TLS exception
 
-decern's **core libraries and its `decern`/`decern-serve` binaries pull no TLS
-stack, no OpenSSL and no `cmake`** — which is not the same as zero compiled native
-code, since `cedar-policy` → `stacker` → `psm` compiles a small assembly routine in
-every build ([DEPENDENCIES.md](../../DEPENDENCIES.md) states that limit precisely).
-This crate is the **single documented exception** for TLS: multi-host Postgres needs it,
-and every TLS provider links compiled C/assembly. The exception is isolated —
-the binaries do **not** depend on this crate (verify with
-`cargo tree -p decern-cli` / `cargo tree -p decern-server`: no `rustls`, `ring`,
-`aws-lc`, `openssl`, `postgres`, or `tokio-postgres`). We use `rustls` with the
-pure-`ring` provider (default features off), not `aws-lc-rs` (which needs a
-`cmake` toolchain), keeping the exception a single, audit-scoped stack with an
-explicit crypto provider (no process-global provider is installed).
+decern's **core libraries and its `decern`/`decern-serve` binaries pull no TLS stack, no OpenSSL
+and no `cmake`** — which is not the same as zero compiled native code, since `cedar-policy` →
+`stacker` → `psm` compiles a small assembly routine in every build
+([DEPENDENCIES.md](../../DEPENDENCIES.md) states that limit precisely). This crate is the
+**single documented exception** for TLS: multi-host Postgres needs it, and every TLS provider
+links compiled C/assembly. The exception is isolated — the default build of the binaries does
+**not** depend on this crate (verify with `cargo tree -p decern-cli` / `cargo tree -p
+decern-server`: no `rustls`, `ring`, `aws-lc`, `openssl`, `postgres`, or `tokio-postgres`).
+`decern-serve` built with `--features postgres` does: that build takes `--sharded postgres://…`
+and carries this TLS stack. We use `rustls` with the `ring` provider (default features off), not
+`aws-lc-rs` (which needs a `cmake` toolchain), keeping the exception a single, audit-scoped
+stack with an explicit crypto provider (no process-global provider is installed).
 
 ## Testing
 

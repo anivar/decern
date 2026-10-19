@@ -15,6 +15,8 @@ Standard library only — no dependencies.
 go get github.com/anivar/decern/sdks/go
 # and a server to ask:
 cargo install decern-server && decern-serve --trust-proxy
+# and, to check the log afterwards:
+cargo install decern-cli
 ```
 
 ```go
@@ -44,16 +46,19 @@ func main() {
 ```
 
 `Token` is optional: set it when the deployment requires bearer tokens on the evaluation
-endpoint, and every request carries `Authorization: Bearer <token>`.
-Also on the client: `Pubkey` (the Ed25519 key id the log is signed with) and `Healthy`.
-`Context` is advisory — the server overrides anything it derives itself (the clock, the
-accountable owner), so a caller cannot talk its way into a decision by supplying them.
+endpoint, and every request carries `Authorization: Bearer <token>`. Also on the client:
+`Pubkey` (the Ed25519 key id the log is signed with) and `Healthy`. `Context` reaches the
+policies wherever the model's schema declares it, apart from keys the server reserves for the
+caller, the Mission and the challenge. The server sets `now` from its own clock, and records the
+accountable owner and any verified caller itself, whatever the context says.
 
 ## What the server gives you
 
 [decern](https://github.com/anivar/decern) is an [AuthZEN
 1.0](https://openid.net/specs/authorization-api-1_0.html) authorization server whose safety
-rules are machine-checked over every input, and whose decisions land in an append-only,
+rules are machine-checked over the model's symbolic input space ([what that
+covers](https://github.com/anivar/decern/blob/main/docs/CLI.md#what-proven-covers)), and whose
+decisions land in an append-only,
 signed, hash-chained log **before** they are served — a decision that cannot be recorded is
 refused, and a third party can verify what was decided without trusting the operator:
 

@@ -35,10 +35,10 @@ decided and that the record holds.
 examples/mcp/run.sh
 ```
 
-Needs `cargo`, `cvc5` on `PATH`, `uv`, `jq`. Eleven asserted beats: the model-drift guard,
-the nine invariants proved over this example's model, discover and list, the
-earlier-revision handshake, Allow, the satisfiable 403, the step-up, the unfixable Deny,
-two 401s, and the ledger check ending with the arguments
+Needs `cargo`, `cvc5` on `PATH`, `uv`, `jq`, `python3` and `curl`. Eleven asserted
+beats: the model-drift guard, the nine invariants proved over this example's model,
+discover and list, the earlier-revision handshake, Allow, the satisfiable 403, the
+step-up, the unfixable Deny, two 401s, and the ledger check ending with the arguments
 digest recomputed from the arguments themselves and found on the record.
 
 ## What is different from the builtin model, and why
@@ -64,12 +64,13 @@ names the 403-vs-`isError` split keys on, which live in the builtin itself):
   client's token upstream — and decern decides about the subject this server asserts.
   decern deliberately does not take the AuthZEN subject from a token's `sub`; the
   recorded subject is the front's assertion, and this example is that front.
-- **Approval is a relayed claim.** A token carrying `decern.move_money.approved` is the
-  issuer's statement that money movement was approved for this bearer; the server
-  verifies the token and relays the claim as `context.human_approved`. decern's own
-  boundary applies verbatim: establishing the caller says who is asserting those flags,
-  not that they are true. A deployment that wants approval derived by the decision
-  point itself runs `decern-serve --require-mission` and grants Missions.
+- **Approval becomes a Mission this server approves.** decern requires a Mission for
+  `MoveMoney` whatever the context says. For a verified token carrying
+  `decern.move_money.approved`, the server approves a one-hour `move_money` Mission at
+  `/mission/v1/approve` with `corp` as the approver, and names it in `context.mission`.
+  The approver is hardcoded in `server.py`, and under `--trust-proxy` decern takes the
+  approver this front names, so the server exercises `corp`'s approval authority on the
+  strength of the token's scope. The approval is a ledger record of its own.
 - **`mint.py` is a stand-in, not an authorization server.** A fixed, public demo key
   signs the tokens; the issuer URL in the Protected Resource Metadata is an identifier,
   and the discovery chain is demonstrated as far as that document and no further. OAuth
