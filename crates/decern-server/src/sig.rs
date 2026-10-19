@@ -45,7 +45,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::caller::{Authenticated, CallerAuth, Denied};
+use crate::caller::{Authenticated, CallerAuth, Denied, printable};
 
 /// Covered components for a request with no body that is an input (GET, HEAD).
 const UNBODIED_COMPONENTS: [&str; 4] = ["@method", "@authority", "@path", "signature-key"];
@@ -422,7 +422,7 @@ pub(crate) fn authenticate(
         Some(other) => {
             return Err(Denied::Invalid(format!(
                 "bound token type {} is not a signature-bound access token",
-                brief(other)
+                printable(other)
             )));
         }
         None => return Err(Denied::Invalid("bound token names no type".into())),
@@ -432,7 +432,7 @@ pub(crate) fn authenticate(
         Some(other) => {
             return Err(Denied::Invalid(format!(
                 "bound token algorithm {} is not accepted here",
-                brief(other)
+                printable(other)
             )));
         }
         None => return Err(Denied::Invalid("bound token names no algorithm".into())),
@@ -451,7 +451,7 @@ pub(crate) fn authenticate(
         .ok_or_else(|| Denied::Invalid("bound token carries no iss".into()))?
         .to_owned();
 
-    if !audience_contains(claims.get("aud"), &cfg.audience) {
+    if !crate::jose::audience_contains(claims.get("aud"), &cfg.audience) {
         return Err(Denied::Invalid(
             "bound token was not issued for this server as audience".into(),
         ));
@@ -461,7 +461,10 @@ pub(crate) fn authenticate(
     // whole point of "configured, not discovered": a `sub` decern has no key for is
     // refused here, before any cryptography runs on its behalf.
     let configured_key = cfg.agents.get(&subject).ok_or_else(|| {
-        Denied::Invalid(format!("agent {} is not configured here", brief(&subject)))
+        Denied::Invalid(format!(
+            "agent {} is not configured here",
+            printable(&subject)
+        ))
     })?;
 
     // The token must bind to that same configured key via `cnf.jwk` — a token claiming
@@ -583,21 +586,6 @@ pub(crate) fn bind_content_digest<'a>(
         ));
     }
     Ok(Some(raw))
-}
-
-fn audience_contains(aud: Option<&Value>, want: &str) -> bool {
-    match aud {
-        Some(Value::String(s)) => s == want,
-        Some(Value::Array(xs)) => xs.iter().any(|x| x.as_str() == Some(want)),
-        _ => false,
-    }
-}
-
-fn brief(s: &str) -> String {
-    s.chars()
-        .filter(|c| matches!(c, ' '..='~'))
-        .take(64)
-        .collect()
 }
 
 #[cfg(test)]

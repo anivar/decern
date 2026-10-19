@@ -161,11 +161,12 @@ impl Authenticated {
     }
 }
 
-/// How much of an attacker-chosen principal id may be echoed in a 403. Enough to
-/// recognise a mismatch; not enough to use the error channel as a reflector.
-const MAX_ECHO: usize = 64;
+/// How much of an attacker-chosen string a refusal may echo, in characters: a principal id
+/// in a 403, an issuer or algorithm name in a 401. Enough to recognise a mismatch or a
+/// misconfiguration; not enough to use the error channel as a reflector.
+pub(crate) const MAX_ECHO: usize = 64;
 
-fn brief(s: &str) -> String {
+pub(crate) fn brief(s: &str) -> String {
     // Bounded by characters, never by bytes. `&t[..MAX_ECHO]` panics when the cut lands
     // inside a multi-byte character, and the string being cut here is an attacker-chosen
     // principal id — so a byte bound turns this refusal into a downed request. Control
@@ -178,6 +179,16 @@ fn brief(s: &str) -> String {
         out.push('…');
     }
     out
+}
+
+/// An attacker-chosen string as a credential refusal echoes it: printable ASCII only, cut at
+/// [`MAX_ECHO`] characters. Where `brief` keeps any non-control character and marks a cut,
+/// this keeps the echo safe to place in a header value as well as a JSON body.
+pub(crate) fn printable(s: &str) -> String {
+    s.chars()
+        .filter(|c| matches!(c, ' '..='~'))
+        .take(MAX_ECHO)
+        .collect()
 }
 
 /// Refuse a principal this caller is not allowed to speak as. No extension means
@@ -295,7 +306,7 @@ pub(crate) async fn guard(
             Caller::Aauth(cfg) => cfg.as_ref(),
         };
         posture
-            .authenticate(&req, now_secs(), &bytes)
+            .authenticate(&req, crate::now_secs(), &bytes)
             .map_err(|denied| posture.refuse(denied))
     };
     match established {
@@ -305,13 +316,6 @@ pub(crate) async fn guard(
         }
         Err(refusal) => refusal,
     }
-}
-
-pub(crate) fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -329,6 +333,21 @@ mod tests {
         assert!(hostile.len() > MAX_ECHO && !hostile.is_char_boundary(MAX_ECHO));
         let who = axum::Extension(Authenticated::new("agent-1", "agent-1", "iss").self_only());
         assert!(refuse_unless_admits(&Some(who), &hostile).is_some());
+    }
+
+    /// The two echoes differ on purpose, and each is pinned: `brief` keeps any non-control
+    /// character and marks a cut; `printable` keeps printable ASCII only and does not.
+    #[test]
+    fn the_two_echoes_bound_by_characters_and_differ_on_what_they_keep() {
+        let hostile = format!("  é\u{7}{}  ", "x".repeat(MAX_ECHO + 5));
+        let b = brief(&hostile);
+        assert!(b.starts_with('é') && b.ends_with('…'), "{b}");
+        assert_eq!(b.chars().count(), MAX_ECHO + 1);
+
+        let p = printable(&hostile);
+        assert!(p.chars().all(|c| matches!(c, ' '..='~')), "{p}");
+        assert_eq!(p.chars().count(), MAX_ECHO);
+        assert!(p.starts_with("  x"), "{p}");
     }
 
     #[test]
