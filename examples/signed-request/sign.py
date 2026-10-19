@@ -102,8 +102,9 @@ p = b64url(json.dumps(claims).encode())
 token = f"{h}.{p}.{b64url(issuer.sign(f'{h}.{p}'.encode()))}"
 
 # RFC 9421 §2.5 signature base: one `"name": value` line per covered component, then the
-# `"@signature-params"` line, with NO trailing newline after it. `@method` is uppercased
-# and `@authority` lowercased, per §2.2.1 and §2.2.3.
+# `"@signature-params"` line, with NO trailing newline after it. `@method` is the method as
+# sent, case included (§2.2.1) — uppercase here, as curl sends it — and `@authority` is
+# lowercased (§2.2.3).
 label = "sig1"
 method_u = method.upper()
 content_digest = None

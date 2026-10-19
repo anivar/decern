@@ -529,7 +529,7 @@ mod tests {
     }
 
     /// Headers for a request `agent-1` signs with `key`. The RFC 9421 signature base is
-    /// written out here rather than built with `sig::signature_base`, so these tests check
+    /// written out here rather than built with `httpsig::signature_base`, so these tests check
     /// the base the guard verifies against a rendering of it that shares no code with it.
     fn signed_headers(
         key: &SigningKey,

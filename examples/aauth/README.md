@@ -40,13 +40,12 @@ it does not broker consent.
 
 Both are stated here rather than discovered as a `401`.
 
-**Providers are pinned, never discovered.** The draft's verification list says to discover the
-issuer's JWKS at `{iss}/.well-known/{dwk}`. decern checks that `dwk` names that document and
-then selects a key from a JWK Set the operator supplied — it makes no outbound request, because
-a decision must not depend on a third party being reachable. The draft contemplates exactly
-this where it notes that a resource pre-caching a provider's keys does not need the fetch. The
-consequence is a real interoperability limit: an agent whose provider this deployment was never
-told about is refused before any cryptography runs (beat 6).
+**Providers are pinned, never discovered.** The draft has a verifier discover the issuer's JWKS
+at `{iss}/.well-known/{dwk}`. decern checks that `dwk` names that document and then selects a
+key from a JWK Set the operator supplied — it makes no outbound request, because a decision must
+not depend on a third party being reachable. That departs from the draft, which gives a resource
+no such option, and the consequence is an interoperability limit: an agent whose provider this
+deployment was never told about is refused before any cryptography runs (beat 6).
 
 **`content-digest` is required on a request with a body.** The draft's example component list
 covers `@method`, `@authority`, `@path` and `signature-key`, and not the body. Every AuthZEN
@@ -58,11 +57,12 @@ departure. An AAuth agent must sign it to talk to decern (beat 5).
 ## Why there is an `--aauth-audience`
 
 An agent token carries no `aud` — the draft defines none. The only thing tying a request to a
-destination is `@authority`, and that is the `Host` the caller sent, so on its own it binds the
-signature to a *claimed* authority rather than to this server. Without a configured authority
-to compare against, a correctly signed request from a pinned provider would verify at **any**
-deployment pinning the same provider. `--aauth-audience` is therefore required, and the `Host`
-must equal it. Beat 9 is that refusal.
+destination is `@authority`, and that is the authority the caller sent — its `Host`, or the
+target of an absolute-form request line — so on its own it binds the signature to a *claimed*
+authority rather than to this server. Without a configured authority to compare against, a
+correctly signed request from a pinned provider would verify at **any** deployment pinning the
+same provider. `--aauth-audience` is therefore required, and the request's authority must equal
+it. Beat 9 is that refusal.
 
 ## Why the token's own signature is verified here
 

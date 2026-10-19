@@ -2,29 +2,29 @@
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
 //! AAuth agent tokens, verified against provider keys pinned at startup.
 //!
-//! Implements the resource half of `draft-hardt-oauth-aauth-protocol` for **identity-based
-//! access**: the mode where the resource applies its own policy to a verified agent identity
-//! and no Person Server is involved. The PS-asserted and federated modes need a Person
-//! Server, which this project does not implement and does not intend to.
+//! Implements the resource half of `draft-hardt-oauth-aauth-protocol` for **agent identity
+//! access** (-11 §4.2.1): the resource applies its own policy to a verified agent identity
+//! and no Person Server is involved. Person identity access (§4.2.3), which verifies a person
+//! token instead, is not implemented. The remaining modes have the resource issue session or
+//! resource tokens, and this project issues no token.
 //!
-//! **Providers are configured, never discovered.** The draft's verification list says to
-//! discover the issuer's JWKS via `{iss}/.well-known/{dwk}`. This deployment does not fetch:
-//! it checks that `dwk` names the document the draft requires and then selects a key from a
-//! JWK Set the operator supplied at startup. The draft contemplates exactly this — a resource
-//! that pre-caches a provider's keys does not need the fetch — so an agent whose provider is
-//! configured here interoperates, and an agent from a provider this deployment was never told
-//! about is refused before any cryptography runs. That is the same closed-world boundary
-//! every other posture applies, and the same reason: a decision must not depend on a third
-//! party being reachable.
+//! **Providers are configured, never discovered.** The draft has a verifier discover the
+//! issuer's JWKS via `{iss}/.well-known/{dwk}` (-11 §11.4, §11.5.2). This deployment does not
+//! fetch: it checks that `dwk` names the document the draft requires and then selects a key
+//! from a JWK Set the operator supplied at startup. That departs from the draft, which gives a
+//! resource no such option; an agent whose provider is configured here interoperates, and an
+//! agent from a provider this deployment was never told about is refused before any
+//! cryptography runs. That is the same closed-world boundary every other posture applies, and
+//! the same reason: a decision must not depend on a third party being reachable.
 //!
 //! **There is no `aud` claim on an agent token**, which is the sharpest difference from the
 //! other token postures. `bearer.rs` and `spiffe.rs` both pin a token to this deployment
 //! through its audience; an AAuth agent token carries nothing to match against. The signature
-//! covers `@authority`, but that value is the `Host` the client sent, so on its own it binds
-//! the signature to a *claimed* authority rather than to this server. Two deployments pinning
-//! the same provider would otherwise accept each other's requests. `--aauth-audience` is
-//! therefore required, and the `Host` must equal it: the signed `@authority` and the
-//! configured identity have to agree before anything is believed.
+//! covers `@authority`, but that value is the authority the client sent, so on its own it
+//! binds the signature to a *claimed* authority rather than to this server. Two deployments
+//! pinning the same provider would otherwise accept each other's requests. `--aauth-audience`
+//! is therefore required, and the request's authority must equal it: the signed `@authority`
+//! and the configured identity have to agree before anything is believed.
 //!
 //! **`jti` is required and this deployment does not use it for replay detection.** The draft
 //! gives `jti` for replay detection, audit and revocation. There is no nonce cache here — the
@@ -48,10 +48,6 @@ use serde_json::Value;
 
 use crate::caller::{Authenticated, CallerAuth, Denied, brief};
 use crate::sig;
-
-/// Mirrors the ceiling every other posture applies: an oversized credential costs its sender
-/// a length comparison, not this server an allocation.
-const MAX_TOKEN_BYTES: usize = 8192;
 
 /// Draft -11 §5.3.1: an agent token SHOULD NOT have a lifetime above 24 hours. The draft
 /// leaves the bound to the verifier's policy; this deployment refuses a token that claims
@@ -95,8 +91,8 @@ pub(crate) struct AauthConfig {
     /// Agent provider URL to the keys it signs agent tokens with. Matched exactly: a prefix
     /// comparison would let a lookalike issuer present as a configured one.
     pub(crate) providers: BTreeMap<String, Vec<ProviderKey>>,
-    /// This deployment's authority, which the request's `Host` must equal. Stands in for the
-    /// audience an agent token does not carry — see the module note.
+    /// This deployment's authority, which the request's authority must equal. Stands in for
+    /// the audience an agent token does not carry — see the module note.
     pub(crate) authority: String,
     /// Agents that may name principals other than themselves.
     pub(crate) pep: BTreeSet<String>,
@@ -199,17 +195,8 @@ impl CallerAuth for AauthConfig {
         now_secs: u64,
         body: &[u8],
     ) -> Result<Authenticated, Denied> {
-        let signed = sig::SignedRequest {
-            method: req.method().as_str(),
-            authority: header(req, "host").unwrap_or_default(),
-            path: req.uri().path(),
-            signature_key_header: header(req, "signature-key"),
-            signature_input_header: header(req, "signature-input"),
-            signature_header: header(req, "signature"),
-            content_digest_header: header(req, "content-digest"),
-            body,
-        };
-        authenticate(&signed, self, now_secs as i64)
+        let fields = sig::SignatureFields::from_request(req)?;
+        authenticate(&fields.request(req, body), self, now_secs as i64)
     }
 
     /// Two refusals carry a header the draft defines; the rest state which check failed
@@ -244,10 +231,6 @@ impl CallerAuth for AauthConfig {
     }
 }
 
-fn header<'a>(req: &'a axum::extract::Request, name: &str) -> Option<&'a str> {
-    req.headers().get(name).and_then(|v| v.to_str().ok())
-}
-
 /// Validate an AAuth agent token and the signature it is bound to, cheap self-asserted checks
 /// ahead of the expensive ones. Nothing before the two signature checks is believed.
 pub(crate) fn authenticate(
@@ -258,48 +241,21 @@ pub(crate) fn authenticate(
     if cfg.providers.is_empty() {
         return Err(Denied::Invalid("no agent providers are configured".into()));
     }
-    let key_header = req.signature_key_header.ok_or(Denied::NoCredentials)?;
-    let input_header = req
-        .signature_input_header
-        .ok_or_else(|| Denied::Invalid("request carries no Signature-Input".into()))?;
-    let sig_header = req
-        .signature_header
-        .ok_or_else(|| Denied::Invalid("request carries no Signature".into()))?;
-
-    if key_header.len() > MAX_TOKEN_BYTES || input_header.len() > MAX_TOKEN_BYTES {
-        return Err(Denied::Invalid(
-            "signature material exceeds the accepted size".into(),
-        ));
-    }
+    let headers = req.signature_headers()?;
 
     // The audience an agent token does not carry. Checked before any cryptography: this is
     // what stops a request signed for one deployment from verifying at another that pins the
-    // same provider. `@authority` is the client's `Host`, so it is only meaningful once it
-    // has been compared with what this server is actually called.
+    // same provider. `@authority` is the authority the client sent, so it is only meaningful
+    // once it has been compared with what this server is actually called.
     if !req.authority.eq_ignore_ascii_case(&cfg.authority) {
         return Err(Denied::Invalid(
             "request authority is not this deployment".into(),
         ));
     }
 
-    const LABEL: &str = "sig1";
-    let input = sig::parse_signature_input(LABEL, input_header)?;
-    let sig_bytes = sig::parse_signature(LABEL, sig_header)?;
+    let presented = req.presented(&headers, now_secs)?;
 
-    let components = sig::required_components(req.method, req.body);
-    if input.components.as_slice() != components {
-        return Err(Denied::Invalid(
-            "Signature-Input does not cover exactly the required components".into(),
-        ));
-    }
-    let age = now_secs - input.created;
-    if !(-sig::MAX_CLOCK_SKEW_AHEAD_SECS..=sig::MAX_SIGNATURE_AGE_SECS).contains(&age) {
-        return Err(Denied::Invalid(
-            "signature is outside the accepted freshness window".into(),
-        ));
-    }
-
-    let token = token_from_signature_key(key_header)?;
+    let token = token_from_signature_key(headers.key)?;
     let mut parts = token.split('.');
     let (h, p, s) = match (parts.next(), parts.next(), parts.next(), parts.next()) {
         (Some(h), Some(p), Some(s), None) if !s.is_empty() => (h, p, s),
@@ -483,25 +439,8 @@ pub(crate) fn authenticate(
     .map_err(|_| Denied::Invalid("cnf does not carry a usable jwk".into()))?;
     let confirmed = sig::jwk_to_verifying_key(&cnf.jwk)?;
 
-    let content_digest = sig::bind_content_digest(components, req)?;
-    // Normalized the same way `sig.rs` does, per RFC 9421 §2.2.1 and §2.2.3. A client that
-    // signed an uppercase method would otherwise get an opaque verification failure on a
-    // stack that presented the method in another casing.
-    let method = req.method.to_ascii_uppercase();
-    let authority = req.authority.to_ascii_lowercase();
-    let covered = sig::Covered {
-        method: &method,
-        authority: &authority,
-        path: req.path,
-        content_digest,
-        signature_key: key_header,
-    };
-    let mut values = Vec::with_capacity(components.len());
-    for component in components {
-        values.push(covered.value(component)?);
-    }
-    let base = sig::signature_base(components, &values, LABEL, input_header);
-    let request_sig = Signature::from_slice(&sig_bytes)
+    let base = req.signature_base(headers.key, &presented)?;
+    let request_sig = Signature::from_slice(&presented.signature)
         .map_err(|_| Denied::Invalid("signature is malformed".into()))?;
     confirmed
         .verify_strict(base.as_bytes(), &request_sig)
@@ -595,30 +534,35 @@ mod tests {
     ) -> (String, String, String) {
         let components = sig::required_components("POST", body);
         let digest = sig::content_digest_header_value(body);
-        let list = components
-            .iter()
-            .map(|c| format!("\"{c}\""))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let input = format!("sig1=({list});created={created}");
-        let covered = sig::Covered {
-            method: "POST",
-            authority: AUTHORITY,
-            path: PATH,
-            content_digest: Some(digest.as_str()),
-            signature_key: key_header,
-        };
-        let values: Vec<&str> = components
-            .iter()
-            .map(|c| covered.value(c).expect("fixture component"))
-            .collect();
-        let base = sig::signature_base(components, &values, "sig1", &input);
-        let s = agent.sign(base.as_bytes());
-        let sig_value = format!(
-            "sig1=:{}:",
-            base64::engine::general_purpose::STANDARD.encode(s.to_bytes())
-        );
+        let (input, sig_value) =
+            sign_components(agent, components, key_header, Some(&digest), created);
         (input, sig_value, digest)
+    }
+
+    /// `Signature-Input` and `Signature` for a POST covering `components`, the base written
+    /// out line by line rather than built by the code under test.
+    fn sign_components(
+        agent: &SigningKey,
+        components: &[&str],
+        key_header: &str,
+        digest: Option<&str>,
+        created: i64,
+    ) -> (String, String) {
+        let lines: Vec<(&str, &str)> = components
+            .iter()
+            .map(|c| {
+                let value = match *c {
+                    "@method" => "POST",
+                    "@authority" => AUTHORITY,
+                    "@path" => PATH,
+                    "content-digest" => digest.expect("fixture digest"),
+                    "signature-key" => key_header,
+                    other => panic!("fixture component {other}"),
+                };
+                (*c, value)
+            })
+            .collect();
+        crate::httpsig::sign_for_test(agent, &lines, created)
     }
 
     struct Fixture {
@@ -718,29 +662,7 @@ mod tests {
         let key_header = signature_key_header(&token);
         // The draft's list, without `content-digest`.
         let components = ["@method", "@authority", "@path", "signature-key"];
-        let list = components
-            .iter()
-            .map(|c| format!("\"{c}\""))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let input = format!("sig1=({list});created={CREATED}");
-        let covered = sig::Covered {
-            method: "POST",
-            authority: AUTHORITY,
-            path: PATH,
-            content_digest: None,
-            signature_key: &key_header,
-        };
-        let values: Vec<&str> = components
-            .iter()
-            .map(|c| covered.value(c).expect("fixture component"))
-            .collect();
-        let base = sig::signature_base(&components, &values, "sig1", &input);
-        let s = agent.sign(base.as_bytes());
-        let sig_value = format!(
-            "sig1=:{}:",
-            base64::engine::general_purpose::STANDARD.encode(s.to_bytes())
-        );
+        let (input, sig_value) = sign_components(&agent, &components, &key_header, None, CREATED);
         let r = sig::SignedRequest {
             method: "POST",
             authority: AUTHORITY,
@@ -1033,15 +955,22 @@ mod tests {
         assert!(matches!(err, Denied::Invalid(ref d) if d.contains("nbf is not a number")));
     }
 
-    /// A lowercase method must still verify: the signature base normalizes it the way
-    /// `sig.rs` does, so signer and verifier agree.
+    /// RFC 9421 §2.2.1: the method is case-sensitive and the base carries it as received. A
+    /// signature over `POST` does not cover a request whose method is `post`.
     #[test]
-    fn a_lowercase_method_still_verifies() {
+    fn the_method_is_signed_as_received() {
         let (provider, agent) = keys();
         let f = post_fixture(&provider, &agent);
+        authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
+            .expect("signed as sent");
         let mut r = req(&f, AUTHORITY);
         r.method = "post";
-        authenticate(&r, &cfg(&provider.verifying_key()), NOW).expect("should authenticate");
+        let err =
+            authenticate(&r, &cfg(&provider.verifying_key()), NOW).expect_err("another method");
+        assert!(
+            matches!(err, Denied::Invalid(ref d) if d.contains("confirmed key")),
+            "{err:?}"
+        );
     }
 
     #[test]
