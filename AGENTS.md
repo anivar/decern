@@ -1,13 +1,14 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # decern — agent & contributor guide
 
-decern is a deterministic authorization kernel: its safety properties are machine-checked
-over the whole input space, and every decision lands in a tamper-evident ledger. The
+decern is a deterministic authorization kernel: its safety properties are machine-checked over
+the Cedar model's symbolic input space, and every decision lands in a tamper-evident ledger. The
 guarantees are the product — a change that weakens one is a regression, even if it compiles.
 
 ## Layout
-- 7 library crates, plus `decern-cli` (binary `decern`: `prove` / `decide` / `verify`) and
-  `decern-server` (binary `decern-serve`: a thin, AuthZEN-shaped, fail-closed PDP).
+- 7 library crates, plus `decern-cli` (binary `decern`: `prove` / `decide` / `explain` /
+  `verify`) and `decern-server` (binary `decern-serve`: a thin, AuthZEN-shaped, fail-closed
+  PDP).
   See [ARCHITECTURE.md](ARCHITECTURE.md) for the crate map and where each contribution area lives.
 - `crates/decern-kernel/model/` — the Cedar policy, schema, and entities the kernel loads.
 - [`.agent/`](.agent/README.md) — how work is done here. Method only; no project history,
@@ -27,13 +28,13 @@ guarantees are the product — a change that weakens one is a regression, even i
 
 ## Conventions
 - Rust 2024, toolchain pinned in `rust-toolchain.toml`. Don't bump it casually.
-- No TLS stack: the core libraries and the `decern`/`decern-serve` binaries pull no
-  TLS, no OpenSSL and no `cmake`. That is the claim, and it is not "zero compiled
-  native code" — `cedar-policy` → `stacker` → `psm` compiles a small assembly routine
-  in every build, the default one included. The optional `decern-store-postgres` crate
-  (multi-host deployments need TLS) is the documented exception, and the binaries don't
-  depend on it. See that crate's README and [DEPENDENCIES.md](DEPENDENCIES.md). New
-  deps must be permissive-licensed and cheap to audit.
+- No TLS stack: the core libraries and the `decern`/`decern-serve` binaries pull no TLS, no
+  OpenSSL and no `cmake`. That is the claim, and it is not "zero compiled native code" —
+  `cedar-policy` → `stacker` → `psm` compiles a small assembly routine in every build, the
+  default one included. The optional `decern-store-postgres` crate (multi-host deployments need
+  TLS) is the documented exception, and the default build of the binaries doesn't depend on it.
+  See that crate's README and [DEPENDENCIES.md](DEPENDENCIES.md). New deps must be
+  permissive-licensed and cheap to audit.
 - Terse code, terse comments. Comment the non-obvious *why*, never the *what*.
 
 ## Verify before commit
@@ -80,12 +81,12 @@ still cost a guarantee:
 
 - **A caller posture is a `CallerAuth` implementation, never a parallel guard.** The trait and
   the single guard live in `crates/decern-server/src/caller.rs`; each credential posture
-  implements it in its own module (`bearer.rs`, `sig.rs`, `spiffe.rs`) and knows nothing of the
-  others, so the guard dispatches once and a posture added later cannot skip a step by being
-  wired in differently. Adding one means implementing the trait and joining the `ArgGroup` in
-  `main.rs` — not a second `guard()`. The *workload* postures additionally bind a caller to
-  the principals it may name; a posture that authenticates a workload and does not bind it is a
-  hole.
+  implements it in its own module (`bearer.rs`, `sig.rs`, `spiffe.rs`, `aauth.rs`) and knows
+  nothing of the others, so the guard dispatches once and a posture added later cannot skip a
+  step by being wired in differently. Adding one means implementing the trait and joining the
+  `ArgGroup` in `main.rs` — not a second `guard()`. The *workload* postures additionally bind a
+  caller to the principals it may name; a posture that authenticates a workload and does not
+  bind it is a hole.
 - **Some fields must never reach the kernel.** `asserted_by`, the decision subject, and a
   subject-side challenge are recorded or answered, and are removed from the context before the
   decision function runs — so a forged one can neither escalate nor deny (`decide.rs`,

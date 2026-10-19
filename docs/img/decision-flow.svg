@@ -21,7 +21,7 @@
   <rect x="340" y="88" width="220" height="144" rx="6" fill="#FFFFFF" stroke="#0C0F0E" stroke-width="1.5"/>
   <text x="450" y="112" text-anchor="middle" class="t" font-size="12" font-weight="600" fill="#0C0F0E">Caller established</text>
   <text x="450" y="134" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">bearer / signed-request</text>
-  <text x="450" y="150" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">SPIFFE / --trust-proxy</text>
+  <text x="450" y="150" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">SPIFFE / AAuth / --trust-proxy</text>
   <text x="450" y="172" text-anchor="middle" class="t" font-size="9" fill="#849490">workload postures bind names</text>
   <text x="450" y="188" text-anchor="middle" class="t" font-size="9" fill="#849490">unless listed in --pep</text>
   <text x="450" y="210" text-anchor="middle" class="t" font-size="9" fill="#0E7C6B">one posture required to start</text>

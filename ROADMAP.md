@@ -12,8 +12,9 @@ not re-baselined quietly.
 
 - **October 2026** — the verification gate runs weekly on an unchanged tree; Scorecard and
   OpenSSF Best Practices published; the 0.4.0 release with the RustCrypto line moved
-  together; the AAuth posture re-verified against draft `-11` (`AAuth-Requirement`
-  challenge, `clock_skew` signalling).
+  together; the AAuth posture answers with draft `-11`'s `AAuth-Requirement` challenge and
+  `clock_skew` signal, and does not yet conform to `-11` otherwise — the standards registry
+  lists each gap.
 - **November 2026** — the AuthZEN 1.0 certification scenario runs in CI; the
   COAZ-MCP binding (OpenID AuthZEN WG draft) replaces the ad-hoc tool-call mapping in
   `examples/mcp`; implementation feedback filed on the drafts.
@@ -64,10 +65,8 @@ Trust that survives the operator, and releases that survive us.
 - **Authority-graph export** — DOT and Mermaid renderings of the directory; the
   blast-radius half shipped, the export half remains
   ([#91](https://github.com/anivar/decern/issues/91)).
-- **Richer AuthZEN conformance** — metadata discovery
-  ([#92](https://github.com/anivar/decern/issues/92)) and broader request/response
-  coverage; align Mission "not yet decidable" with AuthZEN's pending-approval patterns
-  without forking the API.
+- **Richer AuthZEN conformance** — broader request/response coverage; align Mission "not
+  yet decidable" with AuthZEN's pending-approval patterns without forking the API.
 - **Identity admit** — the verified caller is now *recorded* (`asserted_by`); *admitting*
   token-exchange claims (`sub` + `act`) into subject and sponsor, so an externally issued
   agent identity is not body-spoofable, is the open half.

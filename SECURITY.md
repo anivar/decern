@@ -33,16 +33,18 @@ projection). The full map is in
 [docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly); a report that assumes an
 endpoint is unauthenticated should say which posture it was tested under.
 
-decern's safety invariants are machine-checked over the entire input space, but
-the project is pre-1.0 — reports of gaps in what the proofs actually cover are
+decern's safety invariants are machine-checked over the Cedar model's symbolic input
+space, and [what that covers](docs/CLI.md#what-proven-covers) is narrower than the whole
+server. The project is pre-1.0; reports of gaps in what the proofs actually cover are
 especially welcome.
 
 ## Verifying a release
 
-Every release asset is signed keyless with [cosign](https://github.com/sigstore/cosign) by
-the release workflow, so the signer is this repository's GitHub Actions identity, not a key
-anyone holds. From 0.4.0 each file ships with a Sigstore bundle, `<file>.sigstore.json`,
-carrying the signature, the signing certificate and the transparency-log entry:
+Every release binary and `SHA256SUMS` is signed keyless with
+[cosign](https://github.com/sigstore/cosign) by the release workflow, so the signer is this
+repository's GitHub Actions identity, not a key anyone holds. From 0.4.0 each file ships with a
+Sigstore bundle, `<file>.sigstore.json`, carrying the signature, the signing certificate and the
+transparency-log entry:
 
 ```sh
 cosign verify-blob \

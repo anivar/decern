@@ -403,8 +403,9 @@ standards:
       - crates/decern-server/src/aauth.rs
     conformance: >-
       The resource half of **agent identity access** (§4.2.1) only. Person identity access
-      verifies a person token and is not implemented. Resource-managed, PS authorization and
-      federated access need the resource to issue session or resource tokens, and decern
+      verifies a person token and is not implemented. Resource-managed access has the
+      resource run its own authorization interaction (§4.2.2), and PS authorization and
+      federated access need a Person Server's resource tokens; decern runs no interaction and
       issues no token: ROADMAP non-goals. `decern-server::aauth` verifies an `aa-agent+jwt`
       presented in `Signature-Key` under the `jwt` scheme, its own signature against the
       provider key, then the request signature against the key its `cnf` confirms. Providers
@@ -414,8 +415,8 @@ standards:
       deviation, not something the draft provides for; an agent whose provider is not
       configured is refused before any cryptography. `content-digest` is required on a
       bodied request, a component §11.2.4 lets a resource declare in
-      `additional_signature_components`; this deployment publishes no resource metadata, so
-      an agent learns of it only from the refusal. An agent token carries no `aud`, so
+      `additional_signature_components`; this deployment publishes no resource metadata and
+      the refusal names no component, so an agent cannot learn of it from the protocol. An agent token carries no `aud`, so
       `--aauth-audience` is required and the request's authority must equal it. `jti` is
       required and shape-checked, not used for replay detection. `parent_agent` is
       shape-checked and never reaches the kernel. A verified agent is a workload and binds
@@ -424,9 +425,10 @@ standards:
       more than 5s is refused with `Signature-Error: error=clock_skew` (§11.5.2); a token
       claiming a lifetime above 24 hours is refused (§5.3.1, a verifier policy). Not met,
       so a conformant agent is refused today: the token header must carry the polymorphic
-      `alg: EdDSA`, which §11.3.1 and §11.5.1 forbid in favour of `Ed25519`; `Signature-Input`
-      and `Signature` must be labelled `sig1` while every -11 example labels all three
-      headers `sig`; the covered components must be exactly this profile's list in its
+      `alg: EdDSA`, which §11.3.1 and §11.5.1 forbid in favour of `Ed25519`; the token is
+      taken from the `Signature-Key` member labelled `sig` while the signature verified is
+      labelled `sig1`, and §11.3.4 step 4 selects the member by the signature's label, so no
+      conformant agent satisfies both; the covered components must be exactly this profile's list in its
       order, where §11.3.4 step 2 asks only that the required ones be covered; an `alg`
       signature parameter is refused where §11.3.3.2 says to ignore it, and `expires` is
       refused where §11.3.4.2 says to honour it; `created` may be 5s ahead, not the 60s

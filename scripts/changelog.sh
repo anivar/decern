@@ -67,7 +67,7 @@ render() {
       fi
       cat "${f}"
       # A fragment need not end in a newline; the next entry still starts on its own line.
-      [ -n "$(tail -c 1 "${f}")" ] && echo
+      if [ -n "$(tail -c 1 "${f}")" ]; then echo; fi
     done
   done
 }

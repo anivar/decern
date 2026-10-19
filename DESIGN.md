@@ -49,8 +49,10 @@ for state, never as brand colour.
 - **Sans** — prose and UI.
   Stack: `-apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`.
 
-No external font files: keep the shipped artifacts zero-egress; the system stacks
-above fall back cleanly.
+No font file ships with decern. The diagram sources name a monospace stack from the list above,
+and the pages embed PNGs rendered from them, so no document makes a font request. The website
+(`docs/index.html`) is the exception: it loads IBM Plex Sans, IBM Plex Mono and Newsreader from
+Google Fonts.
 
 ## Usage
 

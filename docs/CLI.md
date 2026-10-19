@@ -120,8 +120,8 @@ decern explain --ledger /tmp/decern.jsonl --seq 0 --json
 | `--json` | Machine-readable instead of prose. |
 
 A denial, read back (from a live run; `asserted_by:` appears under any credential posture —
-bearer, signed request, or SPIFFE — and is absent under `--trust-proxy`, which verifies no
-caller of its own):
+bearer, signed request, SPIFFE or AAuth — and is absent under `--trust-proxy`, which verifies
+no caller of its own):
 
 ```
 seq:           1
@@ -173,14 +173,14 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | `--authzen-type-alias <REQUEST=MODEL>` | A request entity type and the model entity type it names (`user=Principal`). Repeatable. A PEP spells types in its own terms; the record carries the model's. A type with no alias passes through unchanged. The model type must be one the model's schema declares, or the server does not start. |
 | `--public-url <URL>` | This deployment's public base URL, advertised as the policy decision point by `GET /.well-known/authzen-configuration`. `https://`, or `http://` on loopback for a local walkthrough; an origin only. Omit and the document is not served. |
 | `--ledger <PATH>` | Single-file ledger. The default backend. Mutually exclusive with `--sharded`. |
-| `--sharded <DIR_OR_POSTGRES_URL>` | Hosted. A directory gives a per-shard `flock` head store (several processes, one host). A `postgres://` URL gives a multi-host head store and needs `--features postgres`. |
-| `--key <PATH>` | 32-byte hex signing seed, created at `0600` if absent and never overwritten. A key readable by group or other is **refused**, not loaded — it signs every record and tree head, so a readable copy is enough to forge history that verifies. Omit for an ephemeral key, which means nothing you record today verifies tomorrow. |
-| `--missions <PATH>` | Mission registry. Default `decern-missions.json` beside the ledger. |
-| `--require-mission` | Refuse any decision that does not name a live Mission. Client-supplied `human_approved` and `consent` are then stripped; `human_approved` is re-derived from the grant for MoveMoney. `consent` is **not** re-derived — a Mission is an approver's grant, not the resource owner's consent — so this makes on-behalf-of PII access fail closed rather than server-derived. |
+| `--sharded <DIR_OR_POSTGRES_URL>` | Hosted. A directory gives a per-shard `flock` head store (several processes, one host). A `postgres://` URL gives a multi-host head store and needs `--features postgres`, which the release binaries are not built with. The URL, any password in it included, is visible in the process list to other users of the host. |
+| `--key <PATH>` | 32-byte hex signing seed, created at `0600` if absent and never overwritten. A key readable by group or other is **refused**, not loaded — it signs every record and tree head, so a readable copy is enough to forge history that verifies. Omit for an ephemeral key, which means nothing you record today verifies tomorrow. An existing ledger is opened with this key alone, so a different key refuses to start: neither `decern-serve` nor `decern verify` exposes key rotation. |
+| `--missions <PATH>` | Mission registry. Default `decern-missions.json` beside the ledger, or in the working directory under `--sharded postgres://…`. It is a file on one host: under `--sharded postgres://…` each replica has its own, so a Mission approved or terminated through one replica is unknown to, or still live on, the others. |
+| `--require-mission` | Refuse any decision that does not name a live Mission. Client-supplied `human_approved` and `consent` are then stripped; `human_approved` is re-derived from the grant for MoveMoney. `consent` is **not** re-derived — a Mission is an approver's grant, not the resource owner's consent — so this makes on-behalf-of PII access fail closed rather than server-derived. A Mission binds only `Read` (scope `read`), `MoveMoney` (`move_money`) and `AccessPII` (`pii:read`), and under a Mission any other action is denied, so on a custom model this flag denies every action outside those three. |
 | `--standing-issuer-key <HEX>` | An issuer whose standing tokens this deployment accepts. Repeatable. Omit to accept no challenges. |
 | `--bearer-issuer <URL>` | The `iss` an access token must carry, matched exactly. Turns on bearer validation for the guarded routes; requires `--bearer-audience` and at least one `--bearer-issuer-key`. |
 | `--bearer-audience <URI>` | This deployment's resource identifier, which a token's `aud` must contain (RFC 8707 §2). |
-| `--bearer-issuer-key <HEX>` | An Ed25519 key access tokens may be signed by. Repeatable, so a key rollover is two configured keys rather than a window with none. |
+| `--bearer-issuer-key <HEX>` | An Ed25519 key access tokens may be signed by; only `EdDSA` tokens verify. Repeatable. Keys are read once at startup, so a rollover is the new key added and the server restarted before the issuer switches, then the old key removed on a later restart. |
 | `--bearer-scope <SCOPE>` | A scope every token must carry. Repeatable; all are required, and a verified token missing one is refused `403 insufficient_scope`. Omit for no scope check. |
 | `--signed-agent-key <ID=HEX>` | An agent identifier this deployment recognizes and the one Ed25519 key it may sign requests with. Repeatable: one entry per agent, and a key rollover is a second entry rather than an atomic swap. Turns on RFC 9421 + RFC 7800 sender-constrained request validation for the guarded routes; requires `--signed-audience`. One posture per deployment: naming a second is a startup failure. An identifier with no entry here cannot authenticate under this mode, by design: keys are configured, never fetched. |
 | `--signed-audience <URI>` | This deployment's resource identifier, which a signed request's bound token's `aud` must contain. Required with `--signed-agent-key`, same role as `--bearer-audience`. |
@@ -231,36 +231,37 @@ names one posture:
   or invalid gets `401` with an RFC 6750 challenge; a valid token missing a required scope gets
   `403`. Verification is signature-checking against configured keys, never fetching, so this adds
   no TLS stack and no reliance on a third party being reachable.
-- **Sender-constrained validation** (`--signed-agent-key`, `--signed-audience`): the guarded routes
-  require an RFC 9421 HTTP Message Signature over `@method`, `@authority`, `@path`, and
-  `signature-key`, plus `content-digest` (RFC 9530 `sha-256`) on POST, bound to an RFC 7800
-  `cnf.jwk` claim matching a key configured here for the claimed agent identifier. Where bearer
-  validation accepts a token as long as it is presented before it expires — a leaked bearer JWT
-  is replayable as-is — this mode requires proof of possession of the signing key on every
-  single request, and a captured signature over one POST body cannot authorize a different
-  one. GET is unchanged. A signed agent may additionally only *name itself*: the authenticated
-  agent must equal the AuthZEN `subject`, the mission `approver`, the stored approver on
-  terminate, and the principal id on `/directory/v1/principals/{id}/descendants`, unless it is
-  listed in `--pep`. A mismatch is `403 caller_mismatch` — the credential was accepted, the
-  name is not theirs. The same bind covers a request's `properties`, what a PEP says about the
-  subject, resource or action (carried into the context as `context.subject`,
+- **Sender-constrained validation** (`--signed-agent-key`, `--signed-audience`): the guarded
+  routes require an RFC 9421 HTTP Message Signature over `@method`, `@authority`, `@path`, and
+  `signature-key`, plus `content-digest` (RFC 9530 `sha-256`) on a POST or any request carrying
+  a body, bound to an RFC 7800 `cnf.jwk` claim matching a key configured here for the claimed
+  agent identifier. Where bearer validation accepts a token as long as it is presented before it
+  expires — a leaked bearer JWT is replayable as-is — this mode requires proof of possession of
+  the signing key on every single request, and a captured signature over one POST body cannot
+  authorize a different one. A signed agent may additionally only *name itself*: the
+  authenticated agent must equal the AuthZEN `subject`, the mission `approver`, the stored
+  approver on terminate, and the principal id on `/directory/v1/principals/{id}/descendants`,
+  unless it is listed in `--pep`. A mismatch is `403 caller_mismatch` — the credential was
+  accepted, the name is not theirs. The same bind covers a request's `properties`, what a PEP
+  says about the subject, resource or action (carried into the context as `context.subject`,
   `context.resource` and `context.action` where the action's schema declares them): a caller
-  bound to itself may not describe a party through `properties`, nor search for subjects —
-  a search names everyone — and each is `403 caller_mismatch`.
-  Verification is against configured keys only, same no-fetch posture as bearer validation,
-  and an agent identifier with no configured key is refused before any cryptography runs.
+  bound to itself may not describe a party through `properties`, nor search for subjects — a
+  search names everyone — and each is `403 caller_mismatch`. Verification is against configured
+  keys only, same no-fetch posture as bearer validation, and an agent identifier with no
+  configured key is refused before any cryptography runs.
   [`examples/signed-request/`](../examples/signed-request/README.md) runs this mode end to end,
-  including the beat that separates it from a bearer credential: the *same* token, refused when the
-  signature comes from a different key, and the beats that refuse an authenticated agent asking
-  or approving as someone else.
+  including the beat that separates it from a bearer credential: the *same* token, refused when
+  the signature comes from a different key, and the beats that refuse an authenticated agent
+  asking or approving as someone else.
 - **SPIFFE JWT-SVID validation** (`--spiffe-trust-domain`, `--spiffe-audience`): the guarded
   routes require a SPIFFE JWT-SVID, presented as a `Bearer` credential per JWT-SVID §5.2 and
   verified against a trust bundle configured for the trust domain its `sub` names. Trust domains
   are matched **exactly** — a prefix comparison would let `example.org.evil` present as
-  `example.org`. Bundles are read at startup and never fetched, so this adds no TLS stack and no
-  reliance on a third party being reachable; SPIFFE's own Federation spec leaves bundle
-  distribution out of scope and makes polling a `SHOULD`, so a pinned bundle is an ordinary
-  deployment rather than a degraded one.
+  `example.org`. Bundles are read once at startup and never fetched or reloaded, so this adds no
+  TLS stack and no reliance on a third party being reachable, and a new signing key takes
+  effect only on restart. SPIRE's default CA and signing-key TTL (`ca_ttl`) is 24 hours, so a
+  deployment pinning a SPIRE bundle refreshes it and restarts on that cadence, or SVIDs signed
+  by a newer key are refused.
   **`ES256` only.** JWT-SVID permits nine algorithms; `RS*`/`PS*` require the `rsa` crate, which
   carries an unpatched RUSTSEC-2023-0071 timing side-channel that this project's supply-chain gate
   refuses. A SPIRE deployment issuing RSA SVIDs is therefore **not** interoperable here — a real
@@ -272,10 +273,19 @@ names one posture:
   It is never minted into the authority graph
   either: what a decision may be *about* is unchanged, and stays closed-world exactly as under
   every other posture.
+- **AAuth agent tokens** (`--aauth-provider`, `--aauth-audience`): the guarded routes require an
+  `aa-agent+jwt` agent token in `Signature-Key`, from an agent provider configured here, whose
+  own signature verifies against that provider's pinned key, and an RFC 9421 signature over the
+  request, under the same profile as signed requests, by the key the token's `cnf` confirms. An
+  agent token carries no `aud`, so the request's authority must equal `--aauth-audience`. A
+  verified agent is a workload, bound to itself as a signed-request or SPIFFE caller is, unless
+  listed in `--pep`. This covers the draft's agent identity access only, and does not yet
+  conform to draft-hardt-oauth-aauth-protocol-11: an agent token minted to -11 is refused. The
+  [standards registry](../.agent/standards/registry.yaml) lists each gap.
+  [`examples/aauth/`](../examples/aauth/README.md) runs this mode end to end.
 - **`--trust-proxy`**: every caller is accepted, because the operator states that something in
   front — an authenticating proxy, a service mesh, the OS boundary around a local walkthrough —
-  has already established who is calling. The flag is that statement. It is exactly the old
-  behaviour, now a named choice rather than a default.
+  has already established who is calling. The flag is that statement.
 
 A credential establishes **the caller**. How far that constrains what the caller may talk
 *about* is a separate question, and the answer depends on the posture.
@@ -297,7 +307,59 @@ carries no bind at all. If your caller is a workload, give it a workload posture
 **outside the guard on purpose** — the party a decision was about will not hold a credential for
 the deployment that decided it. The handle is pseudonymous and matched exactly, so it answers
 someone who already knows their own handle and tells everyone else nothing; treat handles as
-secrets, and rate-limit this route at whatever fronts the server.
+secrets, and rate-limit this route at whatever fronts the server. The other open routes publish
+on purpose what an operator may still want to keep off a public network: the tree head gives
+the record count, and the subject-side disclosure names the `--pep` entries, trust domains and
+providers this deployment accepts.
+
+### Pairing with an identity provider
+
+Bearer validation verifies only an `EdDSA`-signed RFC 9068 `at+jwt` carrying `client_id`,
+`jti`, `iat` and, when `--bearer-scope` is set, a space-delimited `scope` claim, against
+Ed25519 keys configured here, and never fetches a JWKS. An identity provider that signs access
+tokens `RS256` cannot be verified: RSA needs the `rsa` crate, which the supply-chain gate
+refuses over RUSTSEC-2023-0071. Such a provider belongs in front: the enforcement point validates the user's token, names the
+user as the AuthZEN `subject`, and authenticates itself to decern with its own credential:
+a workload posture with the enforcement point listed in `--pep` (otherwise it may only name
+itself, and naming the user is `403 caller_mismatch`), an `EdDSA` token minted for it by a
+component in front, or `--trust-proxy` inside the network boundary.
+
+Present a service credential here, never an end user's token. Under any credential posture
+the token's `sub` is written to every record permanently, and `/audit/v1/subject` returns whole
+records to anyone holding a decision-subject handle on one of them.
+
+### What a record keeps
+
+Every decision record keeps, verbatim and permanently: the subject and resource ids, the
+action, the context attributes the model's schema declares for that action, the server's
+clock, the deciding policy ids, the accountable owner, the Mission named, any decision-subject
+handle, and under a credential posture the caller's `sub`, `client_id` and `iss`. A Mission
+approval record keeps the approver, the agent, the approved scopes and capabilities, the
+expiry and the `description` as sent. The ledger cannot be edited, so none of these can be
+erased later. Use pseudonymous ids, keep personal data out of Mission descriptions, and
+declare in the schema only attributes you are prepared to keep for the ledger's lifetime.
+
+### What a deployment supplies
+
+`decern-serve` leaves these to whatever runs it:
+
+- **Transport security.** It speaks plain HTTP and carries no TLS stack. Bind it to loopback
+  or a private network and terminate TLS, or mesh mTLS, in front; a bearer token sent to it
+  across an untrusted network travels in clear.
+- **Key rollover.** Every issuer key, trust bundle and provider key set is read once at
+  startup and never reloaded, and the server handles only SIGINT and SIGTERM. A new key takes
+  effect on restart, so configure it before the issuer starts signing with it.
+- **Observability.** The server prints one line at startup and nothing else: no request log,
+  no metrics, no tracing. A request refused before evaluation (malformed, unauthenticated, or
+  naming a party its caller may not) is not recorded, and neither it nor a failed append
+  (`503`) leaves a trace in the server. `/healthz` answers `ok` without checking the ledger.
+- **Ledger retention.** The single-file ledger is one file that grows without bound; nothing
+  rolls it over or archives it.
+- **High availability.** The single-file ledger is one process. `--sharded postgres://…`
+  spreads appends across hosts but leaves each with its own Mission registry, and anchoring
+  and `/audit/v1/subject` refuse a sharded ledger.
+- **Which model was proven.** Nothing checks that the model `decern-serve` loads is the one
+  `decern prove` checked. Run both against the same model directory from the same commit.
 
 ---
 
@@ -334,7 +396,7 @@ tamper-is-rejected end to end.
 
 ---
 
-## What "proven" covers {#what-proven-covers}
+## What "proven" covers
 
 The nine invariants are discharged by cvc5 over the whole **symbolic** input space the Cedar
 model admits — policy subsumption against a guard, not a sampled test. Two of them

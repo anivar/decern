@@ -12,7 +12,7 @@ A map of decern for contributors — human or agent. If you're here to pick some
 per-crate table below tells you *where* things live, and [CONTRIBUTING.md](CONTRIBUTING.md) tells
 you *how* to land a change.
 
-<p align="center"><img src="docs/img/architecture.png" alt="decern architecture: decern and decern-serve (four postures) over the kernel, identity, proof, ledger, store, and crypto crates" width="860"></p>
+<p align="center"><img src="docs/img/architecture.png" alt="decern architecture: decern and decern-serve (five postures) over the kernel, identity, proof, ledger, store, and crypto crates" width="860"></p>
 
 ## The shape
 
@@ -32,20 +32,25 @@ Two binaries over seven library crates. The stock build is pure Rust; the one ex
 | `decern-store-postgres` | lib *(optional)* | Multi-host `LedgerHeadStore` over Postgres advisory locks. Adds the TLS stack (rustls/ring) to the compiled-native dependencies; behind `--features postgres`. |
 | `decern-identity` | lib | The Mission core: approval-backed, provably-attenuated authority (`approve`, `ApprovedMission`, `MissionRegistry`). |
 | `decern-crypto` | lib | Ed25519 + SHA-256 primitives shared by the ledger and identity. |
-| `decern-cli` | bin → `decern` | `prove` / `decide` / `verify`. |
+| `decern-cli` | bin → `decern` | `prove` / `decide` / `explain` / `verify`. |
 | `decern-server` | bin → `decern-serve` | The fail-closed AuthZEN PDP: evaluate, record, serve. Also serves the Mission lifecycle over `decern-identity` (`POST /mission/v1/approve`, `GET`/`terminate`), recording each transition to the ledger. |
 
 `decern-server` is split by layer, one seam per file: `main.rs` (flags, the caller-posture
 refusal, startup), `routes.rs` (the router and the guarded/open split), `caller.rs` (how the
 caller is established: the posture enum, the `CallerAuth` trait every posture implements, and
 the one guard layer over the protected routes), `bearer.rs` (RFC 9068 token validation),
-`sig.rs` (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), `aauth.rs`
-(AAuth agent tokens verified against provider keys pinned at startup), `spiffe.rs`
-(SPIFFE JWT-SVID validation against pinned trust bundles), `record.rs` (the
-fail-closed append path), `decide.rs` (the decision handler and its derivations), `audit.rs`
-(the published reads: pubkey, tree head, subject projection, descendants, disclosure),
-`mission.rs` (the lifecycle), `challenge.rs` (the subject-side challenge), `testutil.rs`
-(shared fixtures).
+`sig.rs` (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), `aauth.rs` (AAuth agent
+tokens verified against provider keys pinned at startup), `spiffe.rs` (SPIFFE JWT-SVID
+validation against pinned trust bundles), `httpsig.rs` (the RFC 9421 verifier `sig.rs` and
+`aauth.rs` share: structured-field parsing and the signature base), `jose.rs` (compact-JWS
+decoding every token reader shares), `record.rs` (the fail-closed append path), `decide.rs` (the
+decision handler and its derivations), `batch.rs` (AuthZEN batch evaluation), `search.rs`
+(AuthZEN subject, resource and action search), `discovery.rs` (AuthZEN PDP metadata),
+`deployment.rs` (the type aliases and public URL a deployment declares, checked at boot),
+`audit.rs` (the published reads: pubkey, tree head, subject projection, descendants,
+disclosure), `mission.rs` (the lifecycle), `challenge.rs` (the subject-side challenge),
+`testutil.rs` (shared fixtures), and `authzen_certification/` (the OpenID AuthZEN certification
+scenario, run under `cargo test`).
 
 The credential postures sit under `caller.rs` and know nothing of each other: each
 owns one spec's rules and implements the same trait, so the guard dispatches once and a
@@ -58,7 +63,8 @@ method and the standards registry. `scripts/verify.sh` is the one gate every cha
 
 1. A request reaches `decern-serve` (`POST /access/v1/evaluation`, AuthZEN-shaped), and the
    caller is established first, by one of the named postures: an RFC 9068 bearer token, an
-   RFC 9421 signed request, a SPIFFE JWT-SVID, or the declared front under `--trust-proxy`.
+   RFC 9421 signed request, a SPIFFE JWT-SVID, an AAuth agent token, or the declared front
+   under `--trust-proxy`.
    Every credential posture verifies against keys configured at startup — nothing is
    fetched. A server with no posture named refuses to start, and naming two is a startup
    failure; under any credential posture a request with no verified caller is refused before
@@ -101,7 +107,8 @@ depends on a derived attribute (e.g. the transitive delegation closure), the der
 Rust covered by property tests and is documented as such. See `decern-proof` and `AGENTS.md`.
 
 The solver runs in `decern prove` and CI only — `decern-serve` does not link it. The guarantee is
-established where the proofs run, not on the request path.
+established where the proofs run, not on the request path, and nothing checks that the model
+`decern-serve` loads is the one `decern prove` checked.
 
 ## Where to start contributing
 
