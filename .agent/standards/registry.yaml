@@ -222,7 +222,7 @@ standards:
 
   - name: JWT Profile for OAuth 2.0 Access Tokens (RFC 9068)
     url: https://www.rfc-editor.org/rfc/rfc9068
-    verified: 2026-08-08
+    verified: 2026-10-19
     surface:
       - crates/decern-server/src/bearer.rs
     conformance: >-
@@ -232,8 +232,16 @@ standards:
       the configured resource identifier, then the signature, then `exp`/`nbf`.
       All §2.2 required claims (`iss`, `exp`, `aud`, `sub`, `client_id`, `iat`,
       `jti`) must be present; `jti` uniqueness and lifetime bounds remain the
-      issuer's responsibility. Verification only — decern issues nothing.
-      Verified against the spec 2026-08-08.
+      issuer's responsibility. A failure answers `invalid_token` and a missing
+      required scope `insufficient_scope` (§4, RFC 6750 §3.1). The keys are the ones
+      the operator configures, never fetched, which §4's "MUST use the keys provided
+      by the authorization server" allows. Not met: §2.1 requires a conforming
+      resource server to "include RS256 (as defined in [RFC7518]) among their
+      supported signature algorithms", and this posture verifies `EdDSA` only, so it
+      is not a conforming RFC 9068 resource server. RS256 needs RSA verification the
+      supply-chain gate does not admit today; the decision is
+      https://github.com/anivar/decern/issues/226. Verification only — decern issues
+      nothing. Read in full 2026-10-19.
 
   - name: OAuth 2.0 Bearer Token Usage (RFC 6750)
     url: https://www.rfc-editor.org/rfc/rfc6750

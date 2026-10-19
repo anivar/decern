@@ -689,11 +689,13 @@ fn scope_for_action(action: &str) -> Option<&'static str> {
 /// action the grant does not cover, so each flag set here is backed by that check.
 fn apply_mission_context(ctx: &mut Value, action: &str) {
     strip_client_approval_flags(ctx);
-    // A verified Mission that covers MoveMoney is the human approval that
-    // F-money requires. It is not a data subject's consent: F-consent is a
-    // different claim, about the resource owner, and an approver granting
-    // `pii:read` never made it. AccessPII and Read therefore leave `consent`
-    // unset — the same as they already did for Read.
+    // A verified Mission that covers MoveMoney is what F-money's `human_approved`
+    // stands for. `approve` does not check that the approver is human or distinct
+    // from the agent, so the flag means a covering Mission was granted, not that
+    // someone else approved. It is not a data subject's
+    // consent: F-consent is a different claim, about the resource owner, and an
+    // approver granting `pii:read` never made it. AccessPII and Read therefore leave
+    // `consent` unset — the same as they already did for Read.
     if action == "MoveMoney" {
         ctx["human_approved"] = json!(true);
     }

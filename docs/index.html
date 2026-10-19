@@ -107,8 +107,8 @@
      two-line rows. Both spend their first two columns on fixed widths (44px
      and 196px for the rules, 212px and 80px for the crates) and give the rest
      to the sentence that actually says something. On a 360px screen that left
-     the sentence about 60px, which set "No privileged money action without
-     explicit approval" one word to a line and ran the row to ten lines deep.
+     the sentence about 60px, which set the money-gate sentence one word to a
+     line and ran the row to ten lines deep.
      Stacked, the identifier keeps its own line and the sentence gets the
      full width. Not a horizontal scroll like the ledger: the ledger is a
      record whose columns have to stay aligned to be read as a record, and
@@ -364,17 +364,17 @@
             <tr>
               <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top;width:44px">01</td>
               <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top;width:196px">money-gate</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">No privileged money action without explicit approval.</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">No MoveMoney allow unless the context carries human_approved.</td>
             </tr>
             <tr>
               <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">02</td>
               <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">isolation</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">No decision ever crosses a tenant boundary.</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">No allow ever crosses a tenant boundary.</td>
             </tr>
             <tr>
               <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">03</td>
               <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">decay</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">No decision once authority has expired.</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">No allow once authority has expired.</td>
             </tr>
             <tr>
               <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">04</td>
@@ -404,7 +404,7 @@
             <tr>
               <td style="padding:15px 16px 15px 0;border-bottom:1px solid #0C0F0E;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">09</td>
               <td style="padding:15px 24px 15px 0;border-bottom:1px solid #0C0F0E;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">consent-gate</td>
-              <td style="padding:15px 0;border-bottom:1px solid #0C0F0E;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">Non-owned PII needs explicit consent.</td>
+              <td style="padding:15px 0;border-bottom:1px solid #0C0F0E;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">Non-owned PII needs the context to carry consent.</td>
             </tr>
           </tbody>
         </table>
@@ -416,7 +416,7 @@
           </div>
           <div style="border:1px solid #E1E7E4;background:#EDF3F1;padding:26px">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">What it does not prove</p>
-            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">cvc5 proves the kernel's rules. It cannot tell whether your policy says what you meant, and it is never a claim that a deployment is secure — the deciding endpoints validate RFC 9068 bearer tokens, signed requests, SPIFFE identities or AAuth agent tokens when configured, or run behind a declared authenticating front; the server refuses to start with none stated. Where a rule leans on a derived value, that part is ordinary tested Rust and is written up as such. The full boundary lives in the repository, under <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md#known-limits-in-this-release">known limits in this release ↗</a>.</p>
+            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">cvc5 proves the kernel's rules. It cannot tell whether your policy says what you meant, and it is never a claim that a deployment is secure — the deciding endpoints validate EdDSA-signed RFC 9068 bearer tokens, signed requests, SPIFFE identities or AAuth agent tokens when configured, or run behind a declared authenticating front; the server refuses to start with none stated. Where a rule leans on a derived value, that part is ordinary tested Rust and is written up as such. The full boundary lives in the repository, under <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md#known-limits-in-this-release">known limits in this release ↗</a>.</p>
           </div>
         </div>
       </div>

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
-//! Who is asking. RFC 9068 JWT access-token validation for `decern-serve`.
+//! Who is asking. RFC 9068 JWT access-token validation for `decern-serve`, for `EdDSA`
+//! tokens only. RFC 9068 §2.1 makes RS256 mandatory to implement for a conforming resource
+//! server, so this applies the profile's checks without conforming to it.
 //!
 //! Every recorded decision names a subject, and the subject is what the record is *about*.
 //! A decision recorded against a party the server took on trust from whoever connected is a
