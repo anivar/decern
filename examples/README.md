@@ -18,10 +18,14 @@ except `quickstart.sh`, which is for running by hand.
 - [`spiffe/`](spiffe/) — a caller identified by a SPIFFE JWT-SVID, verified against a trust
   bundle pinned at startup. No SPIRE daemon: the example mints its own ES256 SVIDs.
 - [`aauth/`](aauth/) — an AAuth agent token verified against provider keys pinned at startup,
-  with the request signed by the key the token's `cnf` confirms. Identity-based access only,
-  and it shows the two places decern's profile is stricter than the draft: providers are never
-  discovered, and a request with a body must cover its digest.
+  with the request signed by the key the token's `cnf` confirms. Agent identity access only.
+  Providers are pinned rather than discovered, a request with a body must cover its digest,
+  and a conformant draft -11 agent is refused today; its README says where.
 
 The first two integrations are a pair: same decision point, consulted from inside the tool
 server or from the gateway in front of it. The rest are about the other axis — not where the
 decision point sits, but how much a caller has to prove to reach it.
+
+[`authzen-certification/`](authzen-certification/) is a fixture rather than an integration:
+the OpenID AuthZEN 1.0 certification scenario as a decern model, whose invariants CI proves and
+whose scenario tests run under `cargo test`.

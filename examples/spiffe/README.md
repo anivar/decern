@@ -26,7 +26,7 @@ service refused; a missing credential answered with the RFC 6750 challenge; the 
 disclosing its trust domains and `bind: self`; and the ledger naming the workload decern
 verified.
 
-## Two things worth knowing before you deploy this
+## Before you deploy this
 
 **`ES256` only, and that is a real interoperability limit.** JWT-SVID permits nine
 algorithms. `RS*` and `PS*` need the `rsa` crate, which carries
@@ -34,7 +34,6 @@ algorithms. `RS*` and `PS*` need the `rsa` crate, which carries
 side-channel that can recover the private key, **with no patched version**. decern's
 supply-chain gate runs with no advisory exceptions, so admitting RSA would mean writing one
 for a known key-recovery bug. A SPIRE deployment issuing RSA SVIDs will not work here.
-That is a genuine limit, and it is stated rather than softened.
 
 **A workload speaks only for itself.** Like a signed-request agent, a verified SVID may
 only name itself as AuthZEN `subject`, mission `approver`, stored approver on terminate, and

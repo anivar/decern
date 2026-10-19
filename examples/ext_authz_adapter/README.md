@@ -3,7 +3,7 @@
 
 A generic external authorization HTTP adapter for `decern-serve`.
 
-Translates incoming API gateway authorization checks (e.g. NGINX `auth_request`, Traefik `forwardAuth`, HAProxy, or Envoy `ext_authz`) into AuthZEN JSON evaluations against `decern-serve`. Fails closed on deny, PDP error, malformed response, a missing forwarded header, or unreachable PDP. The in-process counterpart is [`../mcp/`](../mcp/README.md) — same decision point, consulted from inside an MCP tool server instead of at the gateway.
+Translates incoming API gateway authorization checks (e.g. NGINX `auth_request`, Traefik `forwardAuth`, HAProxy, or Envoy `ext_authz`) into AuthZEN JSON evaluations against `decern-serve`. Fails closed on deny, PDP error, malformed response, a missing forwarded header, a forwarded header sent more than once, or unreachable PDP. The in-process counterpart is [`../mcp/`](../mcp/README.md) — same decision point, consulted from inside an MCP tool server instead of at the gateway.
 
 ---
 
@@ -20,7 +20,8 @@ The API gateway must set that header itself (from verified identity/JWT) and str
 ## Build and run
 
 ```bash
-# Build the adapter standalone binary
+# Build the adapter: its own Cargo project, outside the workspace
+cd examples/ext_authz_adapter
 cargo build --release
 
 # Run pointing at decern-serve (default PDP address: http://127.0.0.1:8080)
@@ -34,9 +35,9 @@ cargo build --release
 | Flag | Default | Description |
 |---|---|---|
 | `--listen-addr` | `127.0.0.1:9090` | Address for the adapter to bind and listen on. |
-| `--pdp-url` | `http://127.0.0.1:8080` | URL of the `decern-serve` PDP evaluation endpoint. |
+| `--pdp-url` | `http://127.0.0.1:8080` | Base URL of `decern-serve`; the adapter appends `/access/v1/evaluation`. |
 | `--subject-header` | `x-forwarded-subject` | Header carrying the verified subject identity. |
-| `--method-header` | `x-forwarded-method` | Header carrying the original HTTP method (`Read`, `Write`, etc.). |
+| `--method-header` | `x-forwarded-method` | Header whose value is passed verbatim as `action.name` (`Read`). |
 | `--uri-header` | `x-forwarded-uri` | Header carrying the original URI path (`/claims/1`). |
 | `--subject-type` | `Principal` | Cedar subject entity type passed to AuthZEN evaluation. |
 | `--resource-type` | `Resource` | Cedar resource entity type passed to AuthZEN evaluation. |
@@ -49,7 +50,7 @@ cargo build --release
 
 | Endpoint | Method | Purpose | Response |
 |---|---|---|---|
-| `/healthz` | `GET` | Liveness/readiness probe for Kubernetes & Load Balancers. | `200 OK` (`"ok"`) |
+| `/healthz` | `GET` | Liveness probe. It does not ask the PDP, so it says nothing about readiness. | `200 OK` (`"ok"`) |
 | `/check` | `POST`, `GET` | Authorization check route called by API Gateways. | `200 OK` (allow), `403` (deny), `503` (unavailable) |
 
 ---
@@ -65,6 +66,8 @@ cargo build --release
 | Configured `--resource-type` | `resource.type` | `"Resource"` |
 
 The URI header's value is passed verbatim as the resource id — decern matches it against the ids its model declares, so the gateway maps paths to resource ids (`/claims/claim1` → `claim1`) before forwarding, or the model declares path-shaped ids. A value the model has never heard of denies, which is the correct default.
+
+The method header's value is passed verbatim as the action name in the same way. Every gateway example below forwards the HTTP method (`GET`, `POST`), and the builtin model declares no action of that name, so as written each one denies every request: the gateway maps methods to the model's action names before forwarding, or the model declares actions named after methods.
 
 ---
 
@@ -105,7 +108,7 @@ server {
 
 ### Traefik `forwardAuth`
 
-In Traefik, `forwardAuth` automatically forwards original request headers (`X-Forwarded-Method`, `X-Forwarded-Uri`, etc.) to the auth server. To pass a verified subject header (e.g., set by an upstream authentication middleware or OAuth proxy), use `authRequestHeaders` to forward `X-Forwarded-User` or `X-Forwarded-Subject`, or configure `--subject-header x-forwarded-user` on the adapter:
+In Traefik, `forwardAuth` sets `X-Forwarded-Method` and `X-Forwarded-Uri` from the request it is checking. With `trustForwardHeader: false` it first removes the client's copies of the X-Forwarded headers Traefik manages itself, and those two are among them. `X-Forwarded-User` and `X-Forwarded-Subject` are not: `authRequestHeaders` passes on whatever the request carries, a client's copy included. An earlier middleware must remove the client's copy and set the verified one, or the client chooses who it is. Point `--subject-header` at whichever of the two that middleware sets:
 
 ```yaml
 http:
@@ -121,57 +124,24 @@ http:
         # Receive the decision header back from the adapter
         authResponseHeaders:
           - "X-Decern-Decision"
-        # Traefik strips client-supplied headers from untrusted clients
+        # Replaces X-Forwarded-Method and X-Forwarded-Uri with Traefik's own values.
+        # Leaves X-Forwarded-User and X-Forwarded-Subject alone: strip those earlier.
         trustForwardHeader: false
 ```
 
 ### Envoy HTTP `ext_authz` filter
 
-> **`allowed_headers` forwards what is on the request, including a copy the client sent.**
-> Unlike the NGINX example (which overwrites the header with `$remote_user`) and the Traefik
-> one (`trustForwardHeader: false`), this filter config does not strip anything by itself.
-> Something upstream of it must remove any client-supplied `x-forwarded-subject` and set the
-> value from verified identity — otherwise the adapter authorizes whatever the client claims
-> to be, and every decision it records looks perfectly well-formed.
+Nothing in this repository runs the adapter behind Envoy, so this section states what a configuration must do rather than offering one. Envoy sets none of the three forwarded headers itself, and the filter's `allowed_headers` passes on whatever the request carries, a client's copy included. Ahead of `ext_authz`, something must remove every client copy of all three headers and set them: the subject from verified identity (for example a claim `jwt_authn` verified), the method and URI from the request. Without that the client chooses its subject, its action and its resource, and every decision it records looks well-formed. A route-level `request_headers_to_remove` is not evidence of this on its own: confirm in the Envoy version you run that the removal applies before `ext_authz` reads the headers.
 
-```yaml
-# Drop any client-supplied copy before anything can read it. Confirm in your own config
-# that this applies ahead of the ext_authz filter: header mutation and filter order are
-# separate concerns in Envoy, and "configured somewhere" is not the same as "applied first".
-route_config:
-  request_headers_to_remove:
-    - "x-forwarded-subject"
-
-http_filters:
-  # ... the filter that establishes identity (e.g. envoy.filters.http.jwt_authn) runs here
-  # and writes x-forwarded-subject from a verified claim ...
-  - name: envoy.filters.http.ext_authz
-    typed_config:
-      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
-      http_service:
-        server_uri:
-          uri: "http://127.0.0.1:9090/check"
-          cluster: ext_authz_adapter
-          timeout: 0.25s
-        authorization_request:
-          allowed_headers:
-            patterns:
-              - exact: "x-forwarded-subject"
-              - exact: "x-forwarded-method"
-              - exact: "x-forwarded-uri"
-        authorization_response:
-          allowed_upstream_headers:
-            patterns:
-              - exact: "x-decern-decision"
-```
+The check request's path is `path_prefix` followed by the original request's path, and the adapter answers only `GET` and `POST` on `/check`, so set `path_override: "/check"` and confirm which method your Envoy sends the check with. Name the three headers in the filter's `allowed_headers`; `authorization_request.allowed_headers` is deprecated.
 
 ---
 
 ## How it composes with decern-serve caller postures
 
-`decern-serve` requires an explicit caller posture on boot, and names one of four. Two of them suit a gateway, and the adapter supports both.
+`decern-serve` requires an explicit caller posture on boot, and names one of five. Two of them suit a gateway, and the adapter supports both.
 
-The other two — `--signed-agent-key` and `--spiffe-trust-domain` — are *workload* postures: they bind a caller to the principals it may name, so it can only ask about itself. An adapter asks on behalf of everyone behind the gateway, which is the opposite. Run it under one of those only if the deployment also lists the adapter in `--pep`.
+The other three — `--signed-agent-key`, `--spiffe-trust-domain` and `--aauth-provider` — are *workload* postures: they bind a caller to the principals it may name, so it can only ask about itself. An adapter asks on behalf of everyone behind the gateway, which is the opposite. The adapter presents at most a bearer token, so of the three only `--spiffe-trust-domain` accepts it, with a JWT-SVID as the token. That is useful only when the adapter's SPIFFE ID is listed in `--pep`, and only until the SVID expires: the adapter reads its token once at startup and never refreshes it.
 
 ### Standard proxy trust posture (`--trust-proxy`)
 
@@ -187,7 +157,7 @@ ext-authz-adapter --listen-addr 127.0.0.1:9090 --pdp-url http://127.0.0.1:8080
 
 ### Bearer validation posture (`--bearer-issuer`)
 
-When `decern-serve` requires OAuth 2.1 / RFC 9068 bearer validation (`--bearer-issuer` / `--bearer-audience` / `--bearer-issuer-key`), the adapter acts as the client holding the service access token. Pass `--pdp-bearer-token <TOKEN>` to the adapter:
+When `decern-serve` requires OAuth 2.1 / RFC 9068 bearer validation (`--bearer-issuer` / `--bearer-audience` / `--bearer-issuer-key`), the adapter acts as the client holding the service access token. Give it the token in `PDP_BEARER_TOKEN` (or `--pdp-bearer-token`, which every user on the host can read from argv):
 
 ```bash
 # 1. Boot decern-serve with Ed25519 bearer token validation enabled
@@ -195,13 +165,13 @@ decern-serve \
   --addr 127.0.0.1:8080 \
   --bearer-issuer https://auth.example.com \
   --bearer-audience https://decern.example.com \
-  --bearer-issuer-key 9c3af6c8d1e24f7b8a55e0d2c4b6f8a19c3af6c8d1e24f7b8a55e0d2c4b6f8a1
+  --bearer-issuer-key "$ISSUER_PUBKEY_HEX"
 
 # 2. Boot ext-authz-adapter presenting the service access token to decern-serve
-ext-authz-adapter \
+#    (read from PDP_BEARER_TOKEN, so it stays out of argv)
+PDP_BEARER_TOKEN="$SERVICE_ACCESS_TOKEN" ext-authz-adapter \
   --listen-addr 127.0.0.1:9090 \
-  --pdp-url http://127.0.0.1:8080 \
-  --pdp-bearer-token "eyJhbGciOiJFZERTQSI...service_access_token..."
+  --pdp-url http://127.0.0.1:8080
 ```
 
 ---
@@ -235,6 +205,7 @@ The adapter enforces a strict fail-closed contract on every request path:
 | PDP returns `{"decision": true}` | `200 OK` | `x-decern-decision: allow` | Request allowed by policy. |
 | PDP returns `{"decision": false}` | `403 Forbidden` | `x-decern-decision: deny` | Request denied by policy. |
 | Missing/empty subject, method, or URI header | `403 Forbidden` | `x-decern-decision: deny` | An incomplete forward is refused, never evaluated under a default. |
+| Subject, method, or URI header present more than once | `403 Forbidden` | `x-decern-decision: deny` | No copy can be trusted over another. |
 | PDP unreachable / timeout | `503 Service Unavailable` | `x-decern-decision: unavailable` | Fail-closed on network failure. |
 | PDP non-2xx (e.g. ledger fail) | `503 Service Unavailable` | `x-decern-decision: unavailable` | Fail-closed on PDP internal error. |
 | Malformed JSON body from PDP | `503 Service Unavailable` | `x-decern-decision: unavailable` | Malformed response is never an allow. |

@@ -5,7 +5,7 @@ decern's bearer mode (`--bearer-issuer`) verifies an RFC 9068 access token: a re
 but a *bearer* check. Whoever holds the bytes may use them until they expire, so a token
 captured in a log, a proxy, or a crash dump is replayable as-is by whoever captured it.
 
-This example runs the other mode. `--signed-agent-key` requires an
+This example runs `--signed-agent-key`, which requires an
 [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) HTTP Message Signature over the
 request itself, made with the key an
 [RFC 7800](https://www.rfc-editor.org/rfc/rfc7800.html) `cnf` claim binds to the presented
@@ -16,19 +16,21 @@ now, with the key the token confirms.
 agent ──Signature-Key:   <token bound to a key via cnf.jwk>──▶ decern-serve ──▶ ledger
         Signature-Input: ("@method" "@authority" "@path"       (--signed-agent-key
                           "content-digest" "signature-key");    agent-1=<hex>)
-                         created=…   [content-digest on POST]
+                         created=…   [content-digest on a POST or a body]
         Content-Digest:  sha-256=:<SHA-256 of the body>:
         Signature:       sig1=:<Ed25519 over the base>:
 ```
 
-The token travels in `Signature-Key`, per
-[`draft-hardt-httpbis-signature-key`](https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/),
-and is itself one of the covered components — so tampering with any claim inside it
+The token travels as the whole `Signature-Key` value, not as the `jwt`-scheme dictionary
+member
+[`draft-hardt-httpbis-signature-key`](https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/)
+defines, and is itself one of the covered components — so tampering with any claim inside it
 invalidates the outer signature. That is why decern does not separately verify the token's
 own JWS signature: the outer signature already covers it, and a second check would prove
-nothing the first does not. POST also covers `content-digest` (RFC 9530, `sha-256` of the
-body bytes the handler will see), so a captured signature over one JSON body cannot
-authorize a different one at the same path. GET is unchanged: it has no body to cover.
+nothing the first does not. A POST, and any request with a body, also covers
+`content-digest` (RFC 9530, `sha-256` of the body bytes the handler will see), so a captured
+signature over one JSON body cannot authorize a different one at the same path. A bodiless
+GET does not.
 Verbatim replay of the *same* captured signature (same path, same body) is not separately
 prevented — no nonce cache — and verifies again within the freshness window.
 

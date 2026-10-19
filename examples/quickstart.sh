@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 PORT=8791
 LEDGER="$(mktemp -u)-decern-ledger.jsonl"
 
-echo "== 1. Prove all invariants over the entire input space (cvc5) =="
+echo "== 1. Prove all invariants over the model's symbolic input space (cvc5) =="
 cargo run -q -p decern-cli -- prove
 
 echo

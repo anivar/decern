@@ -15,6 +15,8 @@ Standard library only — no `requests`, no `httpx`. Python ≥ 3.11.
 uv add decern
 # and a server to ask:
 cargo install decern-server && decern-serve --trust-proxy
+# and, to check the log afterwards:
+cargo install decern-cli
 ```
 
 ```python
@@ -29,24 +31,27 @@ d = c.evaluate(
 )
 
 d.allowed   # True / False
-d.reasons   # the policies that decided it, on allow
-d.errors    # why not, on deny
+d.reasons   # ids of the policies that decided it, permit or forbid
+d.errors    # evaluation failures and server gates (a missing Mission); neither: a default deny
 ```
 
 When `token` is set it is sent as `Authorization: Bearer` on every request, for a
 deployment that requires bearer tokens on the evaluation endpoint.
 
-Also on the client: `c.pubkey()` (the Ed25519 key id the log is signed with) and
-`c.healthy()`. A non-2xx response or transport failure raises `DecernError` with the HTTP
-status and body, so a denial is distinguishable from a misconfigured endpoint. `context` is
-advisory — the server overrides anything it derives itself (the clock, the accountable
-owner), so a caller cannot talk its way into a decision by supplying them.
+Also on the client: `c.pubkey()` (the Ed25519 key id the log is signed with) and `c.healthy()`.
+A non-2xx response or transport failure raises `DecernError` with the HTTP status and body, so a
+denial is distinguishable from a misconfigured endpoint. `context` reaches the policies wherever
+the model's schema declares it, apart from keys the server reserves for the caller, the Mission
+and the challenge. The server sets `now` from its own clock, and records the accountable owner
+and any verified caller itself, whatever the context says.
 
 ## What the server gives you
 
 [decern](https://github.com/anivar/decern) is an [AuthZEN
 1.0](https://openid.net/specs/authorization-api-1_0.html) authorization server whose safety
-rules are machine-checked over every input, and whose decisions land in an append-only,
+rules are machine-checked over the model's symbolic input space ([what that
+covers](https://github.com/anivar/decern/blob/main/docs/CLI.md#what-proven-covers)), and whose
+decisions land in an append-only,
 signed, hash-chained log **before** they are served — a decision that cannot be recorded is
 refused, and a third party can verify what was decided without trusting the operator:
 
