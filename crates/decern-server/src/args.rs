@@ -96,7 +96,7 @@ pub(crate) struct Args {
         requires = "bearer_issuer"
     )]
     bearer_scopes: Vec<String>,
-    /// An agent identifier this deployment recognizes and the one Ed25519 key it may
+    /// An agent identifier this deployment recognizes and an Ed25519 key it may
     /// sign requests with, as `ID=HEX`. Repeatable: one entry per agent, and a key
     /// rollover is a second entry for the same ID rather than an atomic swap. Turns on
     /// RFC 9421 signed-request validation (see `docs/CLI.md` "Sender-constrained caller
@@ -318,10 +318,12 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
             if id.is_empty() {
                 anyhow::bail!("--signed-agent-key {entry} names an empty agent id");
             }
-            agents.insert(
-                id.to_owned(),
-                parse_issuer_key(hex_key, "--signed-agent-key")?,
-            );
+            let key = parse_issuer_key(hex_key, "--signed-agent-key")?;
+            let keys: &mut Vec<_> = agents.entry(id.to_owned()).or_default();
+            if keys.contains(&key) {
+                anyhow::bail!("--signed-agent-key names {id} with the same key twice");
+            }
+            keys.push(key);
         }
         // clap's `requires` establishes this; the check stays for the same reason the
         // bearer path's does — a future edit to the clap attribute should degrade to
@@ -915,5 +917,50 @@ mod tests {
             "not-hex",
         ]);
         assert!(caller_from(&args).is_err());
+    }
+
+    /// A rollover is a second `--signed-agent-key` for the same id: both keys verify until the
+    /// old one is dropped. The same key given twice is a mistake to report, not a rollover.
+    #[test]
+    fn a_second_key_for_the_same_agent_is_a_rollover_not_a_replacement() {
+        let k1 = hex::encode(
+            decern_crypto::generate()
+                .unwrap()
+                .verifying_key()
+                .to_bytes(),
+        );
+        let k2 = hex::encode(
+            decern_crypto::generate()
+                .unwrap()
+                .verifying_key()
+                .to_bytes(),
+        );
+        let both = [format!("a={k1}"), format!("a={k2}")];
+        let args = Args::parse_from([
+            "decern-serve",
+            "--signed-agent-key",
+            &both[0],
+            "--signed-agent-key",
+            &both[1],
+            "--signed-audience",
+            "https://pdp.example",
+        ]);
+        let caller::Caller::Signed(cfg) = caller_from(&args).unwrap() else {
+            panic!("not the signed posture");
+        };
+        assert_eq!(cfg.agents["a"].len(), 2, "both keys are kept");
+        let args = Args::parse_from([
+            "decern-serve",
+            "--signed-agent-key",
+            &both[0],
+            "--signed-agent-key",
+            &both[0],
+            "--signed-audience",
+            "https://pdp.example",
+        ]);
+        let Err(e) = caller_from(&args) else {
+            panic!("the same key twice was accepted");
+        };
+        assert!(e.to_string().contains("same key twice"), "{e}");
     }
 }

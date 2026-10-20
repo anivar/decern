@@ -522,7 +522,7 @@ mod tests {
     /// `--pep` or bound to itself.
     fn signed_router(st: AppState, key: &SigningKey, pep: bool) -> axum::Router {
         let mut agents = std::collections::BTreeMap::new();
-        agents.insert("agent-1".to_owned(), key.verifying_key());
+        agents.insert("agent-1".to_owned(), vec![key.verifying_key()]);
         let mut cfg = crate::sig::SigConfig::new(agents, SIGNED_AUD);
         if pep {
             cfg.pep.insert("agent-1".into());
