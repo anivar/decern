@@ -13,6 +13,7 @@ use crate::batch::evaluations;
 use crate::decide::decide;
 use crate::discovery::authzen_configuration;
 use crate::mission::{mission_approve, mission_get, mission_terminate};
+use crate::record::healthz;
 use crate::search::{search_action, search_resource, search_subject};
 use crate::{AppState, caller};
 
@@ -79,7 +80,7 @@ pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
     // credential for the deployment that decided about them, which is the point of the
     // subject-side surface. The pseudonymous handle is that route's whole access control.
     Router::new()
-        .route("/healthz", get(|| async { "ok" }))
+        .route("/healthz", get(healthz))
         .route("/pubkey", get(pubkey))
         .route("/anchor/v1/tree-head", get(tree_head))
         .route(
@@ -903,6 +904,26 @@ mod tests {
             has_error(&body, "was not approved by a principal of subject"),
             "{body}"
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A ledger that can no longer record does not recover in-process, so the health
+    /// check says so and a liveness probe restarts the server.
+    #[tokio::test]
+    async fn healthz_is_503_once_the_ledger_cannot_record() {
+        let base = mission_base();
+        let (st, _pubkey) = mission_state_at(&base);
+        let status = crate::record::healthz(State(st.clone())).await.status();
+        assert_eq!(status, StatusCode::OK);
+        let LedgerBackend::Single(ledger) = &*st.backend else {
+            panic!("a single-file ledger was expected");
+        };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = ledger.lock().unwrap();
+            panic!("poison the ledger lock");
+        }));
+        let status = crate::record::healthz(State(st.clone())).await.status();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         let _ = std::fs::remove_dir_all(&base);
     }
 

@@ -214,7 +214,7 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 | `POST` | `/mission/v1/{s256}/terminate` | guarded | End it. A terminated Mission never revives. |
 | `GET` | `/.well-known/decern-subject-side-disclosure` | open | What this deployment does about challenges and callers, read from its running configuration. |
 | `GET` | `/.well-known/authzen-configuration` | open | AuthZEN 1.0 PDP metadata: the decision point and its evaluation endpoint, when `--public-url` is set; 404 otherwise. |
-| `GET` | `/healthz` | open | `ok`. |
+| `GET` | `/healthz` | open | `ok`, or `503` once the single-file ledger has stopped after a write error; a restart recovers. |
 
 "Guarded" routes require the caller to be established; "open" routes are open by intent — they are
 operational, published on purpose, or answerable only to a party who already holds the handle they
@@ -354,12 +354,15 @@ declare in the schema only attributes you are prepared to keep for the ledger's 
 - **Observability.** The server prints one line at startup and nothing else: no request log,
   no metrics, no tracing. A request refused before evaluation (malformed, unauthenticated, or
   naming a party its caller may not) is not recorded, and neither it nor a failed append
-  (`503`) leaves a trace in the server. `/healthz` answers `ok` without checking the ledger.
+  (`503`) leaves a trace in the server. `/healthz` checks only that the single-file ledger
+  can still record.
 - **Ledger retention.** The single-file ledger is one file that grows without bound; nothing
   rolls it over or archives it.
-- **Recovery after a write error.** A write that fails part-way, on a full disk for example,
-  leaves the ledger refusing every later append, so every decision is answered `503` until the
-  server is restarted. The restart trims the partial record and the ledger continues.
+- **Recovery after a write error.** A write, flush or sync error on the single-file ledger,
+  on a full disk for example, leaves it refusing every later append: every decision is answered
+  `503`, and `/healthz` answers `503` so a liveness probe restarts the server. The restart trims
+  an unterminated record and the ledger continues. A record written in full before its sync
+  failed is kept, though its request was answered `503`.
 - **High availability.** The single-file ledger is one process. `--sharded postgres://…`
   spreads appends across hosts but leaves each with its own Mission registry, and anchoring
   and `/audit/v1/subject` refuse a sharded ledger.

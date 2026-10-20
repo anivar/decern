@@ -896,6 +896,12 @@ impl Ledger {
         self.verifiers.iter().map(key_fingerprint).collect()
     }
 
+    /// Whether a write error has stopped this ledger. It refuses every append until it is
+    /// reopened, so a process holding it needs a restart to record again.
+    pub fn has_failed(&self) -> bool {
+        self.failed
+    }
+
     /// Enable/disable fsync-per-append (see the `sync` field). Returns self for
     /// builder-style config right after `open`.
     pub fn set_sync(&mut self, sync: bool) -> &mut Self {
@@ -4021,6 +4027,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let mut l = Ledger::open(&path, key.clone()).unwrap();
         l.append(entry("Read", true)).unwrap();
+        assert!(!l.has_failed());
 
         // The write fails after part of the record reached the file.
         let writable = std::mem::replace(&mut l.file, File::open(&path).unwrap());
@@ -4031,6 +4038,7 @@ mod tests {
             .write_all(br#"{"entry":{"seq":1,"#)
             .unwrap();
         assert!(l.append(entry("Read", true)).is_err());
+        assert!(l.has_failed());
 
         // Space returns and the file is writable again; the ledger still refuses.
         l.file = writable;
