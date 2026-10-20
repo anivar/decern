@@ -984,21 +984,7 @@ impl Ledger {
         // (never-acked) tail. (`write_all` may still short-write on a crash, but
         // it can no longer succeed at the record yet skip a separate terminator.)
         line.push('\n');
-
-        self.file
-            .write_all(line.as_bytes())
-            .and_then(|_| self.file.flush())
-            // Crash-DURABLE when enabled: force the bytes to disk before we return the
-            // record, so a power loss cannot drop the tail of a log the caller was told
-            // was written. Off by default (fast, crash-consistent).
-            .and_then(|_| {
-                if self.sync {
-                    self.file.sync_data()
-                } else {
-                    Ok(())
-                }
-            })
-            .map_err(|e| self.write_failed(e))?;
+        self.write_line(&line)?;
 
         let record = Record {
             entry,
@@ -1036,6 +1022,26 @@ impl Ledger {
         }
         outcome?;
         Ok(records)
+    }
+
+    /// Write one newline-terminated record, and force it to disk when sync is on. This is
+    /// the only place a record's bytes reach the file, so a failure here marks the ledger
+    /// failed: part of the record may be in the file.
+    fn write_line(&mut self, line: &str) -> Result<(), LedgerError> {
+        self.file
+            .write_all(line.as_bytes())
+            .and_then(|_| self.file.flush())
+            // Crash-DURABLE when enabled: force the bytes to disk before we return the
+            // record, so a power loss cannot drop the tail of a log the caller was told
+            // was written. Off by default (fast, crash-consistent).
+            .and_then(|_| {
+                if self.sync {
+                    self.file.sync_data()
+                } else {
+                    Ok(())
+                }
+            })
+            .map_err(|e| self.write_failed(e))
     }
 
     /// A write error after bytes may have reached the file: mark the ledger failed, so
