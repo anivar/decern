@@ -35,8 +35,10 @@ Two binaries over seven library crates. The stock build is pure Rust; the one ex
 | `decern-cli` | bin → `decern` | `prove` / `decide` / `explain` / `verify`. |
 | `decern-server` | bin → `decern-serve` | The fail-closed AuthZEN PDP: evaluate, record, serve. Also serves the Mission lifecycle over `decern-identity` (`POST /mission/v1/approve`, `GET`/`terminate`), recording each transition to the ledger. |
 
-`decern-server` is split by layer, one seam per file: `main.rs` (flags, the caller-posture
-refusal, startup), `routes.rs` (the router and the guarded/open split), `caller.rs` (how the
+`decern-server` is split by layer, one seam per file: `main.rs` (the module tree, and the entry
+point that runs the server on a thread with the stack Cedar needs), `args.rs` (flags, the
+default ledger and Mission registry paths, the caller-posture refusal), `boot.rs` (startup and
+shutdown), `state.rs` (the state every handler shares), `routes.rs` (the router and the guarded/open split), `caller.rs` (how the
 caller is established: the posture enum, the `CallerAuth` trait every posture implements, and
 the one guard layer over the protected routes), `bearer.rs` (RFC 9068 token validation, `EdDSA`
 only), `sig.rs` (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), `aauth.rs`

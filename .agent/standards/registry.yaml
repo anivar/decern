@@ -16,6 +16,9 @@ rule: >-
 # is neither here nor in a surface list fails scripts/standards.py check.
 non_surface:
   - crates/decern-server/src/main.rs
+  - crates/decern-server/src/args.rs
+  - crates/decern-server/src/boot.rs
+  - crates/decern-server/src/state.rs
   - crates/decern-server/src/mission.rs
   - crates/decern-server/src/record.rs
   - crates/decern-server/src/audit.rs
