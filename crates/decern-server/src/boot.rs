@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use decern_kernel::{Kernel, Model};
 use decern_ledger::{Ledger, ShardedLedger, UNATTRIBUTED_SHARD};
-use decern_store::{FileLedgerHeadStore, FileMissionRegistry};
+use decern_store::{FileLedgerHeadStore, FileMissionRegistry, LedgerHeadStore};
 use ed25519_dalek::SigningKey;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -51,10 +51,29 @@ pub(crate) async fn serve() -> Result<()> {
     serve_with(Args::parse()).await
 }
 
-/// Start the server `args` describe. Every check a flag can fail runs before the first write,
-/// so a refused boot leaves no key, ledger or registry behind and a failed deployment can be
-/// retried as it stands. The caller posture comes first of all.
+/// Start the server `args` describe.
 pub(crate) async fn serve_with(args: Args) -> Result<()> {
+    let boot = prepare(args).await?;
+    println!("{}", boot.line);
+    axum::serve(boot.listener, app(boot.state, boot.caller))
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    Ok(())
+}
+
+/// A boot that has done everything but serve: what `serve_with` hands to the server, and what
+/// a test can drop.
+pub(crate) struct Boot {
+    pub(crate) listener: tokio::net::TcpListener,
+    pub(crate) state: AppState,
+    pub(crate) caller: Arc<caller::Caller>,
+    pub(crate) line: String,
+}
+
+/// Check and open what `args` describe. Every check a flag can fail runs before the first
+/// write, so a refused boot leaves no key, ledger or registry behind and a failed deployment
+/// can be retried as it stands. The caller posture comes first of all.
+pub(crate) async fn prepare(args: Args) -> Result<Boot> {
     let caller = Arc::new(caller_from(&args)?);
     let caller_desc = caller_summary(&caller);
     let model = match &args.model {
@@ -109,6 +128,49 @@ pub(crate) async fn serve_with(args: Args) -> Result<()> {
         .clone()
         .unwrap_or_else(|| default_missions_path(args.ledger.as_ref(), sharded.as_ref()));
 
+    // The key a ledger was signed with is the key it keeps being signed with: a new key, or
+    // an ephemeral one, would fork the signing identity, and the next restart under the old
+    // key would read the fork as tampering. A ledger that exists is therefore extended only by
+    // a key file that exists; whether that file holds the right key is checked against the
+    // records once it is loaded, below. Checked here by presence alone, before anything is
+    // written. A Postgres head store cannot be looked at before connecting, so a missing key
+    // file is refused only after it is created when that store already holds shards.
+    let ledger_path = args
+        .ledger
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_LEDGER));
+    if sharded.is_some() && args.key.is_none() {
+        anyhow::bail!(
+            "--sharded needs --key: a shared head store is signed by one key across restarts \
+             and replicas, and an ephemeral key would fork it"
+        );
+    }
+    let existing = match &sharded {
+        None if ledger_path.exists() => Some(format!("ledger {}", ledger_path.display())),
+        Some(ShardedTarget::Dir(dir)) if dir.exists() => {
+            let shards = FileLedgerHeadStore::new(dir)
+                .with_context(|| format!("opening sharded head store at {}", dir.display()))?
+                .list_shards()
+                .map_err(|e| anyhow::anyhow!("listing shards at {}: {e}", dir.display()))?;
+            (!shards.is_empty()).then(|| format!("sharded head store {}", dir.display()))
+        }
+        _ => None,
+    };
+    if let Some(what) = &existing {
+        match &args.key {
+            None => anyhow::bail!(
+                "{what} exists and --key is not given; an ephemeral key cannot extend it. Point \
+                 --key at the key it was signed with, or move it aside to start a new ledger"
+            ),
+            Some(p) if !p.exists() => anyhow::bail!(
+                "{what} exists and --key {} does not; point --key at the key it was signed with, \
+                 or move the ledger aside to start a new one",
+                p.display()
+            ),
+            _ => {}
+        }
+    }
+
     // A port already taken is refused here too, before anything is written.
     let listener = tokio::net::TcpListener::bind(&args.addr)
         .await
@@ -118,6 +180,7 @@ pub(crate) async fn serve_with(args: Args) -> Result<()> {
     // The writes, each after what it depends on: the key, the ledger it signs, the registry.
     let key = load_signing_key(args.key.as_ref())?;
     let pubkey = key.verifying_key();
+    let kid = hex::encode(pubkey.to_bytes());
     let (backend, backend_desc) = match sharded {
         Some(target) => {
             let desc = target.describe();
@@ -130,15 +193,38 @@ pub(crate) async fn serve_with(args: Args) -> Result<()> {
                 }
             };
             let sharded = ShardedLedger::new(store, key, vec![]);
+            // Opening a shard verifies nothing, unlike a single-file ledger, so the key is
+            // checked against each shard's last record here. Every record of a shard is read
+            // to reach its last one, which is what the head store offers; a boot pays that
+            // once.
+            for shard in sharded.list_shards()? {
+                let records = sharded.read_records(&shard, 0, usize::MAX)?;
+                if let Some(signed_by) = records
+                    .last()
+                    .and_then(|r| r.get("kid"))
+                    .and_then(|k| k.as_str())
+                    && signed_by != kid
+                {
+                    anyhow::bail!(
+                        "shard {shard} was last signed by key {signed_by}, and --key holds {kid}; a \
+                         sharded ledger is signed by one key across restarts and replicas, so \
+                         point --key at that key"
+                    );
+                }
+            }
             (LedgerBackend::Sharded(sharded), desc)
         }
         None => {
-            let path = args.ledger.unwrap_or_else(|| PathBuf::from(DEFAULT_LEDGER));
-            let mut ledger = Ledger::open(&path, key)?;
+            // Opening verifies the whole chain under this key; a record signed by another is
+            // refused, and the context names the key this boot holds beside the one that
+            // signed the record.
+            let mut ledger = Ledger::open(&ledger_path, key).with_context(|| {
+                format!("opening ledger {} with key {kid}", ledger_path.display())
+            })?;
             // Durable by default in the server: an append the PEP acks (and acts
             // on) must survive a crash — `sync_data` before `append` returns.
             ledger.set_sync(true);
-            let desc = format!("ledger {}", path.display());
+            let desc = format!("ledger {}", ledger_path.display());
             (LedgerBackend::Single(Mutex::new(ledger)), desc)
         }
     };
@@ -160,18 +246,25 @@ pub(crate) async fn serve_with(args: Args) -> Result<()> {
         authority_digest,
         caller_disclosure: Arc::new(caller_disclosure(&caller)),
     };
-    println!(
-        "decern-serve on {} — {}, missions {}, {}, kid {}",
+    let line = format!(
+        "decern-serve on {} — {}, missions {}, {}, kid {}{}",
         bound,
         backend_desc,
         missions_path.display(),
         caller_desc,
-        hex::encode(pubkey.to_bytes())
+        kid,
+        if args.key.is_none() {
+            " (ephemeral)"
+        } else {
+            ""
+        }
     );
-    axum::serve(listener, app(state, caller))
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
-    Ok(())
+    Ok(Boot {
+        listener,
+        state,
+        caller,
+        line,
+    })
 }
 
 /// The caller posture in the startup line's words.
@@ -356,5 +449,179 @@ mod tests {
             assert!(left.is_empty(), "{name}: a refused boot left {left:?}");
             let _ = std::fs::remove_dir_all(&dir);
         }
+    }
+
+    fn entry() -> decern_ledger::Entry {
+        decern_ledger::Entry {
+            action: "Read".into(),
+            subject_type: "Principal".into(),
+            subject_id: "s".into(),
+            resource_type: "R".into(),
+            resource_id: "r".into(),
+            context: serde_json::json!({"now": 1}),
+            ..Default::default()
+        }
+    }
+
+    fn kid_of(key_file: &std::path::Path) -> String {
+        hex::encode(
+            decern_crypto::load_signing_key(key_file)
+                .unwrap()
+                .verifying_key()
+                .to_bytes(),
+        )
+    }
+
+    fn fresh_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("decern-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A ledger is extended only by the key that signed it. A different existing key is
+    /// refused naming both key ids; a key file that does not exist, or no key at all, is
+    /// refused before anything is written; the same key boots again.
+    #[tokio::test]
+    async fn a_ledger_keeps_the_key_it_was_signed_with() {
+        let dir = fresh_dir("ledger-key");
+        let (k1, k2, k3) = (dir.join("k1"), dir.join("k2"), dir.join("k3"));
+        decern_crypto::save_signing_key(&decern_crypto::generate().unwrap(), &k2).unwrap();
+        let ledger = dir.join("l.jsonl");
+        let missions = dir.join("m.json");
+        let argv = |key: Option<&std::path::Path>| {
+            let mut v: Vec<String> = ["decern-serve", "--trust-proxy", "--addr", "127.0.0.1:0"]
+                .map(String::from)
+                .to_vec();
+            v.extend(["--ledger".into(), ledger.display().to_string()]);
+            v.extend(["--missions".into(), missions.display().to_string()]);
+            if let Some(k) = key {
+                v.extend(["--key".into(), k.display().to_string()]);
+            }
+            Args::parse_from(v)
+        };
+
+        let boot = prepare(argv(Some(&k1))).await.unwrap();
+        let LedgerBackend::Single(l) = &*boot.state.backend else {
+            panic!("single-file backend expected");
+        };
+        l.lock().unwrap().append(entry()).unwrap();
+        assert!(!boot.line.contains("(ephemeral)"));
+        drop(boot);
+
+        let e = prepare(argv(Some(&k2)))
+            .await
+            .err()
+            .expect("the boot should have been refused");
+        let msg = format!("{e:#}");
+        assert!(
+            msg.contains(&kid_of(&k1)) && msg.contains(&kid_of(&k2)),
+            "{msg}"
+        );
+
+        let e = prepare(argv(None))
+            .await
+            .err()
+            .expect("the boot should have been refused");
+        assert!(e.to_string().contains("ephemeral"), "{e}");
+
+        let e = prepare(argv(Some(&k3)))
+            .await
+            .err()
+            .expect("the boot should have been refused");
+        assert!(e.to_string().contains("does not"), "{e}");
+        assert!(!k3.exists(), "a refused boot created the key file");
+
+        prepare(argv(Some(&k1))).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The same rule for a sharded store, whose open verifies nothing on its own: each shard's
+    /// last record is checked against the key, and `--sharded` without `--key` is refused.
+    #[tokio::test]
+    async fn a_sharded_ledger_keeps_the_key_it_was_signed_with() {
+        let dir = fresh_dir("sharded-key");
+        let (k1, k2, k3) = (dir.join("k1"), dir.join("k2"), dir.join("k3"));
+        decern_crypto::save_signing_key(&decern_crypto::generate().unwrap(), &k2).unwrap();
+        let heads = dir.join("heads");
+        let missions = dir.join("m.json");
+        let argv = |key: Option<&std::path::Path>| {
+            let mut v: Vec<String> = ["decern-serve", "--trust-proxy", "--addr", "127.0.0.1:0"]
+                .map(String::from)
+                .to_vec();
+            v.extend(["--sharded".into(), heads.display().to_string()]);
+            v.extend(["--missions".into(), missions.display().to_string()]);
+            if let Some(k) = key {
+                v.extend(["--key".into(), k.display().to_string()]);
+            }
+            Args::parse_from(v)
+        };
+
+        let e = prepare(argv(None))
+            .await
+            .err()
+            .expect("the boot should have been refused");
+        assert!(e.to_string().contains("--sharded needs --key"), "{e}");
+        assert!(!heads.exists(), "a refused boot created the head store");
+
+        let boot = prepare(argv(Some(&k1))).await.unwrap();
+        let LedgerBackend::Sharded(s) = &*boot.state.backend else {
+            panic!("sharded backend expected");
+        };
+        s.append("t", entry()).unwrap();
+        drop(boot);
+
+        let e = prepare(argv(Some(&k2)))
+            .await
+            .err()
+            .expect("the boot should have been refused");
+        let msg = e.to_string();
+        assert!(
+            msg.contains("shard t") && msg.contains(&kid_of(&k1)) && msg.contains(&kid_of(&k2)),
+            "{msg}"
+        );
+
+        let e = prepare(argv(Some(&k3)))
+            .await
+            .err()
+            .expect("the boot should have been refused");
+        assert!(e.to_string().contains("does not"), "{e}");
+        assert!(!k3.exists(), "a refused boot created the key file");
+
+        prepare(argv(Some(&k1))).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The Mission registry defaults into the shard directory. The boot-time key check lists
+    /// shards there, and neither the registry nor its lock is one.
+    #[tokio::test]
+    async fn a_sharded_ledger_with_the_default_registry_path_boots_again() {
+        let dir = fresh_dir("sharded-default-registry");
+        let k1 = dir.join("k1");
+        let heads = dir.join("heads");
+        assert_eq!(
+            default_missions_path(None, Some(&ShardedTarget::Dir(heads.clone()))),
+            heads.join("decern-missions.json")
+        );
+        let argv = || {
+            Args::parse_from([
+                "decern-serve",
+                "--trust-proxy",
+                "--addr",
+                "127.0.0.1:0",
+                "--sharded",
+                heads.to_str().unwrap(),
+                "--key",
+                k1.to_str().unwrap(),
+            ])
+        };
+        let boot = prepare(argv()).await.unwrap();
+        let LedgerBackend::Sharded(s) = &*boot.state.backend else {
+            panic!("sharded backend expected");
+        };
+        s.append("t", entry()).unwrap();
+        drop(boot);
+        prepare(argv()).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
