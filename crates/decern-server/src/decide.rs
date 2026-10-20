@@ -709,9 +709,7 @@ pub(crate) fn bind_mission(
     ctx: &Value,
     now: u64,
 ) -> MissionBind {
-    let mission_val = ctx.get("mission");
-    let named = mission_val.is_some() && !mission_val.map(|v| v.is_null()).unwrap_or(true);
-    if !named {
+    let Some(mission) = ctx.get("mission").filter(|v| !v.is_null()) else {
         // MoveMoney requires a Mission unconditionally, independent of
         // `--require-mission`: an operator who has not opted into the flag must
         // still be unable to move money on a body-asserted `human_approved`. Every
@@ -725,74 +723,80 @@ pub(crate) fn bind_mission(
         } else {
             MissionBind::None
         };
-    }
-    let Some(obj) = mission_val.and_then(|v| v.as_object()) else {
-        return MissionBind::Deny(vec![
-            "context.mission must be an object {approver,s256}".into(),
-        ]);
     };
+    match bound_mission(registry, dir, subject_id, action, mission, now) {
+        Ok(reference) => MissionBind::Ok(reference),
+        Err(refusal) => MissionBind::Deny(vec![refusal]),
+    }
+}
+
+/// Every check a named Mission must pass to back this decision, in order. The first that
+/// fails is the refusal.
+fn bound_mission(
+    registry: &dyn MissionRegistry,
+    dir: &Directory,
+    subject_id: &str,
+    action: &str,
+    mission: &Value,
+    now: u64,
+) -> Result<decern_ledger::MissionRef, String> {
+    let obj = mission
+        .as_object()
+        .ok_or_else(|| "context.mission must be an object {approver,s256}".to_owned())?;
     let approver = obj.get("approver").and_then(|v| v.as_str()).unwrap_or("");
     let s256 = obj.get("s256").and_then(|v| v.as_str()).unwrap_or("");
     if approver.is_empty() || s256.is_empty() {
-        return MissionBind::Deny(vec![
-            "context.mission requires non-empty approver and s256".into(),
-        ]);
+        return Err("context.mission requires non-empty approver and s256".to_owned());
     }
 
-    let entry = match registry.status(s256) {
-        Ok(Some(e)) => e,
-        Ok(None) => {
-            return MissionBind::Deny(vec![format!("mission {s256} names no registered approval")]);
-        }
-        Err(e) => {
-            return MissionBind::Deny(vec![format!("mission registry unavailable: {e}")]);
-        }
-    };
+    let entry = registry
+        .status(s256)
+        .map_err(|e| format!("mission registry unavailable: {e}"))?
+        .ok_or_else(|| format!("mission {s256} names no registered approval"))?;
     if entry.terminated {
-        return MissionBind::Deny(vec![format!("mission {s256} is terminated")]);
+        return Err(format!("mission {s256} is terminated"));
     }
     if entry.expiry <= now {
-        return MissionBind::Deny(vec![format!("mission {s256} is expired")]);
+        return Err(format!("mission {s256} is expired"));
     }
     if entry.approver != approver {
-        return MissionBind::Deny(vec![format!(
+        return Err(format!(
             "mission {s256} approver mismatch (registry {}, request {approver})",
             entry.approver
-        )]);
+        ));
     }
     if entry.agent.is_empty() {
-        return MissionBind::Deny(vec![format!(
+        return Err(format!(
             "mission {s256} has no agent on file (re-approve to enable decision-under-mission)"
-        )]);
+        ));
     }
     if entry.agent != subject_id {
-        return MissionBind::Deny(vec![format!(
+        return Err(format!(
             "mission {s256} authorizes agent {}, not subject {subject_id}",
             entry.agent
-        )]);
+        ));
     }
     match scope_for_action(action) {
         Some(scope) if !entry.approved_tools.iter().any(|t| t == scope) => {
-            return MissionBind::Deny(vec![format!(
+            return Err(format!(
                 "mission {s256} does not approve tool/scope `{scope}` for action {action}"
-            )]);
+            ));
         }
         // An action with no scope mapping cannot be shown to be covered by this
         // grant, so it is refused. Silently skipping the check would let any new
         // action ride on every Mission until someone remembered to map it.
         None => {
-            return MissionBind::Deny(vec![format!(
+            return Err(format!(
                 "action {action} has no scope mapping, so mission {s256} cannot be shown to approve it"
-            )]);
+            ));
         }
         _ => {}
     }
     // A Mission backs a decision only about a subject the model names, approved by a
     // principal the model names, in the same tenant. `approve` refuses a cross-tenant
     // grant; this also refuses one a registry already holds from a release that did not,
-    // and an approval this model cannot place in any tenant.
-    // One refusal for every way this fails, so it does not say whether the approver
-    // exists in another tenant.
+    // and an approval this model cannot place in any tenant. It is one refusal for every
+    // way this fails, so it does not say whether the approver exists in another tenant.
     let same_tenant = match (
         dir.principals.get(&entry.approver),
         dir.principals.get(subject_id),
@@ -801,12 +805,12 @@ pub(crate) fn bind_mission(
         _ => false,
     };
     if !same_tenant {
-        return MissionBind::Deny(vec![format!(
+        return Err(format!(
             "mission {s256} was not approved by a principal of subject {subject_id}'s tenant"
-        )]);
+        ));
     }
 
-    MissionBind::Ok(decern_ledger::MissionRef {
+    Ok(decern_ledger::MissionRef {
         approver: approver.to_owned(),
         s256: s256.to_owned(),
     })
