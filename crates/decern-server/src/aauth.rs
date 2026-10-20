@@ -1119,6 +1119,37 @@ mod tests {
         authenticate(&req(&f, AUTHORITY), &c, NOW).expect("a sub-agent of the same provider");
     }
 
+    /// §5.3.3 step 2: a `ps` claim, when present, is a server identifier, `https://` and a
+    /// lowercase host alone.
+    #[test]
+    fn a_ps_claim_is_checked_as_a_server_identifier() {
+        let (provider, agent) = keys();
+        let c = cfg(&provider.verifying_key());
+        let f = fixture_with(
+            &provider,
+            &agent,
+            |_| {},
+            |cl| {
+                cl["ps"] = json!("https://ps.example");
+            },
+        );
+        authenticate(&req(&f, AUTHORITY), &c, NOW).expect("a host alone is a server identifier");
+        for ps in [
+            "https://ps.example/path",
+            "https://ps.example/",
+            "https://PS.example",
+            "http://ps.example",
+            "https://ps.example:8443",
+        ] {
+            let f = fixture_with(&provider, &agent, |_| {}, |cl| cl["ps"] = json!(ps));
+            let err = authenticate(&req(&f, AUTHORITY), &c, NOW).expect_err("should refuse");
+            assert!(
+                matches!(err, Denied::Invalid(ref d) if d.contains("ps is not a server identifier")),
+                "{ps} was refused for another reason"
+            );
+        }
+    }
+
     /// §11.1.1's own valid and invalid examples, plus the whitespace case kept from before.
     #[test]
     fn a_provider_identifier_is_https_and_a_lowercase_host_alone() {

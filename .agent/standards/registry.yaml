@@ -446,9 +446,8 @@ standards:
       signature parameter is refused where §11.3.3.2 says to ignore it, and `expires` is
       refused where §11.3.4.2 says to honour it; `created` may be 5s ahead, not the 60s
       window §11.3.4 step 3 defaults to. Not met, accepted where the draft refuses: a JWK
-      with no `alg`, or one whose `alg` disagrees with `kty`/`crv` (§11.3.1); a `ps` or
-      `iss` that is not a server identifier (§11.1.1); a `parent_agent` that is not an agent
-      identifier (§5.3.3). Signature failures other than `clock_skew` carry no
+      with no `alg`, or one whose `alg` disagrees with `kty`/`crv` (§11.3.1). Signature
+      failures other than `clock_skew` carry no
       `Signature-Error` (§11.3.4) and the body is not problem details (§11.9.2). Read in
       full 2026-10-19 against -11 (2026-09-25).
       Agent identifiers follow §5.2: `aauth:local@domain`, the local part non-empty and at
@@ -457,7 +456,9 @@ standards:
       refused, as is a `parent_agent` that is not an agent identifier (§5.3.3 step 3). A
       provider identifier is checked to §11.1.1, `https://` and a lowercase host alone, and a
       `ps` claim, when present, to the same rule (§5.3.3 step 2).
-      Sections 5, 11.1.1, 11.2.1 and 11.5.2 of -11 read again in full 2026-10-20.
+      Read in full again 2026-10-20, the whole of -11; the sub-agent rule of §10.2.1, that a
+      sub-agent's `iss` equals its parent's, is not checked here: §5.3.3 asks a verifier only
+      for a valid `parent_agent`.
 
   - name: Model Context Protocol (revision 2026-07-28)
     url: https://modelcontextprotocol.io/specification/2026-07-28
