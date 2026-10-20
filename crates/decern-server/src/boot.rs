@@ -3,7 +3,9 @@
 //! Starting the server and stopping it: the caller posture is settled before anything touches disk,
 //! and the server stops on SIGINT or, on Unix, SIGTERM.
 
-use crate::args::{Args, DEFAULT_LEDGER, caller_from, default_missions_path, parse_issuer_key};
+use crate::args::{
+    Args, DEFAULT_LEDGER, caller_from, default_missions_path, is_postgres_target, parse_issuer_key,
+};
 use crate::caller;
 use crate::deployment;
 use crate::record::reserved_tenant_collision;
@@ -21,13 +23,12 @@ use std::sync::{Arc, Mutex};
 /// The ledger signing key, through `decern-crypto`'s own key discipline rather than a
 /// second implementation of it.
 ///
-/// This used to write the seed with `std::fs::write`, which creates at the process umask —
-/// commonly `0644`. That is the key every record and every tree head is signed with, so a
-/// world-readable copy is enough for anyone on the host to forge history that verifies.
-/// `decern_crypto::save_signing_key` creates at `0600` and refuses to overwrite; its loader
-/// refuses a key that is group- or other-readable, so a file later `chmod`ed open fails
-/// closed instead of signing quietly. Both sides also zeroize the seed, which the local
-/// buffer here did not.
+/// It is the key every record and every tree head is signed with, so a world-readable copy is
+/// enough for anyone on the host to forge history that verifies. A plain write would create it
+/// at the process umask, commonly `0644`. `decern_crypto::save_signing_key` creates at `0600`
+/// and refuses to overwrite; its loader refuses a key that is group- or other-readable, so a
+/// file later `chmod`ed open fails closed instead of signing quietly. Its loader zeroizes the
+/// seed it reads.
 fn load_signing_key(path: Option<&PathBuf>) -> Result<SigningKey> {
     let Some(p) = path else {
         // No `--key`: an ephemeral key, which means nothing recorded today verifies
@@ -53,21 +54,7 @@ pub(crate) async fn serve() -> Result<()> {
     // down (a bad `--public-url`, a malformed `--standing-issuer-key`) comes after the key, the
     // ledger and the Mission registry exist on disk.
     let caller = Arc::new(caller_from(&args)?);
-    let caller_desc = match caller.as_ref() {
-        caller::Caller::Bearer(c) => format!("bearer for {}", c.audience),
-        caller::Caller::Signed(c) => format!("signed-request for {}", c.audience),
-        caller::Caller::Spiffe(c) => format!(
-            "SPIFFE JWT-SVID for {} across {} trust domain(s)",
-            c.audience,
-            c.trust_domains.len()
-        ),
-        caller::Caller::Aauth(c) => format!(
-            "AAuth agent tokens for {} across {} provider(s)",
-            c.authority,
-            c.providers.len()
-        ),
-        caller::Caller::TrustedProxy => "caller trusted (--trust-proxy)".to_owned(),
-    };
+    let caller_desc = caller_summary(&caller);
     let model = match &args.model {
         Some(d) => {
             Model::from_dir(d).with_context(|| format!("loading model from {}", d.display()))?
@@ -95,7 +82,7 @@ pub(crate) async fn serve() -> Result<()> {
                     "refusing to serve sharded: {who} uses the reserved shard name {UNATTRIBUTED_SHARD:?}"
                 );
             }
-            let is_pg = target.starts_with("postgres://") || target.starts_with("postgresql://");
+            let is_pg = is_postgres_target(target);
             // A postgres URL can carry a password — never echo it in the log line.
             let desc = if is_pg {
                 "sharded (postgres head store)".to_string()
@@ -195,6 +182,25 @@ pub(crate) async fn serve() -> Result<()> {
     Ok(())
 }
 
+/// The caller posture in the startup line's words.
+fn caller_summary(caller: &caller::Caller) -> String {
+    match caller {
+        caller::Caller::Bearer(c) => format!("bearer for {}", c.audience),
+        caller::Caller::Signed(c) => format!("signed-request for {}", c.audience),
+        caller::Caller::Spiffe(c) => format!(
+            "SPIFFE JWT-SVID for {} across {} trust domain(s)",
+            c.audience,
+            c.trust_domains.len()
+        ),
+        caller::Caller::Aauth(c) => format!(
+            "AAuth agent tokens for {} across {} provider(s)",
+            c.authority,
+            c.providers.len()
+        ),
+        caller::Caller::TrustedProxy => "caller trusted (--trust-proxy)".to_owned(),
+    }
+}
+
 /// Resolve when the process is asked to stop — SIGINT (Ctrl-C) or, on Unix, SIGTERM.
 /// `axum::serve` then stops accepting, drains in-flight requests, and returns, so
 /// `AppState` (and any head-store connection it holds) drops on a normal control-flow
@@ -229,7 +235,7 @@ mod tests {
 
     /// The ledger signing key authenticates every record and every tree head, so a
     /// world-readable copy is enough for anyone on the host to forge history that
-    /// verifies. This used to be written at the process umask (commonly 0644).
+    /// verifies, and a plain write at the process umask would commonly leave it 0644.
     #[cfg(unix)]
     #[test]
     fn a_generated_signing_key_is_not_readable_by_group_or_other() {
@@ -266,8 +272,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The same key comes back, so routing through the crypto crate did not change what a
-    /// restart signs with — a ledger written before this change still verifies after it.
+    /// The same key comes back across a restart, so a ledger keeps verifying under the key it
+    /// was written with.
     #[test]
     fn a_configured_key_round_trips_across_restarts() {
         let dir = std::env::temp_dir().join(format!("decern-key-{}-c", std::process::id()));

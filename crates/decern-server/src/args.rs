@@ -179,6 +179,11 @@ pub(crate) const DEFAULT_LEDGER: &str = "decern-ledger.jsonl";
 /// The mission-registry filename used when `--missions` is not given.
 const DEFAULT_MISSIONS_FILE: &str = "decern-missions.json";
 
+/// Whether a `--sharded` target names a Postgres head store rather than a directory.
+pub(crate) fn is_postgres_target(target: &str) -> bool {
+    target.starts_with("postgres://") || target.starts_with("postgresql://")
+}
+
 /// The default mission-registry path: alongside the ledger it accompanies.
 ///
 /// The rule is explicit so a `postgres://` sharded target is never `Path::join`ed as
@@ -196,7 +201,7 @@ pub(crate) fn default_missions_path(ledger: Option<&PathBuf>, sharded: Option<&S
             .unwrap_or_else(|| PathBuf::from(DEFAULT_MISSIONS_FILE));
     }
     if let Some(target) = sharded {
-        let is_pg = target.starts_with("postgres://") || target.starts_with("postgresql://");
+        let is_pg = is_postgres_target(target);
         if !is_pg {
             return Path::new(target).join(DEFAULT_MISSIONS_FILE);
         }
@@ -210,6 +215,22 @@ pub(crate) fn default_missions_path(ledger: Option<&PathBuf>, sharded: Option<&S
 /// trust boundary on a shared host or inside a container's network namespace, and nothing
 /// here checks peer credentials.
 pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
+    // clap's `posture` group refuses two postures at parse time. Counted here as well, so a
+    // future edit to that attribute degrades to this error rather than the first posture below
+    // quietly winning.
+    let named = [
+        args.bearer_issuer.is_some(),
+        !args.signed_agent_keys.is_empty(),
+        !args.spiffe_trust_domains.is_empty(),
+        !args.aauth_providers.is_empty(),
+        args.trust_proxy,
+    ];
+    if named.iter().filter(|n| **n).count() > 1 {
+        anyhow::bail!(
+            "--bearer-issuer, --signed-agent-key, --spiffe-trust-domain, --aauth-provider and \
+             --trust-proxy each establish the caller; name one"
+        );
+    }
     if !args.pep.is_empty()
         && args.signed_agent_keys.is_empty()
         && args.spiffe_trust_domains.is_empty()
@@ -225,9 +246,7 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
     if !args.signed_agent_keys.is_empty() {
         let mut agents = std::collections::BTreeMap::new();
         for entry in &args.signed_agent_keys {
-            let (id, hex_key) = entry
-                .split_once('=')
-                .ok_or_else(|| anyhow::anyhow!("--signed-agent-key {entry} is not ID=HEX"))?;
+            let (id, hex_key) = split_entry("--signed-agent-key", entry, "ID=HEX")?;
             if id.is_empty() {
                 anyhow::bail!("--signed-agent-key {entry} names an empty agent id");
             }
@@ -242,18 +261,14 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
         let Some(audience) = args.signed_audience.clone() else {
             anyhow::bail!("--signed-agent-key requires --signed-audience");
         };
-        let mut pep = std::collections::BTreeSet::new();
-        for id in &args.pep {
-            if id.is_empty() {
-                anyhow::bail!("--pep names an empty agent id");
-            }
+        let pep = pep_set(&args.pep, "agent id", |id| {
             if !agents.contains_key(id) {
                 anyhow::bail!(
                     "--pep {id} is not in --signed-agent-key; a PEP must be able to authenticate"
                 );
             }
-            pep.insert(id.clone());
-        }
+            Ok(())
+        })?;
         let mut cfg = sig::SigConfig::new(agents, audience);
         cfg.pep = pep;
         return Ok(caller::Caller::Signed(Box::new(cfg)));
@@ -261,9 +276,7 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
     if !args.spiffe_trust_domains.is_empty() {
         let mut trust_domains = std::collections::BTreeMap::new();
         for entry in &args.spiffe_trust_domains {
-            let (domain, path) = entry.split_once('=').ok_or_else(|| {
-                anyhow::anyhow!("--spiffe-trust-domain {entry} is not TRUST_DOMAIN=PATH")
-            })?;
+            let (domain, path) = split_entry("--spiffe-trust-domain", entry, "TRUST_DOMAIN=PATH")?;
             if domain.is_empty() {
                 anyhow::bail!("--spiffe-trust-domain {entry} names an empty trust domain");
             }
@@ -283,11 +296,7 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
         // A PEP still has to authenticate, so it must name a trust domain this deployment
         // accepts. Unlike the signed posture there is no per-agent list to check against —
         // an SVID's identity is minted by its issuer — so the check is on the domain.
-        let mut pep = std::collections::BTreeSet::new();
-        for id in &args.pep {
-            if id.is_empty() {
-                anyhow::bail!("--pep names an empty workload id");
-            }
+        let pep = pep_set(&args.pep, "workload id", |id| {
             let domain = id
                 .strip_prefix("spiffe://")
                 .and_then(|r| r.split_once('/'))
@@ -300,8 +309,8 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
                     "--pep {id} is in no configured trust domain; a PEP must be able to authenticate"
                 );
             }
-            pep.insert(id.clone());
-        }
+            Ok(())
+        })?;
         return Ok(caller::Caller::Spiffe(Box::new(spiffe::SpiffeConfig {
             trust_domains,
             audience,
@@ -311,9 +320,7 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
     if !args.aauth_providers.is_empty() {
         let mut providers = std::collections::BTreeMap::new();
         for entry in &args.aauth_providers {
-            let (iss, path) = entry
-                .split_once('=')
-                .ok_or_else(|| anyhow::anyhow!("--aauth-provider {entry} is not ISS=PATH"))?;
+            let (iss, path) = split_entry("--aauth-provider", entry, "ISS=PATH")?;
             // The draft requires a provider identifier to be a valid HTTPS URL. Checked at
             // startup so a malformed one fails the boot rather than every request.
             if !aauth::valid_provider_url(iss) {
@@ -333,13 +340,7 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
         // A PEP must be able to authenticate, and an agent identity is minted by its
         // provider, so there is no per-agent list to check against — only that the operator
         // named something non-empty.
-        let mut pep = std::collections::BTreeSet::new();
-        for id in &args.pep {
-            if id.is_empty() {
-                anyhow::bail!("--pep names an empty agent id");
-            }
-            pep.insert(id.clone());
-        }
+        let pep = pep_set(&args.pep, "agent id", |_| Ok(()))?;
         return Ok(caller::Caller::Aauth(Box::new(aauth::AauthConfig {
             providers,
             authority,
@@ -378,6 +379,31 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
         keys,
         scopes: args.bearer_scopes.clone(),
     })))
+}
+
+/// One repeatable `NAME=VALUE` entry, refused with the flag and the shape it takes when it has
+/// no `=`.
+fn split_entry<'a>(flag: &str, entry: &'a str, shape: &str) -> Result<(&'a str, &'a str)> {
+    entry
+        .split_once('=')
+        .ok_or_else(|| anyhow::anyhow!("{flag} {entry} is not {shape}"))
+}
+
+/// The `--pep` ids under a workload posture: none empty, each passing the posture's own check.
+fn pep_set(
+    ids: &[String],
+    noun: &str,
+    mut check: impl FnMut(&str) -> Result<()>,
+) -> Result<std::collections::BTreeSet<String>> {
+    let mut pep = std::collections::BTreeSet::new();
+    for id in ids {
+        if id.is_empty() {
+            anyhow::bail!("--pep names an empty {noun}");
+        }
+        check(id)?;
+        pep.insert(id.clone());
+    }
+    Ok(pep)
 }
 
 /// A configured Ed25519 public key, read at boot. `flag` names the option in the error, because
@@ -656,21 +682,92 @@ mod tests {
         assert!(caller_from(&args).is_err());
     }
 
-    /// Four postures, one ArgGroup: naming two is a parse-time refusal, so the binary
-    /// cannot start holding an ambiguous answer to "how is the caller established".
+    /// Five postures, one ArgGroup: naming two is a parse-time conflict, so the binary cannot
+    /// start holding an ambiguous answer to "how is the caller established". Each posture is
+    /// given whole, so the refusal can only come from the group, never from a missing audience.
     #[test]
     fn two_postures_at_once_is_a_startup_failure() {
-        for pair in [
-            vec!["--trust-proxy", "--spiffe-trust-domain", "e=x"],
-            vec!["--trust-proxy", "--signed-agent-key", "a=b"],
-            vec!["--spiffe-trust-domain", "e=x", "--signed-agent-key", "a=b"],
-        ] {
+        let key = "11".repeat(32);
+        let signed = format!("a={key}");
+        let postures: [Vec<&str>; 5] = [
+            vec!["--trust-proxy"],
+            vec![
+                "--signed-agent-key",
+                &signed,
+                "--signed-audience",
+                "https://pdp.example",
+            ],
+            vec![
+                "--spiffe-trust-domain",
+                "e=x",
+                "--spiffe-audience",
+                "https://pdp.example",
+            ],
+            vec![
+                "--aauth-provider",
+                "https://p.example=x",
+                "--aauth-audience",
+                "pdp.example",
+            ],
+            vec![
+                "--bearer-issuer",
+                "https://iss.example",
+                "--bearer-audience",
+                "https://pdp.example",
+                "--bearer-issuer-key",
+                &key,
+            ],
+        ];
+        for one in &postures {
             let mut argv = vec!["decern-serve"];
-            argv.extend(pair.iter().copied());
+            argv.extend(one.iter().copied());
             assert!(
-                Args::try_parse_from(&argv).is_err(),
-                "{argv:?} named two postures and was accepted"
+                Args::try_parse_from(&argv).is_ok(),
+                "{argv:?} alone was refused"
             );
+        }
+        for (i, a) in postures.iter().enumerate() {
+            for b in &postures[i + 1..] {
+                let mut argv = vec!["decern-serve"];
+                argv.extend(a.iter().copied());
+                argv.extend(b.iter().copied());
+                let Err(e) = Args::try_parse_from(&argv) else {
+                    panic!("{argv:?} named two postures and was accepted");
+                };
+                assert_eq!(
+                    e.kind(),
+                    clap::error::ErrorKind::ArgumentConflict,
+                    "{argv:?}: {e}"
+                );
+            }
+        }
+    }
+
+    /// The same rule without clap: any two postures reaching `caller_from` are refused, not
+    /// resolved by whichever it checks first. Each pair is set on the parsed flags directly, so
+    /// this holds even if the clap group is loosened.
+    #[test]
+    fn caller_from_refuses_two_postures_on_its_own() {
+        let set: [fn(&mut Args); 5] = [
+            |a| a.bearer_issuer = Some("https://iss.example".into()),
+            |a| a.signed_agent_keys = vec![format!("a={}", "11".repeat(32))],
+            |a| a.spiffe_trust_domains = vec!["e=x".into()],
+            |a| a.aauth_providers = vec!["https://p.example=x".into()],
+            |a| a.trust_proxy = true,
+        ];
+        for i in 0..set.len() {
+            for j in i + 1..set.len() {
+                let mut args = Args::parse_from(["decern-serve"]);
+                set[i](&mut args);
+                set[j](&mut args);
+                let Err(e) = caller_from(&args) else {
+                    panic!("postures {i} and {j} reached caller_from and one was chosen");
+                };
+                assert!(
+                    e.to_string().contains("each establish the caller"),
+                    "{i},{j}: {e}"
+                );
+            }
         }
     }
 
