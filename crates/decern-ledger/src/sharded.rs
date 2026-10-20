@@ -43,7 +43,7 @@ use crate::{
 /// alias this reserved shard.
 pub const UNATTRIBUTED_SHARD: &str = "__system__";
 
-/// Write-side record shape — copied from `lib.rs`'s private `RecordOut` (that
+/// Write-side record shape — copied from `record.rs`'s `RecordOut` (that
 /// one borrows `&RawValue` for zero-copy on the single-file hot path; this
 /// owns its `entry_json` since the value is scoped to the closure that builds
 /// it, cheaper here than adding a lifetime through `LedgerHeadStore`'s

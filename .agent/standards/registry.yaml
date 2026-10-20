@@ -81,17 +81,19 @@ standards:
 
   - name: OAuth Decision Subject (draft-aravind-oauth-decision-subject-00)
     url: https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/
-    verified: 2026-08-08
+    verified: 2026-10-20
     surface:
       - crates/decern-server/src/decide.rs
-      - crates/decern-ledger/src/lib.rs
+      - crates/decern-ledger/src/record.rs
     conformance: >-
       A decision records the party it was taken upon as a pseudonymous handle, with an optional
       scheme and purpose, distinct from the requesting subject and from the accountable owner.
-      `decern-serve` strips it from the request context before the kernel runs, so it is recorded
-      and never decides, and refuses an email-shaped handle or one redundant with the subject or
-      resource owner. Resolving a handle to a person is out of scope here. Verified against the
-      draft 2026-08-08.
+      `decern-serve` takes it from `context.decision_subject` (§5) and strips it from the request
+      context before the kernel runs, so it is recorded and never decides (§4). It refuses a
+      handle containing `@`, an address §6 forbids, and drops one equal to the request's subject
+      or the resource's owner, where §3 says the claim is omitted. One reference per decision:
+      §9's array form is refused. Resolving a handle to a person is out of scope here. Verified
+      against the draft 2026-10-20.
 
   - name: Cedar policy language
     url: https://docs.cedarpolicy.com/
