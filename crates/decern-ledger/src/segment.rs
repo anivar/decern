@@ -305,6 +305,18 @@ pub(crate) fn save_manifest(dir: &Path, manifest: &Manifest) -> Result<(), Ledge
     Ok(())
 }
 
+/// Create a segment file owner-only (0600 on Unix). A segment collects records from its
+/// creation until the next rollover seals it, and only a reopen tightens its mode before
+/// then, so the process umask must not decide what it is created as. `create_new` never
+/// reuses an inode, which is what makes `mode` apply.
+fn create_segment(path: &Path) -> Result<(), LedgerError> {
+    let mut create = OpenOptions::new();
+    create.create_new(true).write(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut create, 0o600);
+    create.open(path).map(drop).map_err(|e| io_err(path, e))
+}
+
 /// Best-effort: mark a sealed segment file read-only to its owner (0400 on Unix). Defense
 /// in depth, never the real protection (that's the chain + signature +
 /// externally-anchored checkpoint, which no filesystem permission bit can
@@ -387,11 +399,7 @@ pub(crate) fn initialize(dir: &Path) -> Result<Manifest, LedgerError> {
         opened_ms: 0,
     };
     let seg_path = dir.join(&first.file);
-    OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&seg_path)
-        .map_err(|e| io_err(&seg_path, e))?;
+    create_segment(&seg_path)?;
     let manifest = Manifest {
         version: 1,
         segments: vec![first],
@@ -444,11 +452,7 @@ pub(crate) fn roll_over(
     }
     let new_filename = segment_filename(next_index);
     let new_path = dir.join(&new_filename);
-    OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&new_path)
-        .map_err(|e| io_err(&new_path, e))?;
+    create_segment(&new_path)?;
 
     let mut new_manifest = manifest.clone();
     let old_active = new_manifest.active_mut().ok_or_else(|| LedgerError::Io {
