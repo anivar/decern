@@ -455,7 +455,8 @@ standards:
       most 255 characters of letters, digits, `-`, `_`, `+` and `.`, the domain a lowercase
       host; a token whose `sub` is not in the issuing provider's domain (§5.1, §11.2.1) is
       refused, as is a `parent_agent` that is not an agent identifier (§5.3.3 step 3). A
-      provider identifier is checked to §11.1.1, `https://` and a lowercase host alone.
+      provider identifier is checked to §11.1.1, `https://` and a lowercase host alone, and a
+      `ps` claim, when present, to the same rule (§5.3.3 step 2).
       Sections 5, 11.1.1, 11.2.1 and 11.5.2 of -11 read again in full 2026-10-20.
 
   - name: Model Context Protocol (revision 2026-07-28)

@@ -458,12 +458,15 @@ pub(crate) fn authenticate(
     {
         return Err(Denied::Invalid("agent token is not yet valid".into()));
     }
-    // Shape only. A `ps` names a Person Server, which this deployment does not consult:
-    // identity-based access applies local policy and never asks a third party.
+    // Shape only: a server identifier, as §5.3.3 step 2 asks. A `ps` names a Person Server,
+    // which this deployment does not consult: identity-based access applies local policy and
+    // never asks a third party.
     if let Some(ps) = claims.get("ps").and_then(Value::as_str)
         && !valid_provider_url(ps)
     {
-        return Err(Denied::Invalid("ps is not a valid HTTPS URL".into()));
+        return Err(Denied::Invalid(
+            "ps is not a server identifier (https:// and a lowercase host)".into(),
+        ));
     }
     // Shape only, deliberately: a valid agent identifier, as §5.3.3 step 3 asks. See the
     // module note: a caller's account of its own lineage is not a decision input.
