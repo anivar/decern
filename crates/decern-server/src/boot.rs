@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
-//! Starting the server and stopping it: the caller posture is settled before anything touches disk,
-//! and the server stops on SIGINT or, on Unix, SIGTERM.
+//! Starting the server and stopping it: every flag is checked before anything is written, so a
+//! refused boot leaves nothing behind, and the server stops on SIGINT or, on Unix, SIGTERM.
 
 use crate::args::{
-    Args, DEFAULT_LEDGER, caller_from, default_missions_path, is_postgres_target, parse_issuer_key,
+    Args, DEFAULT_LEDGER, ShardedTarget, caller_from, default_missions_path, parse_issuer_key,
 };
 use crate::caller;
 use crate::deployment;
@@ -48,11 +48,13 @@ fn load_signing_key(path: Option<&PathBuf>) -> Result<SigningKey> {
 }
 
 pub(crate) async fn serve() -> Result<()> {
-    let args = Args::parse();
-    // First, before anything touches disk: a server that cannot say how its callers are
-    // established refuses to start, and that refusal leaves nothing behind. A refusal further
-    // down (a bad `--public-url`, a malformed `--standing-issuer-key`) comes after the key, the
-    // ledger and the Mission registry exist on disk.
+    serve_with(Args::parse()).await
+}
+
+/// Start the server `args` describe. Every check a flag can fail runs before the first write,
+/// so a refused boot leaves no key, ledger or registry behind and a failed deployment can be
+/// retried as it stands. The caller posture comes first of all.
+pub(crate) async fn serve_with(args: Args) -> Result<()> {
     let caller = Arc::new(caller_from(&args)?);
     let caller_desc = caller_summary(&caller);
     let model = match &args.model {
@@ -62,52 +64,70 @@ pub(crate) async fn serve() -> Result<()> {
         None => Model::builtin(),
     };
     let kernel = Kernel::new(&model)?;
-    let key = load_signing_key(args.key.as_ref())?;
-    let pubkey = key.verifying_key();
-
-    // Resolve the mission-registry path while `args.ledger`/`args.sharded` are still
-    // borrowable (the backend match below consumes `args.ledger`). The registry is
-    // OPENED after the backend so a boot that bails does not create its file.
+    let sharded = args
+        .sharded
+        .as_deref()
+        .map(ShardedTarget::parse)
+        .transpose()?;
+    if sharded.is_some() {
+        // Fail closed at boot: a directory tenant equal to the reserved
+        // unattributed-shard name would silently co-mingle with it.
+        if let Some(who) = reserved_tenant_collision(kernel.directory()) {
+            anyhow::bail!(
+                "refusing to serve sharded: {who} uses the reserved shard name {UNATTRIBUTED_SHARD:?}"
+            );
+        }
+    }
+    #[cfg(not(feature = "postgres"))]
+    if matches!(sharded, Some(ShardedTarget::Postgres(_))) {
+        anyhow::bail!(POSTGRES_FEATURE);
+    }
+    // A key that cannot be read is a startup failure, never a challenge that quietly fails to
+    // verify later.
+    let mut standing_issuers = Vec::new();
+    for hex_key in &args.standing_issuer_keys {
+        standing_issuers.push(parse_issuer_key(hex_key, "--standing-issuer-key")?);
+    }
+    let type_aliases = deployment::parse_type_aliases(&args.authzen_type_alias)?;
+    deployment::check_type_aliases(&kernel, &type_aliases)?;
+    let public_url = args
+        .public_url
+        .as_deref()
+        .map(deployment::parse_public_url)
+        .transpose()?
+        .map(Arc::from);
+    // Digest the authority once: a decision is a function of the principal, this graph,
+    // this policy and the time, and the first three do not change while the process runs.
+    let authority_digest: Arc<str> = Arc::from(
+        decern_ledger::digest(
+            &serde_json::to_value(&model).context("serializing the model to digest it")?,
+        )
+        .as_str(),
+    );
     let missions_path = args
         .missions
         .clone()
-        .unwrap_or_else(|| default_missions_path(args.ledger.as_ref(), args.sharded.as_ref()));
+        .unwrap_or_else(|| default_missions_path(args.ledger.as_ref(), sharded.as_ref()));
 
-    let (backend, backend_desc) = match &args.sharded {
+    // A port already taken is refused here too, before anything is written.
+    let listener = tokio::net::TcpListener::bind(&args.addr)
+        .await
+        .with_context(|| format!("binding {}", args.addr))?;
+    let bound = listener.local_addr().context("reading the bound address")?;
+
+    // The writes, each after what it depends on: the key, the ledger it signs, the registry.
+    let key = load_signing_key(args.key.as_ref())?;
+    let pubkey = key.verifying_key();
+    let (backend, backend_desc) = match sharded {
         Some(target) => {
-            // Fail closed at boot: a directory tenant equal to the reserved
-            // unattributed-shard name would silently co-mingle with it.
-            if let Some(who) = reserved_tenant_collision(kernel.directory()) {
-                anyhow::bail!(
-                    "refusing to serve sharded: {who} uses the reserved shard name {UNATTRIBUTED_SHARD:?}"
-                );
-            }
-            let is_pg = is_postgres_target(target);
-            // A postgres URL can carry a password — never echo it in the log line.
-            let desc = if is_pg {
-                "sharded (postgres head store)".to_string()
-            } else {
-                format!("sharded {target}")
-            };
-            let store: Arc<dyn decern_store::LedgerHeadStore> = if is_pg {
-                #[cfg(feature = "postgres")]
-                {
-                    Arc::new(
-                        decern_store_postgres::PostgresLedgerHeadStore::new(target)
-                            .with_context(|| "connecting sharded postgres head store")?,
-                    )
+            let desc = target.describe();
+            let store: Arc<dyn decern_store::LedgerHeadStore> = match target {
+                ShardedTarget::Postgres(url) => postgres_head_store(&url)?,
+                ShardedTarget::Dir(dir) => {
+                    Arc::new(FileLedgerHeadStore::new(&dir).with_context(|| {
+                        format!("opening sharded head store at {}", dir.display())
+                    })?)
                 }
-                #[cfg(not(feature = "postgres"))]
-                {
-                    anyhow::bail!(
-                        "a postgres:// sharded head store requires a build with `--features postgres`"
-                    );
-                }
-            } else {
-                Arc::new(
-                    FileLedgerHeadStore::new(target)
-                        .with_context(|| format!("opening sharded head store at {target}"))?,
-                )
             };
             let sharded = ShardedLedger::new(store, key, vec![]);
             (LedgerBackend::Sharded(sharded), desc)
@@ -122,36 +142,11 @@ pub(crate) async fn serve() -> Result<()> {
             (LedgerBackend::Single(Mutex::new(ledger)), desc)
         }
     };
-
     let missions = Arc::new(
         FileMissionRegistry::open(&missions_path)
             .with_context(|| format!("opening mission registry at {}", missions_path.display()))?,
     );
 
-    // Parse configured standing issuers at boot: a key that cannot be read is a
-    // startup failure, never a challenge that quietly fails to verify later.
-    let mut standing_issuers = Vec::new();
-    for hex_key in &args.standing_issuer_keys {
-        standing_issuers.push(parse_issuer_key(hex_key, "--standing-issuer-key")?);
-    }
-
-    // Digest the authority once: a decision is a function of the principal, this graph,
-    // this policy and the time, and the first three do not change while the process runs.
-    let authority_digest: Arc<str> = Arc::from(
-        decern_ledger::digest(
-            &serde_json::to_value(&model).context("serializing the model to digest it")?,
-        )
-        .as_str(),
-    );
-
-    let type_aliases = deployment::parse_type_aliases(&args.authzen_type_alias)?;
-    deployment::check_type_aliases(&kernel, &type_aliases)?;
-    let public_url = args
-        .public_url
-        .as_deref()
-        .map(deployment::parse_public_url)
-        .transpose()?
-        .map(Arc::from);
     let state = AppState {
         kernel: Arc::new(kernel),
         model: Arc::new(model),
@@ -165,12 +160,9 @@ pub(crate) async fn serve() -> Result<()> {
         authority_digest,
         caller_disclosure: Arc::new(caller_disclosure(&caller)),
     };
-    let listener = tokio::net::TcpListener::bind(&args.addr)
-        .await
-        .with_context(|| format!("binding {}", args.addr))?;
     println!(
         "decern-serve on {} — {}, missions {}, {}, kid {}",
-        args.addr,
+        bound,
         backend_desc,
         missions_path.display(),
         caller_desc,
@@ -198,6 +190,27 @@ fn caller_summary(caller: &caller::Caller) -> String {
             c.providers.len()
         ),
         caller::Caller::TrustedProxy => "caller trusted (--trust-proxy)".to_owned(),
+    }
+}
+
+#[cfg(not(feature = "postgres"))]
+const POSTGRES_FEATURE: &str =
+    "a postgres:// sharded head store requires a build with `--features postgres`";
+
+/// The shared head store several replicas coordinate through. The error never carries the URL,
+/// which can hold a password.
+fn postgres_head_store(url: &str) -> Result<Arc<dyn decern_store::LedgerHeadStore>> {
+    #[cfg(feature = "postgres")]
+    {
+        Ok(Arc::new(
+            decern_store_postgres::PostgresLedgerHeadStore::new(url)
+                .context("connecting sharded postgres head store")?,
+        ))
+    }
+    #[cfg(not(feature = "postgres"))]
+    {
+        let _ = url;
+        anyhow::bail!(POSTGRES_FEATURE)
     }
 }
 
@@ -283,5 +296,61 @@ mod tests {
         let second = load_signing_key(Some(&path)).unwrap().verifying_key();
         assert_eq!(first, second);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every refusal a flag can cause comes before the first write: the key, the ledger and
+    /// the registry all point into an empty directory, and it is still empty afterwards.
+    #[tokio::test]
+    async fn a_refused_boot_leaves_nothing_behind() {
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let taken = taken.local_addr().unwrap().to_string();
+        let cases: [(&str, Vec<&str>); 5] = [
+            ("public url", vec!["--public-url", "ftp://bad.example"]),
+            ("standing key", vec!["--standing-issuer-key", "zz"]),
+            (
+                "type alias",
+                vec!["--authzen-type-alias", "user=NoSuchType"],
+            ),
+            ("port taken", vec!["--addr", &taken]),
+            (
+                "sharded scheme",
+                vec!["--sharded", "mysql://decern:s3cret@db/decern"],
+            ),
+        ];
+        for (name, extra) in cases {
+            let dir = std::env::temp_dir().join(format!(
+                "decern-refused-boot-{}-{}",
+                name.replace(' ', "-"),
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let key = dir.join("k");
+            let ledger = dir.join("l.jsonl");
+            let missions = dir.join("m.json");
+            let mut argv = vec![
+                "decern-serve",
+                "--trust-proxy",
+                "--key",
+                key.to_str().unwrap(),
+                "--missions",
+                missions.to_str().unwrap(),
+            ];
+            if !extra.contains(&"--sharded") {
+                argv.extend(["--ledger", ledger.to_str().unwrap()]);
+            }
+            if !extra.contains(&"--addr") {
+                argv.extend(["--addr", "127.0.0.1:0"]);
+            }
+            argv.extend(extra.iter().copied());
+            let result = serve_with(Args::try_parse_from(&argv).unwrap()).await;
+            assert!(result.is_err(), "{name}: the boot was not refused");
+            let left: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            assert!(left.is_empty(), "{name}: a refused boot left {left:?}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 }

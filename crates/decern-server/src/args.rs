@@ -11,7 +11,7 @@ use crate::spiffe;
 use anyhow::{Context, Result};
 use clap::Parser;
 use ed25519_dalek::VerifyingKey;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
@@ -113,7 +113,7 @@ pub(crate) struct Args {
     /// This deployment's resource identifier, which a signed request's bound token's
     /// `aud` must contain. Required with `--signed-agent-key`, same role as
     /// `--bearer-audience`.
-    #[arg(long, value_name = "URI")]
+    #[arg(long, value_name = "URI", requires = "signed_agent_keys")]
     signed_audience: Option<String>,
     /// An agent identifier that may name principals other than itself. Repeatable. Workload
     /// postures only (`--signed-agent-key`, `--spiffe-trust-domain`, `--aauth-provider`): a
@@ -138,7 +138,7 @@ pub(crate) struct Args {
     spiffe_trust_domains: Vec<String>,
     /// This deployment's resource identifier, which an SVID's `aud` must contain. Required
     /// with `--spiffe-trust-domain`, same role as `--bearer-audience`.
-    #[arg(long, value_name = "URI")]
+    #[arg(long, value_name = "URI", requires = "spiffe_trust_domains")]
     spiffe_audience: Option<String>,
     /// An AAuth agent provider this deployment accepts, and the JWK Set holding the keys it
     /// signs agent tokens with, as `ISS=PATH`. Repeatable: one entry per provider. The file
@@ -158,7 +158,7 @@ pub(crate) struct Args {
     /// `--aauth-provider`, and not optional: an agent token carries no `aud`, so without this
     /// a request signed for one deployment would verify at another that pins the same
     /// provider.
-    #[arg(long, value_name = "AUTHORITY")]
+    #[arg(long, value_name = "AUTHORITY", requires = "aauth_providers")]
     aauth_audience: Option<String>,
     /// Accept every caller, because something in front has already authenticated them.
     /// One posture is required to start, this or `--bearer-issuer`, `--signed-agent-key`,
@@ -180,9 +180,45 @@ pub(crate) const DEFAULT_LEDGER: &str = "decern-ledger.jsonl";
 /// The mission-registry filename used when `--missions` is not given.
 const DEFAULT_MISSIONS_FILE: &str = "decern-missions.json";
 
-/// Whether a `--sharded` target names a Postgres head store rather than a directory.
-pub(crate) fn is_postgres_target(target: &str) -> bool {
-    target.starts_with("postgres://") || target.starts_with("postgresql://")
+/// Where a sharded ledger's heads live: a directory on this host, or a Postgres database
+/// every replica shares.
+pub(crate) enum ShardedTarget {
+    Dir(PathBuf),
+    /// The connection URL, its scheme lowercased.
+    Postgres(String),
+}
+
+impl ShardedTarget {
+    /// Read a `--sharded` value. A URL scheme is matched regardless of case (RFC 3986 §3.1), and
+    /// a scheme other than Postgres's is refused rather than taken for a directory name. A
+    /// refusal never repeats the URL: a connection URL can carry a password.
+    pub(crate) fn parse(target: &str) -> Result<Self> {
+        let Some((scheme, rest)) = target.split_once("://") else {
+            return Ok(Self::Dir(PathBuf::from(target)));
+        };
+        let scheme = scheme.to_ascii_lowercase();
+        match scheme.as_str() {
+            "postgres" | "postgresql" => Ok(Self::Postgres(format!("{scheme}://{rest}"))),
+            s if !s.is_empty()
+                && s.starts_with(|c: char| c.is_ascii_alphabetic())
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c)) =>
+            {
+                anyhow::bail!(
+                    "--sharded names a {s}:// URL; a head store is a directory or a postgres:// URL"
+                )
+            }
+            _ => anyhow::bail!("--sharded is neither a directory nor a postgres:// URL"),
+        }
+    }
+
+    /// The startup line's name for it: a directory by its path, a database by kind alone.
+    pub(crate) fn describe(&self) -> String {
+        match self {
+            Self::Dir(dir) => format!("sharded {}", dir.display()),
+            Self::Postgres(_) => "sharded (postgres head store)".to_owned(),
+        }
+    }
 }
 
 /// The default mission-registry path: alongside the ledger it accompanies.
@@ -193,7 +229,10 @@ pub(crate) fn is_postgres_target(target: &str) -> bool {
 ///   - `--sharded <dir>` (a directory target) → `<dir>/decern-missions.json`.
 ///   - default single-file ledger, or a `--sharded postgres://…` target → the
 ///     filename in the current directory (alongside the default ledger).
-pub(crate) fn default_missions_path(ledger: Option<&PathBuf>, sharded: Option<&String>) -> PathBuf {
+pub(crate) fn default_missions_path(
+    ledger: Option<&PathBuf>,
+    sharded: Option<&ShardedTarget>,
+) -> PathBuf {
     if let Some(l) = ledger {
         return l
             .parent()
@@ -201,11 +240,8 @@ pub(crate) fn default_missions_path(ledger: Option<&PathBuf>, sharded: Option<&S
             .map(|p| p.join(DEFAULT_MISSIONS_FILE))
             .unwrap_or_else(|| PathBuf::from(DEFAULT_MISSIONS_FILE));
     }
-    if let Some(target) = sharded {
-        let is_pg = is_postgres_target(target);
-        if !is_pg {
-            return Path::new(target).join(DEFAULT_MISSIONS_FILE);
-        }
+    if let Some(ShardedTarget::Dir(dir)) = sharded {
+        return dir.join(DEFAULT_MISSIONS_FILE);
     }
     PathBuf::from(DEFAULT_MISSIONS_FILE)
 }
@@ -231,6 +267,37 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
             "--bearer-issuer, --signed-agent-key, --spiffe-trust-domain, --aauth-provider and \
              --trust-proxy each establish the caller; name one"
         );
+    }
+    // An audience binds the credentials of one posture; named without that posture it would
+    // be ignored, so it is refused. clap's `requires` catches most of these, but not every
+    // combination with another posture present, so the rule lives here as well.
+    for (stray, flag, posture) in [
+        (
+            args.bearer_audience.is_some() && args.bearer_issuer.is_none(),
+            "--bearer-audience",
+            "--bearer-issuer",
+        ),
+        (
+            args.signed_audience.is_some() && args.signed_agent_keys.is_empty(),
+            "--signed-audience",
+            "--signed-agent-key",
+        ),
+        (
+            args.spiffe_audience.is_some() && args.spiffe_trust_domains.is_empty(),
+            "--spiffe-audience",
+            "--spiffe-trust-domain",
+        ),
+        (
+            args.aauth_audience.is_some() && args.aauth_providers.is_empty(),
+            "--aauth-audience",
+            "--aauth-provider",
+        ),
+    ] {
+        if stray {
+            anyhow::bail!(
+                "{flag} binds the credentials {posture} accepts, and {posture} is not given"
+            );
+        }
     }
     if !args.pep.is_empty()
         && args.signed_agent_keys.is_empty()
@@ -463,6 +530,59 @@ mod tests {
             documented, real,
             "the decern-serve table and the binary disagree — fix whichever is wrong"
         );
+    }
+
+    /// A scheme is matched regardless of case, so `POSTGRES://` reaches the Postgres store
+    /// rather than becoming a directory named after the URL, and a refused target never
+    /// repeats a password it carried.
+    #[test]
+    fn a_sharded_target_is_read_once_and_never_echoed() {
+        let ShardedTarget::Postgres(url) =
+            ShardedTarget::parse("POSTGRES://decern:s3cret@db.internal/decern").unwrap()
+        else {
+            panic!("an uppercase postgres scheme was not taken for Postgres");
+        };
+        assert_eq!(url, "postgres://decern:s3cret@db.internal/decern");
+        assert!(matches!(
+            ShardedTarget::parse("postgresql://db.internal/decern").unwrap(),
+            ShardedTarget::Postgres(_)
+        ));
+        assert!(matches!(
+            ShardedTarget::parse("/var/lib/decern/heads").unwrap(),
+            ShardedTarget::Dir(_)
+        ));
+        for target in [
+            "mysql://decern:s3cret@db/decern",
+            "decern:s3cret@db://decern",
+        ] {
+            let Err(e) = ShardedTarget::parse(target) else {
+                panic!("{target} was accepted");
+            };
+            assert!(!e.to_string().contains("s3cret"), "{e}");
+        }
+        let pg = ShardedTarget::parse("postgres://decern:s3cret@db/decern").unwrap();
+        assert!(!pg.describe().contains("s3cret"));
+    }
+
+    /// An audience names what a posture's credentials must be bound to, so one given without
+    /// its posture is a mistake to report, not a setting to ignore.
+    #[test]
+    fn an_audience_without_its_posture_is_refused() {
+        for flag in [
+            "--bearer-audience",
+            "--signed-audience",
+            "--spiffe-audience",
+            "--aauth-audience",
+        ] {
+            let argv = ["decern-serve", "--trust-proxy", flag, "https://pdp.example"];
+            // Refused at parse or by `caller_from`; never started with the flag ignored.
+            if let Ok(args) = Args::try_parse_from(argv) {
+                let Err(e) = caller_from(&args) else {
+                    panic!("{flag} without its posture was accepted");
+                };
+                assert!(e.to_string().contains(flag), "{flag}: {e}");
+            }
+        }
     }
 
     /// The startup rule: a server that cannot say how its callers are established does not
