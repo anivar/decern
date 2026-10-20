@@ -452,6 +452,28 @@ fn uid(ty: &str, id: &str) -> Result<EntityUid, String> {
     Ok(EntityUid::from_type_name_and_id(tn, eid))
 }
 
+/// The stack Cedar evaluation needs. Cedar refuses to evaluate when less than 100 KiB of
+/// stack seems left, and musl reports only the part of the main thread's stack mapped so far,
+/// about 128 KiB, so a static musl binary that loaded a model on its main thread failed at
+/// startup. 8 MiB matches the main stack glibc usually gives.
+pub const EVALUATION_STACK: usize = 8 << 20;
+
+/// Run `f` on a thread named `name` with [`EVALUATION_STACK`] of stack, and return what it
+/// returns. A binary's `main` runs its work through this, so evaluation behaves the same
+/// however the binary was linked. A panic in `f` resumes on the calling thread.
+pub fn with_evaluation_stack<T: Send + 'static>(
+    name: &str,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> std::io::Result<T> {
+    let worker = std::thread::Builder::new()
+        .name(name.to_owned())
+        .stack_size(EVALUATION_STACK)
+        .spawn(f)?;
+    Ok(worker
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,6 +488,18 @@ mod tests {
             ty: "Principal".into(),
             id: id.into(),
         }
+    }
+
+    /// The thread a binary's `main` runs on evaluates and hands the result back.
+    #[test]
+    fn with_evaluation_stack_runs_a_decision_and_returns_it() {
+        let allowed = with_evaluation_stack("evaluation-stack-test", || {
+            kernel()
+                .check(&sub("corp"), "Read", &res("claim1"), &json!({"now": 100}))
+                .decision
+        })
+        .unwrap();
+        assert!(allowed);
     }
 
     fn res(id: &str) -> EntityRef {

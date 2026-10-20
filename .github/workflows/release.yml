@@ -47,6 +47,27 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --target ${{ matrix.target }} -p decern-cli -p decern-server
 
+      # Run each built binary once, natively, before anything is uploaded. A static musl
+      # build once failed at startup on every Linux target (musl's main-thread stack tripped
+      # Cedar's stack guard), and no unit test could see it: test threads are spawned threads.
+      - name: Smoke-test the built binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release"
+          decision=$("$bin/decern${{ matrix.ext }}" decide --subject Principal:corp --action Read --resource Resource:claim1 | head -n 1)
+          [ "$decision" = "ALLOW" ] || { echo "decern decide said: $decision"; exit 1; }
+          "$bin/decern-serve${{ matrix.ext }}" --trust-proxy --addr 127.0.0.1:18080 \
+            --ledger "$RUNNER_TEMP/smoke-ledger.jsonl" --missions "$RUNNER_TEMP/smoke-missions.json" \
+            > "$RUNNER_TEMP/smoke-serve.log" 2>&1 &
+          serve=$!
+          for _ in $(seq 50); do curl -sf -o /dev/null http://127.0.0.1:18080/healthz && break; sleep 0.2; done
+          body=$(curl -sf http://127.0.0.1:18080/access/v1/evaluation -H 'content-type: application/json' \
+            -d '{"subject":{"type":"Principal","id":"corp"},"action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"}}') \
+            || { cat "$RUNNER_TEMP/smoke-serve.log"; exit 1; }
+          kill "$serve"
+          grep -q '"decision":true' <<<"$body" || { echo "decern-serve said: $body"; exit 1; }
+
       - name: Package
         shell: bash
         run: |
