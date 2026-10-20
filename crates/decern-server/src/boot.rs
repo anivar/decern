@@ -171,6 +171,36 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
         }
     }
 
+    // The files this boot writes, refused now if it could not: a registry or ledger path that
+    // is a directory or sits under a directory that does not exist, a key path under one, or a
+    // registry file that is not JSON. A registry file that is JSON of another shape is refused
+    // only when opened, after the key and the ledger exist. The default registry sits in the
+    // shard directory, which this boot creates, so that one is not required to exist yet.
+    let registry_dir_is_created = matches!(
+        &sharded,
+        Some(ShardedTarget::Dir(dir)) if missions_path.parent() == Some(dir.as_path())
+    );
+    if registry_dir_is_created {
+        if missions_path.is_dir() {
+            anyhow::bail!("--missions {} is a directory", missions_path.display());
+        }
+    } else {
+        writable_path("--missions", &missions_path)?;
+    }
+    if sharded.is_none() {
+        writable_path("--ledger", &ledger_path)?;
+    }
+    if let Some(k) = &args.key {
+        writable_path("--key", k)?;
+    }
+    if missions_path.is_file() {
+        let bytes = std::fs::read(&missions_path)
+            .with_context(|| format!("reading --missions {}", missions_path.display()))?;
+        if serde_json::from_slice::<serde_json::Value>(&bytes).is_err() {
+            anyhow::bail!("--missions {} is not a JSON file", missions_path.display());
+        }
+    }
+
     // A port already taken is refused here too, before anything is written.
     let listener = tokio::net::TcpListener::bind(&args.addr)
         .await
@@ -260,6 +290,24 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
         caller,
         line,
     })
+}
+
+/// A path this boot will create or extend: not a directory, and under a directory that exists.
+fn writable_path(flag: &str, path: &std::path::Path) -> Result<()> {
+    if path.is_dir() {
+        anyhow::bail!("{flag} {} is a directory", path.display());
+    }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+        && !parent.is_dir()
+    {
+        anyhow::bail!(
+            "{flag} {}: directory {} does not exist",
+            path.display(),
+            parent.display()
+        );
+    }
+    Ok(())
 }
 
 /// The caller posture in the startup line's words.
@@ -658,6 +706,102 @@ mod tests {
         s.append("t", entry()).unwrap();
         drop(boot);
         prepare(argv()).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn listing(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// A path this boot could not write to is refused before anything is written: the
+    /// directory holds afterwards exactly what it held before.
+    #[tokio::test]
+    async fn a_refused_boot_leaves_a_bad_path_alone() {
+        let dir = fresh_dir("refused-paths");
+        let nope = dir.join("nope");
+        let bad = dir.join("bad.json");
+        std::fs::write(&bad, "not json").unwrap();
+        let before = listing(&dir);
+        let (k, l, m) = (dir.join("k"), dir.join("l.jsonl"), dir.join("m.json"));
+        let (k, l, m) = (
+            k.to_str().unwrap(),
+            l.to_str().unwrap(),
+            m.to_str().unwrap(),
+        );
+        let (nm, nl, nk) = (nope.join("m.json"), nope.join("l.jsonl"), nope.join("k"));
+        let cases: [(&str, Vec<&str>); 5] = [
+            (
+                "registry is a directory",
+                vec![
+                    "--missions",
+                    dir.to_str().unwrap(),
+                    "--ledger",
+                    l,
+                    "--key",
+                    k,
+                ],
+            ),
+            (
+                "registry is not JSON",
+                vec![
+                    "--missions",
+                    bad.to_str().unwrap(),
+                    "--ledger",
+                    l,
+                    "--key",
+                    k,
+                ],
+            ),
+            (
+                "registry under a missing directory",
+                vec![
+                    "--missions",
+                    nm.to_str().unwrap(),
+                    "--ledger",
+                    l,
+                    "--key",
+                    k,
+                ],
+            ),
+            (
+                "ledger under a missing directory",
+                vec![
+                    "--ledger",
+                    nl.to_str().unwrap(),
+                    "--missions",
+                    m,
+                    "--key",
+                    k,
+                ],
+            ),
+            (
+                "key under a missing directory",
+                vec![
+                    "--key",
+                    nk.to_str().unwrap(),
+                    "--ledger",
+                    l,
+                    "--missions",
+                    m,
+                ],
+            ),
+        ];
+        for (name, extra) in cases {
+            let mut argv = vec!["decern-serve", "--trust-proxy", "--addr", "127.0.0.1:0"];
+            argv.extend(extra);
+            let result = prepare(Args::try_parse_from(&argv).unwrap()).await;
+            assert!(result.is_err(), "{name}: the boot was not refused");
+            assert_eq!(
+                listing(&dir),
+                before,
+                "{name}: a refused boot changed the directory"
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
