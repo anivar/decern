@@ -552,6 +552,11 @@ pub struct Ledger {
     /// in-memory manifest state `append` consults/updates. `None` for every
     /// single-file ledger, the overwhelming majority, which never rolls over.
     rollover: Option<RolloverState>,
+    /// Set once a write failed after bytes may have reached the file. The file can then
+    /// end in part of a record, and a record appended after it would be unreadable
+    /// behind it, so every later append is refused until the ledger is reopened, which
+    /// trims an unterminated tail.
+    failed: bool,
 }
 
 struct RolloverState {
@@ -737,6 +742,7 @@ impl Ledger {
             verifiers,
             sync: false,
             rollover: None,
+            failed: false,
         })
     }
 
@@ -845,6 +851,7 @@ impl Ledger {
             verifiers,
             sync: false,
             rollover: Some(RolloverState { policy, manifest }),
+            failed: false,
         })
     }
 
@@ -900,6 +907,9 @@ impl Ledger {
     /// bytes are hashed into the chain, signed, and written verbatim, so an
     /// external verifier recomputes the exact same hash from what is on disk.
     pub fn append(&mut self, mut entry: Entry) -> Result<Record, LedgerError> {
+        if self.failed {
+            return Err(self.failed_err());
+        }
         if let Some(state) = &self.rollover {
             let current_bytes = self.file.metadata().map(|m| m.len()).unwrap_or(0);
             if Self::should_roll_over(state, self.next_seq, current_bytes, entry.ts_ms) {
@@ -988,7 +998,7 @@ impl Ledger {
                     Ok(())
                 }
             })
-            .map_err(|e| io_err(&self.active_path, e))?;
+            .map_err(|e| self.write_failed(e))?;
 
         let record = Record {
             entry,
@@ -1022,12 +1032,25 @@ impl Ledger {
         }
         self.sync = sync;
         if sync {
-            self.file
-                .sync_data()
-                .map_err(|e| io_err(&self.active_path, e))?;
+            self.file.sync_data().map_err(|e| self.write_failed(e))?;
         }
         outcome?;
         Ok(records)
+    }
+
+    /// A write error after bytes may have reached the file: mark the ledger failed, so
+    /// nothing is appended behind what may be part of a record.
+    fn write_failed(&mut self, e: std::io::Error) -> LedgerError {
+        self.failed = true;
+        io_err(&self.active_path, e)
+    }
+
+    /// The refusal every append returns once a write has failed part-way.
+    fn failed_err(&self) -> LedgerError {
+        io_err(
+            &self.active_path,
+            "an earlier write to this ledger failed part-way; reopen it before appending",
+        )
     }
 
     /// Whether the NEXT append (which will carry `next_ts_ms`, on top of
@@ -3977,6 +4000,48 @@ mod tests {
             .lines()
             .map(str::to_owned)
             .collect()
+    }
+
+    /// A full disk can stop a write part-way, leaving part of a record in the file. Once
+    /// space returns, an append would land behind that fragment and the log would no longer
+    /// verify, so the ledger refuses every append until it is reopened, and the reopen
+    /// trims the fragment.
+    #[test]
+    fn a_failed_write_stops_appends_until_the_ledger_is_reopened() {
+        use std::io::Write as _;
+        let key = decern_crypto::generate().unwrap();
+        let vk = key.verifying_key();
+        let path = tmp("failed-write-stops.ledger");
+        let _ = std::fs::remove_file(&path);
+        let mut l = Ledger::open(&path, key.clone()).unwrap();
+        l.append(entry("Read", true)).unwrap();
+
+        // The write fails after part of the record reached the file.
+        let writable = std::mem::replace(&mut l.file, File::open(&path).unwrap());
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(br#"{"entry":{"seq":1,"#)
+            .unwrap();
+        assert!(l.append(entry("Read", true)).is_err());
+
+        // Space returns and the file is writable again; the ledger still refuses.
+        l.file = writable;
+        let err = l.append(entry("Read", true)).unwrap_err();
+        assert!(
+            err.to_string().contains("reopen it before appending"),
+            "{err}"
+        );
+        drop(l);
+
+        // Reopening trims the fragment; the ledger continues and verifies whole.
+        let mut l = Ledger::open(&path, key.clone()).unwrap();
+        l.append(entry("Read", true)).unwrap();
+        drop(l);
+        let report = verify(&path, Some(&vk)).unwrap();
+        assert_eq!(report.entries, 2, "{report:?}");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

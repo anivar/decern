@@ -357,6 +357,9 @@ declare in the schema only attributes you are prepared to keep for the ledger's 
   (`503`) leaves a trace in the server. `/healthz` answers `ok` without checking the ledger.
 - **Ledger retention.** The single-file ledger is one file that grows without bound; nothing
   rolls it over or archives it.
+- **Recovery after a write error.** A write that fails part-way, on a full disk for example,
+  leaves the ledger refusing every later append, so every decision is answered `503` until the
+  server is restarted. The restart trims the partial record and the ledger continues.
 - **High availability.** The single-file ledger is one process. `--sharded postgres://…`
   spreads appends across hosts but leaves each with its own Mission registry, and anchoring
   and `/audit/v1/subject` refuse a sharded ledger.
