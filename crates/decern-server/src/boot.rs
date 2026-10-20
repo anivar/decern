@@ -220,7 +220,11 @@ fn postgres_head_store(url: &str) -> Result<Arc<dyn decern_store::LedgerHeadStor
 /// path — destructors run — instead of being skipped by a default signal termination.
 async fn shutdown_signal() {
     let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
+        // A handler that cannot be installed resolves at once; wait on SIGTERM alone instead
+        // of stopping the server as soon as it starts.
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
     };
     #[cfg(unix)]
     let terminate = async {
