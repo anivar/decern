@@ -179,12 +179,11 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
     // The files this boot writes, refused now if it could not: a registry or ledger path that
     // is a directory, a registry that is the shard directory or the ledger file, a ledger or
     // key path under a directory that does not exist, or a registry file that is not JSON. A
-    // registry's own parent directory is created when it is opened, as it always was, and a
+    // registry under a path that is a file is refused too; a registry's parent directory that
+    // does not exist is created when it is opened, as it always was, and a
     // registry file that is JSON of another shape is refused only when opened, after the key
     // and the ledger exist.
-    if missions_path.is_dir() {
-        anyhow::bail!("--missions {} is a directory", missions_path.display());
-    }
+    registry_path(&missions_path)?;
     match &sharded {
         Some(ShardedTarget::Dir(dir)) if missions_path == *dir => {
             anyhow::bail!(
@@ -298,6 +297,26 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
         caller,
         line,
     })
+}
+
+/// The registry path: not a directory, and not under a path that is a file. A parent that does
+/// not exist is created when the registry opens, as it always was, since nothing can refuse the
+/// boot after that point.
+fn registry_path(path: &std::path::Path) -> Result<()> {
+    if path.is_dir() {
+        anyhow::bail!("--missions {} is a directory", path.display());
+    }
+    if let Some(parent) = path.parent()
+        && parent.exists()
+        && !parent.is_dir()
+    {
+        anyhow::bail!(
+            "--missions {}: {} is not a directory",
+            path.display(),
+            parent.display()
+        );
+    }
+    Ok(())
 }
 
 /// A path this boot will create or extend: not a directory, and under a directory that exists.
@@ -749,7 +768,8 @@ mod tests {
             m.to_str().unwrap(),
         );
         let (nl, nk, heads) = (nope.join("l.jsonl"), nope.join("k"), dir.join("heads"));
-        let cases: [(&str, Vec<&str>); 6] = [
+        let under_file = bad.join("m.json");
+        let cases: [(&str, Vec<&str>); 7] = [
             (
                 "registry is a directory",
                 vec![
@@ -766,6 +786,17 @@ mod tests {
                 vec![
                     "--missions",
                     bad.to_str().unwrap(),
+                    "--ledger",
+                    l,
+                    "--key",
+                    k,
+                ],
+            ),
+            (
+                "registry under a file",
+                vec![
+                    "--missions",
+                    under_file.to_str().unwrap(),
                     "--ledger",
                     l,
                     "--key",
