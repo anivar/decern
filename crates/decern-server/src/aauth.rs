@@ -154,12 +154,44 @@ pub(crate) fn load_provider_keys(raw: &str) -> Result<Vec<ProviderKey>, String> 
     Ok(out)
 }
 
-/// An agent provider identifier. The draft requires a valid HTTPS URL; checked at startup so
-/// a malformed one fails the boot rather than every request.
+/// An agent provider identifier as §11.1.1 spells it: `https://` and a host, nothing more.
+/// Checked at startup so a malformed one fails the boot rather than every request.
 pub(crate) fn valid_provider_url(iss: &str) -> bool {
-    iss.starts_with("https://")
-        && iss.len() > "https://".len()
-        && !iss.contains(char::is_whitespace)
+    provider_host(iss).is_some()
+}
+
+/// The host an agent provider identifier names, which is the domain of every agent
+/// identifier that provider issues (§5.1, §11.2.1).
+pub(crate) fn provider_host(iss: &str) -> Option<&str> {
+    let host = iss.strip_prefix("https://")?;
+    valid_domain(host).then_some(host)
+}
+
+/// A domain as §11.1.1 requires: lowercase ASCII letters, digits, `-` and `.`, with a label
+/// either side of every dot, so no port, path, query, fragment or trailing slash. An
+/// internationalized name arrives as A-labels, which fit.
+fn valid_domain(host: &str) -> bool {
+    !host.is_empty()
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+}
+
+/// The domain of an agent identifier `aauth:local@domain` (§5.2): a local part that is
+/// non-empty, at most 255 characters of ASCII letters, digits, `-`, `_`, `+` and `.`, and a
+/// domain as a provider identifier has. The local part is not read further: §5.2 keeps `+`
+/// for readability and makes `parent_agent` the marker that counts.
+pub(crate) fn agent_identifier_domain(id: &str) -> Option<&str> {
+    let (local, domain) = id.strip_prefix("aauth:")?.split_once('@')?;
+    let local_ok = !local.is_empty()
+        && local.len() <= 255
+        && local
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_+.".contains(&b));
+    (local_ok && valid_domain(domain)).then_some(domain)
 }
 
 /// Pull the token out of `Signature-Key: sig=jwt; jwt="…"`, the presentation the draft
@@ -373,6 +405,20 @@ pub(crate) fn authenticate(
         .and_then(Value::as_str)
         .ok_or_else(|| Denied::Invalid("agent token carries no sub".into()))?
         .to_owned();
+    // §5.2 gives an agent identifier the form `aauth:local@domain`, and §5.1 names the
+    // provider in both that domain and the token's `iss`. A `sub` outside the issuing
+    // provider's domain is refused, so one configured provider cannot mint another's agents,
+    // nor an id an operator listed in `--pep` for another provider.
+    let Some(domain) = agent_identifier_domain(&subject) else {
+        return Err(Denied::Invalid(
+            "sub is not an agent identifier (aauth:local@domain)".into(),
+        ));
+    };
+    if Some(domain) != provider_host(issuer.as_str()) {
+        return Err(Denied::Invalid(
+            "agent identifier is not in the domain of the provider that issued the token".into(),
+        ));
+    }
     if claims
         .get("jti")
         .and_then(Value::as_str)
@@ -419,10 +465,12 @@ pub(crate) fn authenticate(
     {
         return Err(Denied::Invalid("ps is not a valid HTTPS URL".into()));
     }
-    // Shape only, deliberately. See the module note: a caller's account of its own lineage
-    // is not a decision input.
+    // Shape only, deliberately: a valid agent identifier, as §5.3.3 step 3 asks. See the
+    // module note: a caller's account of its own lineage is not a decision input.
     if let Some(parent) = claims.get("parent_agent")
-        && parent.as_str().is_none_or(str::is_empty)
+        && parent
+            .as_str()
+            .is_none_or(|p| agent_identifier_domain(p).is_none())
     {
         return Err(Denied::Invalid(
             "parent_agent is not an agent identifier".into(),
@@ -466,7 +514,7 @@ mod tests {
     use serde_json::json;
 
     const ISS: &str = "https://agent-provider.example";
-    const AGENT: &str = "https://agent-provider.example/agents/agent-1";
+    const AGENT: &str = "aauth:agent-1@agent-provider.example";
     const AUTHORITY: &str = "pdp.example";
     const PATH: &str = "/access/v1/evaluation";
     const KID: &str = "provider-key-1";
@@ -1023,10 +1071,99 @@ mod tests {
         assert!(load_provider_keys(&raw).is_err());
     }
 
+    /// §5.2 gives an agent identifier the form `aauth:local@domain`, and §5.1 names the
+    /// provider in both that domain and the token's `iss`. A `sub` anywhere else is refused,
+    /// so a configured provider cannot mint another provider's agents, nor a `--pep` id meant
+    /// for one of them. `parent_agent`, when present, has to be an agent identifier too.
     #[test]
-    fn a_provider_url_must_be_https() {
-        assert!(valid_provider_url("https://provider.example"));
-        assert!(!valid_provider_url("http://provider.example"));
-        assert!(!valid_provider_url("provider.example"));
+    fn an_agent_outside_its_providers_domain_is_refused() {
+        let (provider, agent) = keys();
+        let mut c = cfg(&provider.verifying_key());
+        c.pep
+            .insert("aauth:gateway@other-provider.example".to_owned());
+        for sub in [
+            "aauth:gateway@other-provider.example",
+            "aauth:agent-1@other-provider.example",
+            "https://agent-provider.example/agents/agent-1",
+            "agent-1",
+        ] {
+            let f = fixture_with(&provider, &agent, |_| {}, |cl| cl["sub"] = json!(sub));
+            let err = authenticate(&req(&f, AUTHORITY), &c, NOW)
+                .expect_err("a sub outside the provider's domain should be refused");
+            assert!(
+                matches!(err, Denied::Invalid(ref d) if d.contains("agent identifier")),
+                "{sub} was refused for another reason"
+            );
+        }
+        let f = fixture_with(
+            &provider,
+            &agent,
+            |_| {},
+            |cl| {
+                cl["parent_agent"] = json!("planner");
+            },
+        );
+        let err = authenticate(&req(&f, AUTHORITY), &c, NOW).expect_err("should refuse");
+        assert!(matches!(err, Denied::Invalid(ref d) if d.contains("parent_agent")));
+        let f = fixture_with(
+            &provider,
+            &agent,
+            |_| {},
+            |cl| {
+                cl["parent_agent"] = json!("aauth:planner@agent-provider.example");
+            },
+        );
+        authenticate(&req(&f, AUTHORITY), &c, NOW).expect("a sub-agent of the same provider");
+    }
+
+    /// §11.1.1's own valid and invalid examples, plus the whitespace case kept from before.
+    #[test]
+    fn a_provider_identifier_is_https_and_a_lowercase_host_alone() {
+        for ok in ["https://agent.example", "https://xn--nxasmq6b.example"] {
+            assert_eq!(provider_host(ok), Some(&ok["https://".len()..]), "{ok}");
+        }
+        for bad in [
+            "http://agent.example",
+            "https://Agent.Example",
+            "https://agent.example:8443",
+            "https://agent.example/v1",
+            "https://agent.example/",
+            "https://agent .example",
+            "https://",
+            "provider.example",
+        ] {
+            assert!(!valid_provider_url(bad), "{bad} was accepted");
+        }
+    }
+
+    /// §5.2's own valid and invalid examples. The local part's `+` is not read (§5.2 keeps
+    /// it for readability and makes `parent_agent` the marker), so a sub-agent id parses.
+    #[test]
+    fn an_agent_identifier_is_local_at_domain() {
+        for (ok, domain) in [
+            ("aauth:assistant-v2@agent.example", "agent.example"),
+            ("aauth:planner.7f3c@vendor.example", "vendor.example"),
+            (
+                "aauth:planner.7f3c+search1@vendor.example",
+                "vendor.example",
+            ),
+        ] {
+            assert_eq!(agent_identifier_domain(ok), Some(domain), "{ok}");
+        }
+        let long = format!("aauth:{}@agent.example", "a".repeat(256));
+        for bad in [
+            "My Agent@agent.example",
+            "aauth:My Agent@agent.example",
+            "@agent.example",
+            "aauth:@agent.example",
+            "agent@http://agent.example",
+            "aauth:agent@http://agent.example",
+            "aauth:agent@Agent.Example",
+            "aauth:agent@agent.example:8443",
+            "https://agent-provider.example/agents/agent-1",
+            long.as_str(),
+        ] {
+            assert!(agent_identifier_domain(bad).is_none(), "{bad} was accepted");
+        }
     }
 }

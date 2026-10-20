@@ -391,10 +391,13 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
         let mut providers = std::collections::BTreeMap::new();
         for entry in &args.aauth_providers {
             let (iss, path) = split_entry("--aauth-provider", entry, "ISS=PATH")?;
-            // The draft requires a provider identifier to be a valid HTTPS URL. Checked at
-            // startup so a malformed one fails the boot rather than every request.
+            // A provider identifier is `https://` and a lowercase host alone (draft §11.1.1).
+            // Checked at startup so a malformed one fails the boot rather than every request.
             if !aauth::valid_provider_url(iss) {
-                anyhow::bail!("--aauth-provider {iss} is not an https:// agent provider URL");
+                anyhow::bail!(
+                    "--aauth-provider {iss} is not an agent provider identifier: https:// and a \
+                     lowercase host, nothing more"
+                );
             }
             let raw = std::fs::read_to_string(path)
                 .with_context(|| format!("reading the key set for {iss} at {path}"))?;
@@ -407,10 +410,26 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
         let Some(authority) = args.aauth_audience.clone() else {
             anyhow::bail!("--aauth-provider requires --aauth-audience");
         };
-        // A PEP must be able to authenticate, and an agent identity is minted by its
-        // provider, so there is no per-agent list to check against — only that the operator
-        // named something non-empty.
-        let pep = pep_set(&args.pep, "agent id", |_| Ok(()))?;
+        // A PEP must be able to authenticate. An agent identity is minted by its provider, so
+        // there is no per-agent list to check against; the id has to be an agent identifier in
+        // a configured provider's domain, which is what the token check will require of it.
+        let pep = pep_set(&args.pep, "agent id", |id| {
+            let domain = aauth::agent_identifier_domain(id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--pep {id} is not an agent identifier (aauth:local@domain) under this posture"
+                )
+            })?;
+            if !providers
+                .keys()
+                .any(|iss| aauth::provider_host(iss) == Some(domain))
+            {
+                anyhow::bail!(
+                    "--pep {id} is in no configured provider's domain; a PEP must be able to \
+                     authenticate"
+                );
+            }
+            Ok(())
+        })?;
         return Ok(caller::Caller::Aauth(Box::new(aauth::AauthConfig {
             providers,
             authority,
@@ -962,5 +981,48 @@ mod tests {
             panic!("the same key twice was accepted");
         };
         assert!(e.to_string().contains("same key twice"), "{e}");
+    }
+
+    /// Under AAuth a PEP id is an agent identifier in a configured provider's domain: the
+    /// provider is what authenticates it, so an id from anywhere else cannot be a PEP.
+    #[test]
+    fn an_aauth_pep_is_an_agent_of_a_configured_provider() {
+        use base64::Engine as _;
+        let dir = std::env::temp_dir().join(format!("decern-aauth-pep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let keys = dir.join("keys.json");
+        let vk = decern_crypto::generate().unwrap().verifying_key();
+        std::fs::write(
+            &keys,
+            serde_json::json!({ "keys": [{
+                "kty": "OKP", "crv": "Ed25519", "kid": "k1",
+                "x": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(vk.to_bytes()),
+            }] })
+            .to_string(),
+        )
+        .unwrap();
+        let provider = format!("https://p.example={}", keys.display());
+        let parse = |pep: &str| {
+            caller_from(&Args::parse_from([
+                "decern-serve",
+                "--aauth-provider",
+                &provider,
+                "--aauth-audience",
+                "pdp.example",
+                "--pep",
+                pep,
+            ]))
+        };
+        assert!(parse("aauth:gateway@p.example").is_ok());
+        for (pep, why) in [
+            ("gateway", "not an agent identifier"),
+            ("aauth:gateway@other.example", "no configured provider"),
+        ] {
+            let Err(e) = parse(pep) else {
+                panic!("--pep {pep} was accepted");
+            };
+            assert!(e.to_string().contains(why), "{pep}: {e}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
