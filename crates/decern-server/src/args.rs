@@ -115,11 +115,11 @@ pub(crate) struct Args {
     /// `--bearer-audience`.
     #[arg(long, value_name = "URI")]
     signed_audience: Option<String>,
-    /// An agent identifier that may name principals other than itself. Repeatable.
-    /// Workload postures only (`--signed-agent-key`, `--spiffe-trust-domain`): a gateway
-    /// that proves possession of a key on every request, or presents an SVID, is still a
-    /// PEP. An identifier that cannot authenticate cannot be a PEP either. Omit to bind
-    /// every workload caller to itself.
+    /// An agent identifier that may name principals other than itself. Repeatable. Workload
+    /// postures only (`--signed-agent-key`, `--spiffe-trust-domain`, `--aauth-provider`): a
+    /// gateway that proves possession of a key on every request, or presents an SVID or an
+    /// agent token, is still a PEP. An identifier that cannot authenticate cannot be a PEP
+    /// either. Omit to bind every workload caller to itself.
     #[arg(long = "pep", value_name = "ID")]
     pep: Vec<String>,
     /// A SPIFFE trust domain this deployment accepts, and the JWK Set holding its
@@ -161,7 +161,8 @@ pub(crate) struct Args {
     #[arg(long, value_name = "AUTHORITY")]
     aauth_audience: Option<String>,
     /// Accept every caller, because something in front has already authenticated them.
-    /// One of this or the bearer/signed flags is required to start: "no token configured"
+    /// One posture is required to start, this or `--bearer-issuer`, `--signed-agent-key`,
+    /// `--spiffe-trust-domain` or `--aauth-provider`: "no token configured"
     /// and "authentication deliberately delegated" are indistinguishable from inside this
     /// process and mean very different things outside it.
     #[arg(long, group = "posture")]
@@ -355,8 +356,10 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
             "refusing to serve the decision and mission-mutation endpoints with no way to \
              establish the caller: pass --bearer-issuer/--bearer-audience/--bearer-issuer-key \
              to validate access tokens here, --signed-agent-key/--signed-audience for signed \
-             requests, or --trust-proxy to state that something in front already \
-             authenticates them (see docs/CLI.md \"The trust boundary\")"
+             requests, --spiffe-trust-domain/--spiffe-audience for SPIFFE JWT-SVIDs, \
+             --aauth-provider/--aauth-audience for AAuth agent tokens, or --trust-proxy to \
+             state that something in front already authenticates them (see docs/CLI.md \"The \
+             trust boundary\")"
         );
     };
     // A key that cannot be read is a startup failure, never a token that quietly fails to
@@ -470,7 +473,16 @@ mod tests {
         let Err(e) = caller_from(&args) else {
             panic!("a server with no way to establish the caller must not start");
         };
-        assert!(e.to_string().contains("--trust-proxy"), "{e}");
+        // The refusal is where an operator learns the options, so it names every posture.
+        for flag in [
+            "--bearer-issuer",
+            "--signed-agent-key",
+            "--spiffe-trust-domain",
+            "--aauth-provider",
+            "--trust-proxy",
+        ] {
+            assert!(e.to_string().contains(flag), "{flag} missing from: {e}");
+        }
     }
 
     #[test]
