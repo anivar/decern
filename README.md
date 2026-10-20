@@ -217,10 +217,11 @@ through `properties`.
 `--sharded <dir>` replaces the single file with a per-tenant sharded ledger several
 processes on one host extend safely (`flock` head store); `--sharded postgres://…` does the
 same across hosts (`--features postgres` — the one optional TLS dependency, not built into
-the release binaries). Both run with `--key`, the one key every replica and restart signs
-with. Audit either with `decern verify --sharded`. What a deployment has to
-supply around the server — TLS, key rollover, logging, retention, high availability — is in
-[docs/CLI.md](docs/CLI.md#what-a-deployment-supplies).
+the release binaries). `--sharded` requires `--key`, the one key every replica and restart
+signs with; a store whose records another key signed refuses to start. Audit a directory
+store with `decern verify --sharded <dir>`; a Postgres head store has no `decern verify`
+path. What a deployment has to supply around the server — TLS, key rollover, logging,
+retention, high availability — is in [docs/CLI.md](docs/CLI.md#what-a-deployment-supplies).
 
 ## Architecture
 
@@ -232,8 +233,8 @@ tamper-evident ledger, and pure-Rust persistence and primitives.
 ## Known limitations
 
 The list below is the standing set. Each release also states what it does **not** claim —
-see [Known limits in 0.6.0](CHANGELOG.md#known-limits-in-this-release), which covers
-consent, log pinning, `--trust-proxy`, replay, and what the proofs actually cover.
+see [Known limits in 0.6.0](CHANGELOG.md#known-limits-in-this-release), which lists what the
+release still does not claim and carries each earlier release's limits forward.
 
 - **How far a credential constrains the content depends on the posture.** Bearer validation
   and `--trust-proxy` do not constrain it at all, because a gateway legitimately asks about
@@ -256,7 +257,9 @@ consent, log pinning, `--trust-proxy`, replay, and what the proofs actually cove
   exclusive file lock per shard (`flock` on Unix, `LockFileEx` on Windows): multi-process
   exclusion on one host, not a distributed store. Multi-host deployments use the Postgres
   head store instead. On Windows its files are not written owner-only, and a rename is not
-  synced to its directory.
+  synced to its directory. The ledger key check runs at boot only: two replicas started at once
+  on an empty store under different keys both boot and the store then verifies under neither,
+  so start the first replica alone, or give every replica the same key before any starts.
 - **The AAuth posture does not yet meet draft-hardt-oauth-aauth-protocol-11.** It covers agent
   identity access only, and an agent built to -11 is refused: the posture requires the agent
   token's `alg` to be `EdDSA`, which -11 replaces with `Ed25519`, and it takes the token from
