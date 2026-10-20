@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use decern_kernel::{Directory, Kernel, Model};
 use decern_ledger::Ledger;
-use decern_store::FileMissionRegistry;
+use decern_store::{FileMissionRegistry, MissionEntry, MissionRegistry};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde_json::{Value, json};
 
@@ -139,10 +139,46 @@ pub(crate) fn corp_expiry() -> u64 {
 pub(crate) fn approve_req(tools: &[&str], expiry: u64) -> MissionApproveReq {
     MissionApproveReq {
         approver: "corp".into(),
-        agent: "agent-mission".into(),
+        agent: "agent1".into(),
         description: "reconcile invoices".into(),
         approved_tools: tools.iter().map(|s| s.to_string()).collect(),
         capabilities: vec![],
         expiry,
     }
+}
+
+/// Whether a decision's `context.errors` has an entry containing `needle`.
+pub(crate) fn has_error(body: &Value, needle: &str) -> bool {
+    body["context"]["errors"].as_array().is_some_and(|errors| {
+        errors
+            .iter()
+            .any(|e| e.as_str().is_some_and(|e| e.contains(needle)))
+    })
+}
+
+/// Put `entry` in the registry under `s256` without going through `approve`, as a
+/// registry written by an earlier release can hold it, then decide `action` on `claim1`
+/// for `subject`, naming that Mission.
+pub(crate) async fn decide_under_registered_mission(
+    st: &AppState,
+    s256: &str,
+    entry: MissionEntry,
+    subject: &str,
+    action: &str,
+) -> (StatusCode, Value) {
+    let approver = entry.approver.clone();
+    st.missions
+        .register(s256, entry, crate::now_secs())
+        .unwrap();
+    let req: crate::decide::DecideReq = serde_json::from_value(json!({
+        "subject": {"type": "Principal", "id": subject},
+        "action": {"name": action},
+        "resource": {"type": "Resource", "id": "claim1"},
+        "context": {"mission": {"approver": approver, "s256": s256}},
+    }))
+    .unwrap();
+    body_json(
+        crate::decide::decide(axum::extract::State(st.clone()), None, Ok(axum::Json(req))).await,
+    )
+    .await
 }

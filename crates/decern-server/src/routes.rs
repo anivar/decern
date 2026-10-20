@@ -115,10 +115,11 @@ mod tests {
     use crate::decide::DecideReq;
     use crate::mission::MissionApproveReq;
     use crate::testutil::{
-        approve_req, body_json, corp_expiry, mission_base, mission_state_at, now_nanos, open,
-        test_missions,
+        approve_req, body_json, corp_expiry, decide_under_registered_mission, has_error,
+        mission_base, mission_state_at, now_nanos, open, test_missions,
     };
     use crate::{LedgerBackend, caller_disclosure, now_secs};
+    use decern_store::MissionEntry;
 
     #[tokio::test]
     async fn sharded_decision_records_to_the_subjects_tenant_shard() {
@@ -675,7 +676,7 @@ mod tests {
 
         let approve_body = serde_json::to_vec(&json!({
             "approver": "corp",
-            "agent": "agent-mission",
+            "agent": "agent1",
             "description": "reconcile invoices",
             "approved_tools": ["read"],
             "expiry": corp_expiry(),
@@ -788,6 +789,120 @@ mod tests {
             "a tree head must not carry entry content: {th}"
         );
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// corpB (tenant B) holds move_money, so only the tenant boundary stands between its
+    /// approval and a money movement by corp (tenant A).
+    #[tokio::test]
+    async fn approve_refuses_an_approver_in_another_tenant_and_records_nothing() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                None,
+                Json(MissionApproveReq {
+                    approver: "corpB".into(),
+                    agent: "corp".into(),
+                    description: "cross-tenant".into(),
+                    approved_tools: vec!["move_money".into()],
+                    capabilities: vec![],
+                    expiry: corp_expiry(),
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .unwrap_or("")
+                .contains("is not a principal in approver corpB's tenant"),
+            "{body}"
+        );
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let records = decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100)
+            .unwrap()
+            .1;
+        assert!(records.is_empty(), "a refused approval is not recorded");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A registry can hold a cross-tenant Mission approved by a release that did not refuse
+    /// one. Binding it at decision time is what keeps it from backing a money movement.
+    #[tokio::test]
+    async fn a_registered_cross_tenant_mission_does_not_back_a_decision() {
+        let base = mission_base();
+        let (st, _pubkey) = mission_state_at(&base);
+        let entry = MissionEntry {
+            approver: "corpB".into(),
+            expiry: corp_expiry(),
+            terminated: false,
+            agent: "corp".into(),
+            approved_tools: vec!["move_money".into()],
+        };
+        let (status, body) =
+            decide_under_registered_mission(&st, "cross-tenant", entry, "corp", "MoveMoney").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["decision"], false, "{body}");
+        assert!(
+            has_error(
+                &body,
+                "was not approved by a principal of subject corp's tenant"
+            ),
+            "{body}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An approver the model does not name has no tenant to compare, so its Mission
+    /// backs nothing.
+    #[tokio::test]
+    async fn a_mission_whose_approver_is_not_in_the_model_does_not_back_a_decision() {
+        let base = mission_base();
+        let (st, _pubkey) = mission_state_at(&base);
+        let entry = MissionEntry {
+            approver: "no-such-approver".into(),
+            expiry: corp_expiry(),
+            terminated: false,
+            agent: "corp".into(),
+            approved_tools: vec!["read".into()],
+        };
+        let (status, body) =
+            decide_under_registered_mission(&st, "unknown-approver", entry, "corp", "Read").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["decision"], false, "{body}");
+        assert!(
+            has_error(&body, "was not approved by a principal of subject"),
+            "{body}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A subject the model does not name gets no backing from a Mission, whatever the
+    /// model's policies would say about it.
+    #[tokio::test]
+    async fn a_mission_does_not_back_a_decision_about_a_subject_not_in_the_model() {
+        let base = mission_base();
+        let (st, _pubkey) = mission_state_at(&base);
+        let entry = MissionEntry {
+            approver: "corp".into(),
+            expiry: corp_expiry(),
+            terminated: false,
+            agent: "no-such-agent".into(),
+            approved_tools: vec!["read".into()],
+        };
+        let (status, body) =
+            decide_under_registered_mission(&st, "unknown-subject", entry, "no-such-agent", "Read")
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["decision"], false, "{body}");
+        assert!(
+            has_error(&body, "was not approved by a principal of subject"),
+            "{body}"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -1146,13 +1261,13 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         let s256 = body["s256"].as_str().unwrap().to_owned();
-        // approve_req uses agent-mission; terminate then try decide as that agent.
+        // approve_req uses agent1; terminate then try decide as that agent.
         let _ = mission_terminate(State(st.clone()), None, UrlPath(s256.clone())).await;
 
         let mut st = st;
         st.require_mission = true;
         let req: DecideReq = serde_json::from_str(&format!(
-            r#"{{"subject":{{"type":"Principal","id":"agent-mission"}},
+            r#"{{"subject":{{"type":"Principal","id":"agent1"}},
                 "action":{{"name":"Read"}},
                 "resource":{{"type":"Resource","id":"claim1"}},
                 "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
@@ -1161,14 +1276,7 @@ mod tests {
         let (status, body) = body_json(decide(State(st), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["decision"], false, "{body}");
-        assert!(
-            body["context"]["errors"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|e| e.as_str().unwrap_or("").contains("terminated")),
-            "{body}"
-        );
+        assert!(has_error(&body, "terminated"), "{body}");
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -1192,7 +1300,7 @@ mod tests {
         st.require_mission = true;
         // Mission only has read; MoveMoney needs move_money.
         let req: DecideReq = serde_json::from_str(&format!(
-            r#"{{"subject":{{"type":"Principal","id":"agent-mission"}},
+            r#"{{"subject":{{"type":"Principal","id":"agent1"}},
                 "action":{{"name":"MoveMoney"}},
                 "resource":{{"type":"Resource","id":"claim1"}},
                 "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
@@ -1201,14 +1309,7 @@ mod tests {
         let (status, body) = body_json(decide(State(st), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["decision"], false, "{body}");
-        assert!(
-            body["context"]["errors"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|e| e.as_str().unwrap_or("").contains("move_money")),
-            "{body}"
-        );
+        assert!(has_error(&body, "move_money"), "{body}");
         let _ = std::fs::remove_dir_all(&base);
     }
 }
