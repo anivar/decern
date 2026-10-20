@@ -6,6 +6,117 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-20
+
+This release hardens `decern-serve`'s startup and caller configuration. Configurations 0.5.0
+started with now refuse to start: `--sharded` without `--key`; a shard store whose records
+another key signed, or that holds a shard file with records and no head cursor; `--sharded` with
+a scheme other than `postgres://`, or `POSTGRES://…` on a build without the Postgres store;
+`--signed-audience`, `--spiffe-audience` or `--aauth-audience` without their posture; the same
+`--signed-agent-key` given twice for one agent; an `--aauth-provider` that is not `https://` and
+a lowercase host alone; and an AAuth `--pep` that is not an agent identifier in a configured
+provider's domain. Requests 0.5.0 accepted are refused when an AAuth token's `sub` is not
+`aauth:local@domain` in the issuing provider's domain, its `ps` is not `https://` and a lowercase
+host alone, or its `parent_agent` is not an agent identifier. Each is described below.
+
+If you ran `--sharded` without `--key`, 0.5.0 and earlier signed the shared store under a fresh
+key on every restart, so only the current run's records verified under the key `/pubkey` named.
+No key you can supply extends such a store: move it aside and start with `--key`. Nothing in
+the kernel, the Cedar model, the proofs or the SDKs changes.
+
+### Changed
+
+- **An AAuth agent is an agent identifier of the provider that issued its token.** A token's `sub`
+  must be `aauth:local@domain` as draft-hardt-oauth-aauth-protocol-11 §5.2 spells it, with `domain`
+  the host of the provider named in `iss`; any other `sub` is refused, as is a `parent_agent` that
+  is not an agent identifier. Before this, `sub` was taken as sent, so with two providers configured
+  either could present the `sub` of the other's agents, including one listed in `--pep`. Under
+  `--aauth-provider`, a `--pep` id must be an agent identifier in a configured provider's domain,
+  and a provider is named as `https://` and a lowercase host alone (§11.1.1), as is a `ps` claim
+  when a token carries one (§5.3.3 step 2), where `https://` with any path was accepted. Authored by
+  @anivar.
+- **`decern-serve` checks every flag before it writes anything.** A boot refused for a bad
+  `--public-url`, a malformed `--standing-issuer-key`, an unknown `--authzen-type-alias` model type
+  or a port already taken used to leave the key, the ledger and the Mission registry behind, and
+  one refused for an unsupported `--sharded` target the key; it now leaves nothing, so a failed
+  deployment can be retried as it stands. `--missions` naming a directory, the shard directory, the ledger file, a path under a file
+  or a file that is not JSON, and `--ledger` or `--key` under a directory that does not exist, are
+  refused before anything is written; `--ledger` there used to be refused after the key was created,
+  and a `--missions` parent directory that does not exist is still created when the registry opens,
+  as before. A registry file that is JSON of another shape is refused only when opened, after the
+  key and the ledger exist, and leaves its lock file; a failure opening the ledger or the head store
+  itself can still leave the key. `--sharded` matches its scheme regardless of case, so
+  `POSTGRES://…` reaches the Postgres store instead of becoming a directory named after the URL with
+  the password printed in the startup line; any other scheme is refused, and no message repeats the
+  URL. `--signed-audience`, `--spiffe-audience` and `--aauth-audience` given without their posture
+  are refused instead of ignored. The startup line names the address actually bound. Authored by
+  @anivar.
+
+### Fixed
+
+- **`decern-serve` keeps running when it cannot install its Ctrl-C handler.** The failed install
+  resolved the shutdown signal at once, so the server stopped as soon as it started; on Unix it now
+  waits for SIGTERM alone, as it already did when the SIGTERM handler failed, and elsewhere, with no
+  SIGTERM handler, it runs until it is killed. Authored by @anivar.
+- **`decern-serve` names all five caller postures where it lists them.** The refusal to start
+  with no posture, and the `--trust-proxy` and `--pep` help, named only some of them; they now
+  include SPIFFE JWT-SVIDs (`--spiffe-trust-domain`) and AAuth agent tokens (`--aauth-provider`).
+  Authored by @anivar.
+- **A shard file holding records but no head cursor is refused.** The file head store listed a shard
+  only when its cursor was set, so a shard file whose cursor had been removed was skipped by
+  `decern verify --sharded` and not counted as history: the store verified as if the file were
+  absent, and the next append started the chain again at sequence 0 beside the old records. Such a file is now refused wherever it is read,
+  by `decern-serve` at boot before anything is written and by `decern verify --sharded`, as an
+  altered store. Authored by @anivar.
+- **A second `--signed-agent-key` for the same agent adds a key instead of replacing it.** The
+  flag's help, `docs/CLI.md` and the signed-request module all said a key rollover is a second
+  entry for the same id with the old one still accepted, but the second entry silently replaced
+  the first, so an agent mid-rollover was refused under its old key. Both keys now verify until
+  the old one is dropped from the command line: the bound token's `cnf.jwk` must name one of the
+  agent's configured keys, and the request signature must verify under that key. The same key
+  given twice for one id is refused at startup. Authored by @anivar.
+
+### Security
+
+- **A ledger is extended only by the key that signed it.** `--sharded` without `--key` is refused:
+  the shared head store was signed under a fresh ephemeral key on every restart, so each replica's
+  records verified under a different key and `/pubkey` only ever named the latest. At boot every
+  shard is verified under the key `--key` holds, chain and every signature, one signature check per
+  record, as a single-file open already was; a record another key signed refuses the boot, naming
+  both key ids where the record names its key. The check runs at boot only: a store with no shards
+  boots under any key, so two replicas started at once on an empty store under different keys both
+  boot and the store then verifies under neither; start the first replica alone, or give every
+  replica the same key before any starts. A shard another replica creates later is checked at the
+  next restart. A single-file ledger with records already refused a different key; the refusal now
+  names both key ids, and an ephemeral key, or a `--key` file that does not exist, is refused before
+  anything is written. An empty ledger file is a new ledger. The startup line marks an ephemeral key
+  `(ephemeral)`. Where a Postgres head store already holds shards, a `--key` file that does not
+  exist is still created before the refusal. Authored by @anivar.
+- **A segment created at rollover is owner-only.** A segmented ledger (`Ledger::open_segmented`)
+  created each new segment with the process's default mode, `0644` under the common umask, so
+  the records it collected were readable by group and other until the next rollover sealed it
+  or the ledger was reopened. Every segment is now created `0600` on Unix; the next rollover
+  still seals it `0400`, and a reopen tightens an active segment created before this change,
+  as it already did. The manifest beside the segments, which names them with their sequence
+  ranges and open times and holds no records, keeps the default mode. Only a segmented ledger
+  creates segments: `decern-serve` never opens one (a single file, or a head store under
+  `--sharded`), and `decern verify` and `decern explain` read a segmented directory without
+  writing to it, so neither was affected. On
+  Windows the ledger's files are not written owner-only. Authored by @anivar.
+
+### Known limits in this release
+
+Unchanged from 0.5.0: the AAuth posture does not meet draft-hardt-oauth-aauth-protocol-11 (the
+agent token's `alg` must be `EdDSA`, which -11 replaces with `Ed25519`, and the token is taken
+from the `Signature-Key` member labelled `sig` while the signature labelled `sig1` is verified, so
+no conformant agent passes; this release tightens what the posture checks of a token it does
+accept and closes none of those gaps); bearer validation verifies `EdDSA` only; a Mission's
+approver is not checked to differ from its agent; the single-file ledger takes no lock; keys,
+trust bundles and provider key sets load only at startup; no posture keeps a replay cache; and
+what the proofs cover. Stated now: the ledger key check runs at boot only, so two replicas
+started at once on an empty store under different keys both boot and fork it. The standards
+registry lists each gap.
+
 ## [0.5.0] - 2026-10-20
 
 This release fixes a published security advisory, adds the AuthZEN 1.0 batch evaluation, search
