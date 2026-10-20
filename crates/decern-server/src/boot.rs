@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
-//! Starting the server and stopping it: every flag is checked before anything is written, so a
-//! refused boot leaves nothing behind, and the server stops on SIGINT or, on Unix, SIGTERM.
+//! Starting the server and stopping it: what a flag can get wrong is checked before anything is
+//! written, so a boot refused there leaves nothing behind; opening the ledger, the head store or
+//! the registry can still fail after the key exists. The server stops on SIGINT or, on Unix,
+//! SIGTERM.
 
 use crate::args::{
     Args, DEFAULT_LEDGER, ShardedTarget, caller_from, default_missions_path, parse_issuer_key,
@@ -70,9 +72,10 @@ pub(crate) struct Boot {
     pub(crate) line: String,
 }
 
-/// Check and open what `args` describe. Every check a flag can fail runs before the first
-/// write, so a refused boot leaves no key, ledger or registry behind and a failed deployment
-/// can be retried as it stands. The caller posture comes first of all.
+/// Check and open what `args` describe. What a flag can get wrong is checked before the first
+/// write, so a boot refused there leaves no key, ledger or registry behind and a failed
+/// deployment can be retried as it stands; what only opening a file or a store reveals is
+/// refused after the key exists. The caller posture comes first of all.
 pub(crate) async fn prepare(args: Args) -> Result<Boot> {
     let caller = Arc::new(caller_from(&args)?);
     let caller_desc = caller_summary(&caller);
@@ -146,7 +149,9 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
         );
     }
     let existing = match &sharded {
-        None if ledger_path.exists() => Some(format!("ledger {}", ledger_path.display())),
+        None if ledger_has_records(&ledger_path) => {
+            Some(format!("ledger {}", ledger_path.display()))
+        }
         Some(ShardedTarget::Dir(dir)) if dir.exists() => {
             let shards = FileLedgerHeadStore::new(dir)
                 .with_context(|| format!("opening sharded head store at {}", dir.display()))?
@@ -172,23 +177,26 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
     }
 
     // The files this boot writes, refused now if it could not: a registry or ledger path that
-    // is a directory or sits under a directory that does not exist, a key path under one, or a
-    // registry file that is not JSON. A registry file that is JSON of another shape is refused
-    // only when opened, after the key and the ledger exist. The default registry sits in the
-    // shard directory, which this boot creates, so that one is not required to exist yet.
-    let registry_dir_is_created = matches!(
-        &sharded,
-        Some(ShardedTarget::Dir(dir)) if missions_path.parent() == Some(dir.as_path())
-    );
-    if registry_dir_is_created {
-        if missions_path.is_dir() {
-            anyhow::bail!("--missions {} is a directory", missions_path.display());
-        }
-    } else {
-        writable_path("--missions", &missions_path)?;
+    // is a directory, a registry that is the shard directory or the ledger file, a ledger or
+    // key path under a directory that does not exist, or a registry file that is not JSON. A
+    // registry's own parent directory is created when it is opened, as it always was, and a
+    // registry file that is JSON of another shape is refused only when opened, after the key
+    // and the ledger exist.
+    if missions_path.is_dir() {
+        anyhow::bail!("--missions {} is a directory", missions_path.display());
     }
-    if sharded.is_none() {
-        writable_path("--ledger", &ledger_path)?;
+    match &sharded {
+        Some(ShardedTarget::Dir(dir)) if missions_path == *dir => {
+            anyhow::bail!(
+                "--missions {} is the shard directory",
+                missions_path.display()
+            )
+        }
+        None if missions_path == ledger_path => {
+            anyhow::bail!("--missions {} is the ledger", missions_path.display())
+        }
+        None => writable_path("--ledger", &ledger_path)?,
+        _ => {}
     }
     if let Some(k) = &args.key {
         writable_path("--key", k)?;
@@ -233,7 +241,7 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
                     format!(
                         "shard {shard} does not verify under --key {kid}; a sharded ledger is \
                          signed by one key across restarts and replicas, so point --key at the \
-                         key that signed it"
+                         key that signed it, or move the store aside to start a new ledger"
                     )
                 })?;
             }
@@ -301,13 +309,20 @@ fn writable_path(flag: &str, path: &std::path::Path) -> Result<()> {
         && !parent.as_os_str().is_empty()
         && !parent.is_dir()
     {
-        anyhow::bail!(
-            "{flag} {}: directory {} does not exist",
-            path.display(),
-            parent.display()
-        );
+        let what = if parent.exists() {
+            "is not a directory"
+        } else {
+            "does not exist"
+        };
+        anyhow::bail!("{flag} {}: {} {what}", path.display(), parent.display());
     }
     Ok(())
+}
+
+/// A ledger file that holds anything. An empty file, such as the default ledger a checkout
+/// carries, was signed by no key and is a new ledger.
+fn ledger_has_records(path: &std::path::Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.len() > 0)
 }
 
 /// The caller posture in the startup line's words.
@@ -733,8 +748,8 @@ mod tests {
             l.to_str().unwrap(),
             m.to_str().unwrap(),
         );
-        let (nm, nl, nk) = (nope.join("m.json"), nope.join("l.jsonl"), nope.join("k"));
-        let cases: [(&str, Vec<&str>); 5] = [
+        let (nl, nk, heads) = (nope.join("l.jsonl"), nope.join("k"), dir.join("heads"));
+        let cases: [(&str, Vec<&str>); 6] = [
             (
                 "registry is a directory",
                 vec![
@@ -758,12 +773,16 @@ mod tests {
                 ],
             ),
             (
-                "registry under a missing directory",
+                "registry is the ledger",
+                vec!["--missions", l, "--ledger", l, "--key", k],
+            ),
+            (
+                "registry is the shard directory",
                 vec![
+                    "--sharded",
+                    heads.to_str().unwrap(),
                     "--missions",
-                    nm.to_str().unwrap(),
-                    "--ledger",
-                    l,
+                    heads.to_str().unwrap(),
                     "--key",
                     k,
                 ],
@@ -802,6 +821,61 @@ mod tests {
                 "{name}: a refused boot changed the directory"
             );
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An empty ledger file was signed by no key: it boots under an ephemeral key and under
+    /// a key that does not exist yet, as a ledger that is not there does.
+    #[tokio::test]
+    async fn an_empty_ledger_file_is_a_new_ledger() {
+        let dir = fresh_dir("empty-ledger");
+        let ledger = dir.join("l.jsonl");
+        std::fs::write(&ledger, b"").unwrap();
+        let base = [
+            "decern-serve",
+            "--trust-proxy",
+            "--addr",
+            "127.0.0.1:0",
+            "--ledger",
+        ];
+        let mut argv: Vec<&str> = base.to_vec();
+        argv.push(ledger.to_str().unwrap());
+        let m = dir.join("m.json");
+        argv.extend(["--missions", m.to_str().unwrap()]);
+        let boot = prepare(Args::parse_from(&argv)).await.unwrap();
+        assert!(boot.line.contains("(ephemeral)"));
+        drop(boot);
+        let k = dir.join("k");
+        argv.extend(["--key", k.to_str().unwrap()]);
+        prepare(Args::parse_from(&argv)).await.unwrap();
+        assert!(k.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The registry's parent directory is created when the registry is opened, as it always
+    /// was, since nothing can refuse the boot after that point.
+    #[tokio::test]
+    async fn the_registry_directory_is_created_when_the_registry_is_opened() {
+        let dir = fresh_dir("registry-parent");
+        let m = dir.join("new").join("m.json");
+        let (k, l) = (dir.join("k"), dir.join("l.jsonl"));
+        let argv = [
+            "decern-serve",
+            "--trust-proxy",
+            "--addr",
+            "127.0.0.1:0",
+            "--key",
+            k.to_str().unwrap(),
+            "--ledger",
+            l.to_str().unwrap(),
+            "--missions",
+            m.to_str().unwrap(),
+        ];
+        prepare(Args::parse_from(argv)).await.unwrap();
+        assert!(
+            m.parent().unwrap().is_dir(),
+            "the registry directory was not created"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
