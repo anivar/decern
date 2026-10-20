@@ -16,7 +16,9 @@ still a file, `decern-missions.json` in each host's working directory unless `--
 names another path, so a Mission approved or terminated through one replica is unknown to, or
 still live on, the others. The release binaries are built without this crate: build
 `decern-serve` with `--features postgres`. The connection URL is a command-line argument, so
-any password in it is visible in the process list to other users of the host.
+any password in it is visible in the process list to other users of the host. `--sharded`
+requires `--key`, the one key every replica signs with: a store whose records another key
+signed refuses to start, and a Postgres head store has no `decern verify` path.
 
 ## How the exclusive, cross-host critical section works
 
