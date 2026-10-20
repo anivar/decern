@@ -17,7 +17,7 @@ WORK="$(mktemp -d)"
 LEDGER="$WORK/decern-aauth-ledger.jsonl"
 JWKS="$WORK/provider-jwks.json"
 ISS="https://agent-provider.example"
-AGENT="https://agent-provider.example/agents/agent-1"
+AGENT="aauth:agent-1@agent-provider.example"
 # The authority is what stands in for the audience an agent token does not carry, so it is
 # exactly the Host curl will send. Getting this wrong is a refusal, which beat 9 shows.
 AUTHORITY="127.0.0.1:$PORT"

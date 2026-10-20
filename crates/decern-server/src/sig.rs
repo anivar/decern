@@ -78,10 +78,10 @@ pub(crate) const MAX_CLOCK_SKEW_AHEAD_SECS: i64 = 5;
 const MAX_TOKEN_BYTES: usize = 8192;
 
 pub(crate) struct SigConfig {
-    /// Agent identifier -> the one key it may sign with. A rollover is a new entry with
-    /// the old one still present for the overlap window, exactly as `--bearer-issuer-key`
-    /// accepts more than one key rather than requiring an atomic swap.
-    pub(crate) agents: BTreeMap<String, VerifyingKey>,
+    /// Agent identifier -> the keys it may sign with. More than one during a rollover: the
+    /// new key is added while the old one still verifies, as `--bearer-issuer-key` accepts
+    /// more than one key rather than requiring an atomic swap.
+    pub(crate) agents: BTreeMap<String, Vec<VerifyingKey>>,
     /// This deployment's resource identifier, which the token's `aud` must contain —
     /// same role as [`crate::bearer::Config::audience`].
     pub(crate) audience: String,
@@ -91,7 +91,10 @@ pub(crate) struct SigConfig {
 }
 
 impl SigConfig {
-    pub(crate) fn new(agents: BTreeMap<String, VerifyingKey>, audience: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        agents: BTreeMap<String, Vec<VerifyingKey>>,
+        audience: impl Into<String>,
+    ) -> Self {
         Self {
             agents,
             audience: audience.into(),
@@ -456,16 +459,17 @@ pub(crate) fn authenticate(
     // The claimed identity must be one this deployment already governs. This is the
     // whole point of "configured, not discovered": a `sub` decern has no key for is
     // refused here, before any cryptography runs on its behalf.
-    let configured_key = cfg.agents.get(&subject).ok_or_else(|| {
+    let configured_keys = cfg.agents.get(&subject).ok_or_else(|| {
         Denied::Invalid(format!(
             "agent {} is not configured here",
             printable(&subject)
         ))
     })?;
 
-    // The token must bind to that same configured key via `cnf.jwk` — a token claiming
-    // `sub=agent-1` but confirming a different key would let a caller name an identity
-    // without holding what it takes to prove it.
+    // The token must bind, via `cnf.jwk`, to a key configured for that agent — a token
+    // claiming `sub=agent-1` but confirming some other key would let a caller name an
+    // identity without holding what it takes to prove it. The key it confirms is the one
+    // the signature is checked against below.
     let cnf: Cnf = claims
         .get("cnf")
         .cloned()
@@ -474,11 +478,14 @@ pub(crate) fn authenticate(
         .map_err(|_| Denied::Invalid("bound token cnf is malformed".into()))?
         .ok_or_else(|| Denied::Invalid("bound token carries no cnf".into()))?;
     let token_key = jwk_to_verifying_key(&cnf.jwk)?;
-    if token_key != *configured_key {
-        return Err(Denied::Invalid(
-            "bound token cnf.jwk does not match the configured key for this agent".into(),
-        ));
-    }
+    let configured_key = configured_keys
+        .iter()
+        .find(|k| **k == token_key)
+        .ok_or_else(|| {
+            Denied::Invalid(
+                "bound token cnf.jwk does not match a configured key for this agent".into(),
+            )
+        })?;
 
     // Token expiry, only now that the key claimed inside it is the one this deployment
     // already trusts for this identity — checking it earlier would validate a claim
@@ -568,7 +575,7 @@ mod tests {
 
     fn cfg(key: &VerifyingKey) -> SigConfig {
         let mut agents = BTreeMap::new();
-        agents.insert(AGENT.to_owned(), *key);
+        agents.insert(AGENT.to_owned(), vec![*key]);
         SigConfig::new(agents, AUD)
     }
 
@@ -827,6 +834,38 @@ mod tests {
             NOW,
         )
         .unwrap_err();
+        assert!(e.detail().contains("does not match"), "{}", e.detail());
+    }
+
+    /// A rollover adds the new key while the old one still verifies, so an agent re-keyed
+    /// mid-flight is not refused until the old key is dropped from the configuration. A key
+    /// configured for nobody is refused as before.
+    #[test]
+    fn an_agent_with_two_configured_keys_signs_with_either() {
+        let old = decern_crypto::generate().unwrap();
+        let new = decern_crypto::generate().unwrap();
+        let stranger = decern_crypto::generate().unwrap();
+        let mut agents = BTreeMap::new();
+        agents.insert(
+            AGENT.to_owned(),
+            vec![old.verifying_key(), new.verifying_key()],
+        );
+        let cfg = SigConfig::new(agents, AUD);
+        for k in [&old, &new] {
+            let token = bound_token(&k.verifying_key(), |_| {});
+            let (key_h, input_h, sig_h) = sign_get(k, &token, &UNBODIED_COMPONENTS, CREATED);
+            let who = authenticate(&get_req(&key_h, &input_h, &sig_h), &cfg, NOW).unwrap();
+            assert_eq!(who.agent, AGENT);
+        }
+        // The signature is checked under the key the token confirms, not under any key the
+        // agent holds: a token bound to the new key but signed with the old one is refused.
+        let token = bound_token(&new.verifying_key(), |_| {});
+        let (key_h, input_h, sig_h) = sign_get(&old, &token, &UNBODIED_COMPONENTS, CREATED);
+        let e = authenticate(&get_req(&key_h, &input_h, &sig_h), &cfg, NOW).unwrap_err();
+        assert!(e.detail().contains("does not verify"), "{}", e.detail());
+        let token = bound_token(&stranger.verifying_key(), |_| {});
+        let (key_h, input_h, sig_h) = sign_get(&stranger, &token, &UNBODIED_COMPONENTS, CREATED);
+        let e = authenticate(&get_req(&key_h, &input_h, &sig_h), &cfg, NOW).unwrap_err();
         assert!(e.detail().contains("does not match"), "{}", e.detail());
     }
 

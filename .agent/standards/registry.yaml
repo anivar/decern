@@ -16,7 +16,6 @@ rule: >-
 # is neither here nor in a surface list fails scripts/standards.py check.
 non_surface:
   - crates/decern-server/src/main.rs
-  - crates/decern-server/src/args.rs
   - crates/decern-server/src/boot.rs
   - crates/decern-server/src/state.rs
   - crates/decern-server/src/mission.rs
@@ -411,9 +410,10 @@ standards:
 
   - name: AAuth Protocol (draft-hardt-oauth-aauth-protocol)
     url: https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/
-    verified: 2026-10-19
+    verified: 2026-10-20
     surface:
       - crates/decern-server/src/aauth.rs
+      - crates/decern-server/src/args.rs
     conformance: >-
       The resource half of **agent identity access** (§4.2.1) only. Person identity access
       verifies a person token and is not implemented. Resource-managed access has the
@@ -446,11 +446,19 @@ standards:
       signature parameter is refused where §11.3.3.2 says to ignore it, and `expires` is
       refused where §11.3.4.2 says to honour it; `created` may be 5s ahead, not the 60s
       window §11.3.4 step 3 defaults to. Not met, accepted where the draft refuses: a JWK
-      with no `alg`, or one whose `alg` disagrees with `kty`/`crv` (§11.3.1); a `ps` or
-      `iss` that is not a server identifier (§11.1.1); a `parent_agent` that is not an agent
-      identifier (§5.3.3). Signature failures other than `clock_skew` carry no
+      with no `alg`, or one whose `alg` disagrees with `kty`/`crv` (§11.3.1). Signature
+      failures other than `clock_skew` carry no
       `Signature-Error` (§11.3.4) and the body is not problem details (§11.9.2). Read in
       full 2026-10-19 against -11 (2026-09-25).
+      Agent identifiers follow §5.2: `aauth:local@domain`, the local part non-empty and at
+      most 255 characters of letters, digits, `-`, `_`, `+` and `.`, the domain a lowercase
+      host; a token whose `sub` is not in the issuing provider's domain (§5.1, §11.2.1) is
+      refused, as is a `parent_agent` that is not an agent identifier (§5.3.3 step 3). A
+      provider identifier is checked to §11.1.1, `https://` and a lowercase host alone, and a
+      `ps` claim, when present, to the same rule (§5.3.3 step 2).
+      Read in full again 2026-10-20, the whole of -11; the sub-agent rule of §10.2.1, that a
+      sub-agent's `iss` equals its parent's, is not checked here: §5.3.3 asks a verifier only
+      for a valid `parent_agent`.
 
   - name: Model Context Protocol (revision 2026-07-28)
     url: https://modelcontextprotocol.io/specification/2026-07-28

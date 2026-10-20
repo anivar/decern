@@ -11,7 +11,7 @@ use crate::spiffe;
 use anyhow::{Context, Result};
 use clap::Parser;
 use ed25519_dalek::VerifyingKey;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
@@ -41,10 +41,11 @@ pub(crate) struct Args {
     /// Hosted mode. Target is either a directory (per-shard `flock` head store —
     /// several `decern-serve` processes on ONE host share one tamper-evident
     /// ledger) or a `postgres://` URL (multi-HOST head store, requires building
-    /// with `--features postgres`). Mutually exclusive with `--ledger`.
+    /// with `--features postgres`). Mutually exclusive with `--ledger`; requires `--key`.
     #[arg(long, value_name = "DIR_OR_POSTGRES_URL")]
     pub(crate) sharded: Option<String>,
-    /// 32-byte hex signing seed file; created if absent. Omit for an ephemeral key.
+    /// 32-byte hex signing seed file; created if absent, required with `--sharded`. Omit for
+    /// an ephemeral key, which a ledger that already exists refuses.
     #[arg(long, value_name = "PATH")]
     pub(crate) key: Option<PathBuf>,
     /// Mission registry file — the durable record of approved Missions the mint path
@@ -96,7 +97,7 @@ pub(crate) struct Args {
         requires = "bearer_issuer"
     )]
     bearer_scopes: Vec<String>,
-    /// An agent identifier this deployment recognizes and the one Ed25519 key it may
+    /// An agent identifier this deployment recognizes and an Ed25519 key it may
     /// sign requests with, as `ID=HEX`. Repeatable: one entry per agent, and a key
     /// rollover is a second entry for the same ID rather than an atomic swap. Turns on
     /// RFC 9421 signed-request validation (see `docs/CLI.md` "Sender-constrained caller
@@ -113,13 +114,13 @@ pub(crate) struct Args {
     /// This deployment's resource identifier, which a signed request's bound token's
     /// `aud` must contain. Required with `--signed-agent-key`, same role as
     /// `--bearer-audience`.
-    #[arg(long, value_name = "URI")]
+    #[arg(long, value_name = "URI", requires = "signed_agent_keys")]
     signed_audience: Option<String>,
-    /// An agent identifier that may name principals other than itself. Repeatable.
-    /// Workload postures only (`--signed-agent-key`, `--spiffe-trust-domain`): a gateway
-    /// that proves possession of a key on every request, or presents an SVID, is still a
-    /// PEP. An identifier that cannot authenticate cannot be a PEP either. Omit to bind
-    /// every workload caller to itself.
+    /// An agent identifier that may name principals other than itself. Repeatable. Workload
+    /// postures only (`--signed-agent-key`, `--spiffe-trust-domain`, `--aauth-provider`): a
+    /// gateway that proves possession of a key on every request, or presents an SVID or an
+    /// agent token, is still a PEP. An identifier that cannot authenticate cannot be a PEP
+    /// either. Omit to bind every workload caller to itself.
     #[arg(long = "pep", value_name = "ID")]
     pep: Vec<String>,
     /// A SPIFFE trust domain this deployment accepts, and the JWK Set holding its
@@ -138,7 +139,7 @@ pub(crate) struct Args {
     spiffe_trust_domains: Vec<String>,
     /// This deployment's resource identifier, which an SVID's `aud` must contain. Required
     /// with `--spiffe-trust-domain`, same role as `--bearer-audience`.
-    #[arg(long, value_name = "URI")]
+    #[arg(long, value_name = "URI", requires = "spiffe_trust_domains")]
     spiffe_audience: Option<String>,
     /// An AAuth agent provider this deployment accepts, and the JWK Set holding the keys it
     /// signs agent tokens with, as `ISS=PATH`. Repeatable: one entry per provider. The file
@@ -158,10 +159,11 @@ pub(crate) struct Args {
     /// `--aauth-provider`, and not optional: an agent token carries no `aud`, so without this
     /// a request signed for one deployment would verify at another that pins the same
     /// provider.
-    #[arg(long, value_name = "AUTHORITY")]
+    #[arg(long, value_name = "AUTHORITY", requires = "aauth_providers")]
     aauth_audience: Option<String>,
     /// Accept every caller, because something in front has already authenticated them.
-    /// One of this or the bearer/signed flags is required to start: "no token configured"
+    /// One posture is required to start, this or `--bearer-issuer`, `--signed-agent-key`,
+    /// `--spiffe-trust-domain` or `--aauth-provider`: "no token configured"
     /// and "authentication deliberately delegated" are indistinguishable from inside this
     /// process and mean very different things outside it.
     #[arg(long, group = "posture")]
@@ -179,9 +181,45 @@ pub(crate) const DEFAULT_LEDGER: &str = "decern-ledger.jsonl";
 /// The mission-registry filename used when `--missions` is not given.
 const DEFAULT_MISSIONS_FILE: &str = "decern-missions.json";
 
-/// Whether a `--sharded` target names a Postgres head store rather than a directory.
-pub(crate) fn is_postgres_target(target: &str) -> bool {
-    target.starts_with("postgres://") || target.starts_with("postgresql://")
+/// Where a sharded ledger's heads live: a directory on this host, or a Postgres database
+/// every replica shares.
+pub(crate) enum ShardedTarget {
+    Dir(PathBuf),
+    /// The connection URL, its scheme lowercased.
+    Postgres(String),
+}
+
+impl ShardedTarget {
+    /// Read a `--sharded` value. A URL scheme is matched regardless of case (RFC 3986 §3.1), and
+    /// a scheme other than Postgres's is refused rather than taken for a directory name. A
+    /// refusal never repeats the URL: a connection URL can carry a password.
+    pub(crate) fn parse(target: &str) -> Result<Self> {
+        let Some((scheme, rest)) = target.split_once("://") else {
+            return Ok(Self::Dir(PathBuf::from(target)));
+        };
+        let scheme = scheme.to_ascii_lowercase();
+        match scheme.as_str() {
+            "postgres" | "postgresql" => Ok(Self::Postgres(format!("{scheme}://{rest}"))),
+            s if !s.is_empty()
+                && s.starts_with(|c: char| c.is_ascii_alphabetic())
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c)) =>
+            {
+                anyhow::bail!(
+                    "--sharded names a {s}:// URL; a head store is a directory or a postgres:// URL"
+                )
+            }
+            _ => anyhow::bail!("--sharded is neither a directory nor a postgres:// URL"),
+        }
+    }
+
+    /// The startup line's name for it: a directory by its path, a database by kind alone.
+    pub(crate) fn describe(&self) -> String {
+        match self {
+            Self::Dir(dir) => format!("sharded {}", dir.display()),
+            Self::Postgres(_) => "sharded (postgres head store)".to_owned(),
+        }
+    }
 }
 
 /// The default mission-registry path: alongside the ledger it accompanies.
@@ -192,7 +230,10 @@ pub(crate) fn is_postgres_target(target: &str) -> bool {
 ///   - `--sharded <dir>` (a directory target) → `<dir>/decern-missions.json`.
 ///   - default single-file ledger, or a `--sharded postgres://…` target → the
 ///     filename in the current directory (alongside the default ledger).
-pub(crate) fn default_missions_path(ledger: Option<&PathBuf>, sharded: Option<&String>) -> PathBuf {
+pub(crate) fn default_missions_path(
+    ledger: Option<&PathBuf>,
+    sharded: Option<&ShardedTarget>,
+) -> PathBuf {
     if let Some(l) = ledger {
         return l
             .parent()
@@ -200,11 +241,8 @@ pub(crate) fn default_missions_path(ledger: Option<&PathBuf>, sharded: Option<&S
             .map(|p| p.join(DEFAULT_MISSIONS_FILE))
             .unwrap_or_else(|| PathBuf::from(DEFAULT_MISSIONS_FILE));
     }
-    if let Some(target) = sharded {
-        let is_pg = is_postgres_target(target);
-        if !is_pg {
-            return Path::new(target).join(DEFAULT_MISSIONS_FILE);
-        }
+    if let Some(ShardedTarget::Dir(dir)) = sharded {
+        return dir.join(DEFAULT_MISSIONS_FILE);
     }
     PathBuf::from(DEFAULT_MISSIONS_FILE)
 }
@@ -231,6 +269,37 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
              --trust-proxy each establish the caller; name one"
         );
     }
+    // An audience binds the credentials of one posture; named without that posture it would
+    // be ignored, so it is refused. clap's `requires` catches most of these, but not every
+    // combination with another posture present, so the rule lives here as well.
+    for (stray, flag, posture) in [
+        (
+            args.bearer_audience.is_some() && args.bearer_issuer.is_none(),
+            "--bearer-audience",
+            "--bearer-issuer",
+        ),
+        (
+            args.signed_audience.is_some() && args.signed_agent_keys.is_empty(),
+            "--signed-audience",
+            "--signed-agent-key",
+        ),
+        (
+            args.spiffe_audience.is_some() && args.spiffe_trust_domains.is_empty(),
+            "--spiffe-audience",
+            "--spiffe-trust-domain",
+        ),
+        (
+            args.aauth_audience.is_some() && args.aauth_providers.is_empty(),
+            "--aauth-audience",
+            "--aauth-provider",
+        ),
+    ] {
+        if stray {
+            anyhow::bail!(
+                "{flag} binds the credentials {posture} accepts, and {posture} is not given"
+            );
+        }
+    }
     if !args.pep.is_empty()
         && args.signed_agent_keys.is_empty()
         && args.spiffe_trust_domains.is_empty()
@@ -250,10 +319,12 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
             if id.is_empty() {
                 anyhow::bail!("--signed-agent-key {entry} names an empty agent id");
             }
-            agents.insert(
-                id.to_owned(),
-                parse_issuer_key(hex_key, "--signed-agent-key")?,
-            );
+            let key = parse_issuer_key(hex_key, "--signed-agent-key")?;
+            let keys: &mut Vec<_> = agents.entry(id.to_owned()).or_default();
+            if keys.contains(&key) {
+                anyhow::bail!("--signed-agent-key names {id} with the same key twice");
+            }
+            keys.push(key);
         }
         // clap's `requires` establishes this; the check stays for the same reason the
         // bearer path's does — a future edit to the clap attribute should degrade to
@@ -321,10 +392,13 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
         let mut providers = std::collections::BTreeMap::new();
         for entry in &args.aauth_providers {
             let (iss, path) = split_entry("--aauth-provider", entry, "ISS=PATH")?;
-            // The draft requires a provider identifier to be a valid HTTPS URL. Checked at
-            // startup so a malformed one fails the boot rather than every request.
+            // A provider identifier is `https://` and a lowercase host alone (draft §11.1.1).
+            // Checked at startup so a malformed one fails the boot rather than every request.
             if !aauth::valid_provider_url(iss) {
-                anyhow::bail!("--aauth-provider {iss} is not an https:// agent provider URL");
+                anyhow::bail!(
+                    "--aauth-provider {iss} is not an agent provider identifier: https:// and a \
+                     lowercase host, nothing more"
+                );
             }
             let raw = std::fs::read_to_string(path)
                 .with_context(|| format!("reading the key set for {iss} at {path}"))?;
@@ -337,10 +411,26 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
         let Some(authority) = args.aauth_audience.clone() else {
             anyhow::bail!("--aauth-provider requires --aauth-audience");
         };
-        // A PEP must be able to authenticate, and an agent identity is minted by its
-        // provider, so there is no per-agent list to check against — only that the operator
-        // named something non-empty.
-        let pep = pep_set(&args.pep, "agent id", |_| Ok(()))?;
+        // A PEP must be able to authenticate. An agent identity is minted by its provider, so
+        // there is no per-agent list to check against; the id has to be an agent identifier in
+        // a configured provider's domain, which is what the token check will require of it.
+        let pep = pep_set(&args.pep, "agent id", |id| {
+            let domain = aauth::agent_identifier_domain(id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--pep {id} is not an agent identifier (aauth:local@domain) under this posture"
+                )
+            })?;
+            if !providers
+                .keys()
+                .any(|iss| aauth::provider_host(iss) == Some(domain))
+            {
+                anyhow::bail!(
+                    "--pep {id} is in no configured provider's domain; a PEP must be able to \
+                     authenticate"
+                );
+            }
+            Ok(())
+        })?;
         return Ok(caller::Caller::Aauth(Box::new(aauth::AauthConfig {
             providers,
             authority,
@@ -355,8 +445,10 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
             "refusing to serve the decision and mission-mutation endpoints with no way to \
              establish the caller: pass --bearer-issuer/--bearer-audience/--bearer-issuer-key \
              to validate access tokens here, --signed-agent-key/--signed-audience for signed \
-             requests, or --trust-proxy to state that something in front already \
-             authenticates them (see docs/CLI.md \"The trust boundary\")"
+             requests, --spiffe-trust-domain/--spiffe-audience for SPIFFE JWT-SVIDs, \
+             --aauth-provider/--aauth-audience for AAuth agent tokens, or --trust-proxy to \
+             state that something in front already authenticates them (see docs/CLI.md \"The \
+             trust boundary\")"
         );
     };
     // A key that cannot be read is a startup failure, never a token that quietly fails to
@@ -462,6 +554,59 @@ mod tests {
         );
     }
 
+    /// A scheme is matched regardless of case, so `POSTGRES://` reaches the Postgres store
+    /// rather than becoming a directory named after the URL, and a refused target never
+    /// repeats a password it carried.
+    #[test]
+    fn a_sharded_target_is_read_once_and_never_echoed() {
+        let ShardedTarget::Postgres(url) =
+            ShardedTarget::parse("POSTGRES://decern:s3cret@db.internal/decern").unwrap()
+        else {
+            panic!("an uppercase postgres scheme was not taken for Postgres");
+        };
+        assert_eq!(url, "postgres://decern:s3cret@db.internal/decern");
+        assert!(matches!(
+            ShardedTarget::parse("postgresql://db.internal/decern").unwrap(),
+            ShardedTarget::Postgres(_)
+        ));
+        assert!(matches!(
+            ShardedTarget::parse("/var/lib/decern/heads").unwrap(),
+            ShardedTarget::Dir(_)
+        ));
+        for target in [
+            "mysql://decern:s3cret@db/decern",
+            "decern:s3cret@db://decern",
+        ] {
+            let Err(e) = ShardedTarget::parse(target) else {
+                panic!("{target} was accepted");
+            };
+            assert!(!e.to_string().contains("s3cret"), "{e}");
+        }
+        let pg = ShardedTarget::parse("postgres://decern:s3cret@db/decern").unwrap();
+        assert!(!pg.describe().contains("s3cret"));
+    }
+
+    /// An audience names what a posture's credentials must be bound to, so one given without
+    /// its posture is a mistake to report, not a setting to ignore.
+    #[test]
+    fn an_audience_without_its_posture_is_refused() {
+        for flag in [
+            "--bearer-audience",
+            "--signed-audience",
+            "--spiffe-audience",
+            "--aauth-audience",
+        ] {
+            let argv = ["decern-serve", "--trust-proxy", flag, "https://pdp.example"];
+            // Refused at parse or by `caller_from`; never started with the flag ignored.
+            if let Ok(args) = Args::try_parse_from(argv) {
+                let Err(e) = caller_from(&args) else {
+                    panic!("{flag} without its posture was accepted");
+                };
+                assert!(e.to_string().contains(flag), "{flag}: {e}");
+            }
+        }
+    }
+
     /// The startup rule: a server that cannot say how its callers are established does not
     /// start. There is no bind-address carve-out to test, because there is no carve-out.
     #[test]
@@ -470,7 +615,16 @@ mod tests {
         let Err(e) = caller_from(&args) else {
             panic!("a server with no way to establish the caller must not start");
         };
-        assert!(e.to_string().contains("--trust-proxy"), "{e}");
+        // The refusal is where an operator learns the options, so it names every posture.
+        for flag in [
+            "--bearer-issuer",
+            "--signed-agent-key",
+            "--spiffe-trust-domain",
+            "--aauth-provider",
+            "--trust-proxy",
+        ] {
+            assert!(e.to_string().contains(flag), "{flag} missing from: {e}");
+        }
     }
 
     #[test]
@@ -783,5 +937,93 @@ mod tests {
             "not-hex",
         ]);
         assert!(caller_from(&args).is_err());
+    }
+
+    /// A rollover is a second `--signed-agent-key` for the same id: both keys verify until the
+    /// old one is dropped. The same key given twice is a mistake to report, not a rollover.
+    #[test]
+    fn a_second_key_for_the_same_agent_is_a_rollover_not_a_replacement() {
+        let k1 = hex::encode(
+            decern_crypto::generate()
+                .unwrap()
+                .verifying_key()
+                .to_bytes(),
+        );
+        let k2 = hex::encode(
+            decern_crypto::generate()
+                .unwrap()
+                .verifying_key()
+                .to_bytes(),
+        );
+        let both = [format!("a={k1}"), format!("a={k2}")];
+        let args = Args::parse_from([
+            "decern-serve",
+            "--signed-agent-key",
+            &both[0],
+            "--signed-agent-key",
+            &both[1],
+            "--signed-audience",
+            "https://pdp.example",
+        ]);
+        let caller::Caller::Signed(cfg) = caller_from(&args).unwrap() else {
+            panic!("not the signed posture");
+        };
+        assert_eq!(cfg.agents["a"].len(), 2, "both keys are kept");
+        let args = Args::parse_from([
+            "decern-serve",
+            "--signed-agent-key",
+            &both[0],
+            "--signed-agent-key",
+            &both[0],
+            "--signed-audience",
+            "https://pdp.example",
+        ]);
+        let Err(e) = caller_from(&args) else {
+            panic!("the same key twice was accepted");
+        };
+        assert!(e.to_string().contains("same key twice"), "{e}");
+    }
+
+    /// Under AAuth a PEP id is an agent identifier in a configured provider's domain: the
+    /// provider is what authenticates it, so an id from anywhere else cannot be a PEP.
+    #[test]
+    fn an_aauth_pep_is_an_agent_of_a_configured_provider() {
+        use base64::Engine as _;
+        let dir = std::env::temp_dir().join(format!("decern-aauth-pep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let keys = dir.join("keys.json");
+        let vk = decern_crypto::generate().unwrap().verifying_key();
+        std::fs::write(
+            &keys,
+            serde_json::json!({ "keys": [{
+                "kty": "OKP", "crv": "Ed25519", "kid": "k1",
+                "x": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(vk.to_bytes()),
+            }] })
+            .to_string(),
+        )
+        .unwrap();
+        let provider = format!("https://p.example={}", keys.display());
+        let parse = |pep: &str| {
+            caller_from(&Args::parse_from([
+                "decern-serve",
+                "--aauth-provider",
+                &provider,
+                "--aauth-audience",
+                "pdp.example",
+                "--pep",
+                pep,
+            ]))
+        };
+        assert!(parse("aauth:gateway@p.example").is_ok());
+        for (pep, why) in [
+            ("gateway", "not an agent identifier"),
+            ("aauth:gateway@other.example", "no configured provider"),
+        ] {
+            let Err(e) = parse(pep) else {
+                panic!("--pep {pep} was accepted");
+            };
+            assert!(e.to_string().contains(why), "{pep}: {e}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

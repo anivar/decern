@@ -217,7 +217,8 @@ through `properties`.
 `--sharded <dir>` replaces the single file with a per-tenant sharded ledger several
 processes on one host extend safely (`flock` head store); `--sharded postgres://…` does the
 same across hosts (`--features postgres` — the one optional TLS dependency, not built into
-the release binaries). Audit either with `decern verify --sharded`. What a deployment has to
+the release binaries). Both run with `--key`, the one key every replica and restart signs
+with. Audit either with `decern verify --sharded`. What a deployment has to
 supply around the server — TLS, key rollover, logging, retention, high availability — is in
 [docs/CLI.md](docs/CLI.md#what-a-deployment-supplies).
 

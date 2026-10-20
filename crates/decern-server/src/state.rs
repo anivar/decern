@@ -136,7 +136,7 @@ mod tests {
     fn the_caller_disclosure_under_signed_request_is_self_bound() {
         let key = SigningKey::from_bytes(&[8u8; 32]);
         let mut agents = std::collections::BTreeMap::new();
-        agents.insert("agent-1".into(), key.verifying_key());
+        agents.insert("agent-1".into(), vec![key.verifying_key()]);
         let d = caller_disclosure(&caller::Caller::Signed(Box::new(
             crate::sig::SigConfig::new(agents, "https://pdp.example/access/v1/evaluation"),
         )));
