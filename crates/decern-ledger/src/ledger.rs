@@ -164,7 +164,7 @@ impl Ledger {
     /// Reopen is fail-closed exactly like the single-file constructors: the
     /// whole chain (every segment, in order) is re-verified against the
     /// keyring before any further append is accepted. Every SEALED segment is
-    /// (re-)marked read-only (0444 on Unix) on open — self-healing after a
+    /// (re-)marked read-only (0400 on Unix) on open — self-healing after a
     /// crash that landed between committing the manifest and applying that
     /// permission, since the permission bit is defense-in-depth only, never
     /// the source of truth (see the `segment` module).
@@ -205,7 +205,7 @@ impl Ledger {
         // and — crucially — UNSEAL the active segment first, so that if a torn
         // tail lands in it, `resolve_open_head`'s `heal_torn_tail` (which opens
         // the file `write(true)`) can truncate the fragment even when a prior
-        // crash left the active segment defensively 0444. Healing a torn tail is
+        // crash left the active segment defensively 0400. Healing a torn tail is
         // a write; it must never be blocked by the very permission bit the open
         // path exists to self-heal.
         for seg in manifest.segments.iter().filter(|s| s.end_seq.is_some()) {
