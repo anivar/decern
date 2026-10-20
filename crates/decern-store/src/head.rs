@@ -312,7 +312,21 @@ impl FileLedgerHeadStore {
 /// (empty state); a present-but-unparseable file fails closed.
 fn read_shard_state(path: &Path) -> Result<ShardState, StoreError> {
     match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| StoreError::Serde(e.to_string())),
+        Ok(bytes) => {
+            let state: ShardState =
+                serde_json::from_slice(&bytes).map_err(|e| StoreError::Serde(e.to_string()))?;
+            // Records with no cursor is not a shard with no history but a file that was
+            // altered. Read as history-less it would be skipped by verification and
+            // extended from sequence 0 again, under any key.
+            if state.cursor.is_none() && !state.records.is_empty() {
+                return Err(StoreError::Invalid(format!(
+                    "shard file {} holds {} records and no cursor",
+                    path.display(),
+                    state.records.len()
+                )));
+            }
+            Ok(state)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ShardState::default()),
         Err(e) => Err(io(path, e)),
     }
@@ -868,5 +882,42 @@ mod tests {
         // Odd-length / non-hex stems fail closed, never silently skipped.
         assert!(shard_from_hex("abc").is_err());
         assert!(shard_from_hex("zz").is_err());
+    }
+
+    /// A shard file holding records but no cursor is an altered store, not a shard with no
+    /// history: it is refused wherever it is read, so no key extends it from sequence 0 again.
+    #[test]
+    fn a_shard_file_with_records_and_no_cursor_is_refused() {
+        let dir = tmp_dir("records-no-cursor");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        s.with_shard("acme", &mut |_, _| {
+            Ok(Some((
+                HeadCursor {
+                    next_seq: 1,
+                    last_hash: "h0".into(),
+                },
+                "line-0".into(),
+            )))
+        })
+        .unwrap();
+        let path = s.shard_path("acme").unwrap();
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        state["cursor"] = serde_json::Value::Null;
+        fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+        assert!(
+            s.list_shards().is_err(),
+            "a shard with records and no cursor was listed or skipped"
+        );
+        let mut ran = false;
+        let r = s.with_shard("acme", &mut |_, _| {
+            ran = true;
+            Ok(None)
+        });
+        assert!(
+            r.is_err() && !ran,
+            "the altered shard was opened for appending"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }
