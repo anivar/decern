@@ -441,6 +441,7 @@ fn prepare(
     // data subject's consent.
     let mission_bind = bind_mission(
         st.missions.as_ref(),
+        st.kernel.directory(),
         st.require_mission,
         &subject.id,
         &action,
@@ -701,6 +702,7 @@ fn apply_mission_context(ctx: &mut Value, action: &str) {
 
 pub(crate) fn bind_mission(
     registry: &dyn MissionRegistry,
+    dir: &Directory,
     require: bool,
     subject_id: &str,
     action: &str,
@@ -785,6 +787,24 @@ pub(crate) fn bind_mission(
         }
         _ => {}
     }
+    // A Mission backs a decision only about a subject the model names, approved by a
+    // principal the model names, in the same tenant. `approve` refuses a cross-tenant
+    // grant; this also refuses one a registry already holds from a release that did not,
+    // and an approval this model cannot place in any tenant.
+    // One refusal for every way this fails, so it does not say whether the approver
+    // exists in another tenant.
+    let same_tenant = match (
+        dir.principals.get(&entry.approver),
+        dir.principals.get(subject_id),
+    ) {
+        (Some(approver_rec), Some(subject_rec)) => approver_rec.tenant == subject_rec.tenant,
+        _ => false,
+    };
+    if !same_tenant {
+        return MissionBind::Deny(vec![format!(
+            "mission {s256} was not approved by a principal of subject {subject_id}'s tenant"
+        )]);
+    }
 
     MissionBind::Ok(decern_ledger::MissionRef {
         approver: approver.to_owned(),
@@ -797,7 +817,40 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::testutil::{body_json, mission_base, mission_state_at, test_dir};
+    use crate::testutil::{body_json, has_error, mission_base, mission_state_at, test_dir};
+
+    /// A Mission one principal approves for another in its tenant binds. Without this, a
+    /// check that bound only self-approvals would pass every other test.
+    #[test]
+    fn a_same_tenant_mission_for_another_principal_binds() {
+        let registry = crate::testutil::test_missions();
+        let kernel = decern_kernel::Kernel::new(&decern_kernel::Model::builtin()).unwrap();
+        let now = crate::now_secs();
+        registry
+            .register(
+                "same-tenant",
+                decern_store::MissionEntry {
+                    approver: "corp".into(),
+                    expiry: now + 3600,
+                    terminated: false,
+                    agent: "agent1".into(),
+                    approved_tools: vec!["move_money".into()],
+                },
+                now,
+            )
+            .unwrap();
+        let ctx = json!({"mission": {"approver": "corp", "s256": "same-tenant"}});
+        let bound = bind_mission(
+            registry.as_ref(),
+            kernel.directory(),
+            false,
+            "agent1",
+            "MoveMoney",
+            &ctx,
+            now,
+        );
+        assert!(matches!(bound, MissionBind::Ok(_)));
+    }
 
     #[test]
     fn accepts_authzen_request_shape() {
@@ -920,14 +973,7 @@ mod tests {
         let (status, body) = body_json(decide(State(st), None, Ok(Json(req))).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["decision"], false, "missing mission must Deny: {body}");
-        assert!(
-            body["context"]["errors"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|e| e.as_str().unwrap_or("").contains("require-mission")),
-            "{body}"
-        );
+        assert!(has_error(&body, "require-mission"), "{body}");
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -952,14 +998,7 @@ mod tests {
             body["decision"], false,
             "a body-asserted human_approved must not move money without a Mission: {body}"
         );
-        assert!(
-            body["context"]["errors"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|e| e.as_str().unwrap_or("").contains("MoveMoney")),
-            "{body}"
-        );
+        assert!(has_error(&body, "MoveMoney"), "{body}");
         let _ = std::fs::remove_dir_all(&base);
     }
 

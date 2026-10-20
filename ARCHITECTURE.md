@@ -86,14 +86,15 @@ method and the standards registry. `scripts/verify.sh` is the one gate every cha
    somewhere the operator cannot reach. That is the step that stops requiring trust in them,
    and it does not work for `--sharded` yet. See [`decern verify`](docs/CLI.md#decern-verify).
 
-The same binary also reaches `decern-identity` for the **Mission lifecycle**: `POST /mission/v1/approve`
-grants an agent a scoped, fail-closed-attenuated authorization context (refused, and nothing recorded,
-if it exceeds the approver's own authority or expiry); `GET /mission/v1/{s256}` reports its state; and
-`POST /mission/v1/{s256}/terminate` ends it, with no revival. Each accepted transition is appended to
-the ledger under the same fail-closed contract as a decision — a 503 rather than an unrecorded success —
+The same binary also reaches `decern-identity` for the **Mission lifecycle**: `POST
+/mission/v1/approve` grants an agent a scoped, fail-closed-attenuated authorization context
+(refused, and nothing recorded, if it exceeds the approver's own authority or expiry, or names an
+agent outside the approver's tenant); `GET /mission/v1/{s256}` reports its state; and `POST
+/mission/v1/{s256}/terminate` ends it, with no revival. Each accepted transition is appended to the
+ledger under the same fail-closed contract as a decision — a 503 rather than an unrecorded success —
 so a Mission's whole history is as externally verifiable as the decisions it authorizes. The durable
-Mission registry (`decern-store`) holds the authoritative state, so a termination outlives any single
-process.
+Mission registry (`decern-store`) holds the authoritative state, so a termination outlives any
+single process.
 
 ## How the guarantees are established
 

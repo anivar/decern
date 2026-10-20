@@ -119,24 +119,27 @@ pub fn clamp_delegation(
 /// from what `exchange` above would actually grant, since `exchange` is only ever
 /// called against the boot-pinned base model, never the live directory overlay.
 pub fn delegator_attrs(model: &Model, id: &str) -> Option<(String, u64, Vec<String>)> {
-    for e in model.entities.as_array()? {
+    let attrs = principal_attrs(model, id)?;
+    let tenant = attrs.get("tenant")?.as_str()?.to_owned();
+    let expiry = attrs.get("expiry")?.as_u64()?;
+    let scopes = attrs
+        .get("scopes")?
+        .as_array()?
+        .iter()
+        .filter_map(|s| s.as_str().map(str::to_owned))
+        .collect();
+    Some((tenant, expiry, scopes))
+}
+
+/// The `attrs` of the Principal named `id` in the model's entity array, or `None` when
+/// no Principal has that id.
+pub(crate) fn principal_attrs<'m>(model: &'m Model, id: &str) -> Option<&'m Value> {
+    model.entities.as_array()?.iter().find_map(|e| {
         let uid = e.get("uid")?;
-        if uid.get("type") == Some(&Value::from("Principal"))
-            && uid.get("id") == Some(&Value::from(id))
-        {
-            let attrs = e.get("attrs")?;
-            let tenant = attrs.get("tenant")?.as_str()?.to_owned();
-            let expiry = attrs.get("expiry")?.as_u64()?;
-            let scopes = attrs
-                .get("scopes")?
-                .as_array()?
-                .iter()
-                .filter_map(|s| s.as_str().map(str::to_owned))
-                .collect();
-            return Some((tenant, expiry, scopes));
-        }
-    }
-    None
+        let named = uid.get("type") == Some(&Value::from("Principal"))
+            && uid.get("id") == Some(&Value::from(id));
+        if named { e.get("attrs") } else { None }
+    })
 }
 
 /// Mint an attenuated child credential delegated by `delegator_id`.

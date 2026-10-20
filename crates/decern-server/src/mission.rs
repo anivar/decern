@@ -438,7 +438,7 @@ mod tests {
             st.model.as_ref(),
             Mission {
                 approver: "corp".into(),
-                agent: "agent-mission".into(),
+                agent: "agent1".into(),
                 approved_at: 0,
                 description: "reconcile invoices".into(),
                 approved_tools: vec!["read".into()],

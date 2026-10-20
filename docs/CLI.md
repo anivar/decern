@@ -209,7 +209,7 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 | `GET` | `/anchor/v1/tree-head` | open | A signed commitment to the log's current state — publish it somewhere you do not control. |
 | `GET` | `/audit/v1/subject?handle=<h>` | open | What was decided *about* one party, with inclusion proofs. |
 | `GET` | `/directory/v1/principals/{id}/descendants` | guarded | Who else loses authority if this principal is revoked. |
-| `POST` | `/mission/v1/approve` | guarded | Grant a scoped, fail-closed-attenuated Mission. |
+| `POST` | `/mission/v1/approve` | guarded | Grant a scoped, fail-closed-attenuated Mission. Refused (422, nothing recorded) when it exceeds the approver's scopes or expiry, or when the agent is not a principal in the approver's tenant. A Mission backs a decision only about a subject the model names, approved by a principal the model names, in the same tenant. |
 | `GET` | `/mission/v1/{s256}` | guarded | Its approver, state and expiry, to every established caller — a workload bound to itself included, so a reference a caller can compute or obtain answers who approved what and until when. Unbound because a PEP consults mission state before honoring a grant, and binding the read to the approver would refuse the agent a Mission authorizes. |
 | `POST` | `/mission/v1/{s256}/terminate` | guarded | End it. A terminated Mission never revives. |
 | `GET` | `/.well-known/decern-subject-side-disclosure` | open | What this deployment does about challenges and callers, read from its running configuration. |

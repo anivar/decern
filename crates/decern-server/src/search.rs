@@ -321,7 +321,15 @@ fn enumerate(
     let dir = st.kernel.directory();
     let refused_without_a_mission = |action: &str, ctx: &Value| {
         matches!(
-            bind_mission(st.missions.as_ref(), false, &subject.id, action, ctx, now_s),
+            bind_mission(
+                st.missions.as_ref(),
+                dir,
+                false,
+                &subject.id,
+                action,
+                ctx,
+                now_s
+            ),
             MissionBind::Deny(_)
         )
     };

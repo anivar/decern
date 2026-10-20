@@ -26,7 +26,8 @@ use sha2::{Digest, Sha256};
 
 use crate::IdentityError;
 use crate::exchange::{
-    ExchangeRequest, Exchanged, delegator_attrs, exchange, reserved_subject_id_prefix,
+    ExchangeRequest, Exchanged, delegator_attrs, exchange, principal_attrs,
+    reserved_subject_id_prefix,
 };
 
 /// The approved blob: exactly what an approver authorizes. Its canonical
@@ -127,12 +128,13 @@ pub fn approve(
     now: u64,
     registry: Option<&dyn MissionRegistry>,
 ) -> Result<ApprovedMission, IdentityError> {
-    let (_, expiry, scopes) = delegator_attrs(model, &mission.approver).ok_or_else(|| {
-        IdentityError::SubjectInvalid(format!(
-            "approver {} is not a principal in the graph",
-            mission.approver
-        ))
-    })?;
+    let (approver_tenant, expiry, scopes) =
+        delegator_attrs(model, &mission.approver).ok_or_else(|| {
+            IdentityError::SubjectInvalid(format!(
+                "approver {} is not a principal in the graph",
+                mission.approver
+            ))
+        })?;
 
     // Attenuation, fail-closed — the approver cannot approve authority they lack.
     for t in &mission.approved_tools {
@@ -159,6 +161,22 @@ pub fn approve(
         return Err(IdentityError::SubjectInvalid(format!(
             "mission expiry {} is not in the future (now {now}); an expired mission cannot be approved",
             mission.expiry
+        )));
+    }
+
+    // An approval vouches for an action inside the approver's own tenant, so the agent
+    // must be a principal there. An agent in another tenant would put the approval behind
+    // a decision outside the isolation boundary the decision itself respects. An agent the
+    // model does not name is refused in the same words, so a workload caller, which may
+    // name only itself as approver, cannot use this to learn which ids exist in other
+    // tenants. A caller that may name any approver can already tell whether an approver id
+    // exists.
+    let agent_tenant =
+        principal_attrs(model, &mission.agent).and_then(|a| a.get("tenant")?.as_str());
+    if agent_tenant != Some(approver_tenant.as_str()) {
+        return Err(IdentityError::SubjectInvalid(format!(
+            "agent {} is not a principal in approver {}'s tenant",
+            mission.agent, mission.approver
         )));
     }
 
@@ -303,7 +321,7 @@ mod tests {
     fn mission(tools: &[&str], expiry: u64) -> Mission {
         Mission {
             approver: "corp".into(),
-            agent: "agent-mission".into(),
+            agent: "agent1".into(),
             approved_at: 100,
             description: "reconcile Q3 invoices".into(),
             approved_tools: scopes(tools),
@@ -318,6 +336,49 @@ mod tests {
         let err = approve(&Model::builtin(), m, 100, None).unwrap_err();
         assert!(matches!(err, IdentityError::SubjectInvalid(_)));
         assert!(err.to_string().contains("root_everything"), "{err}");
+    }
+
+    #[test]
+    fn approve_refuses_an_approver_in_another_tenant() {
+        // corpB is a Human in tenant B holding move_money; corp is in tenant A.
+        let model = Model::builtin();
+        let corp_b_expiry = delegator_attrs(&model, "corpB").unwrap().1;
+        let m = Mission {
+            approver: "corpB".into(),
+            agent: "corp".into(),
+            ..mission(&["move_money"], corp_b_expiry)
+        };
+        let err = approve(&model, m, 100, None).unwrap_err();
+        assert!(matches!(err, IdentityError::SubjectInvalid(_)));
+        assert!(
+            err.to_string()
+                .contains("is not a principal in approver corpB's tenant"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn approve_refuses_an_agent_the_model_does_not_name_in_the_same_words() {
+        let m = Mission {
+            agent: "no-such-agent".into(),
+            ..mission(&["read"], corp_expiry())
+        };
+        let err = approve(&Model::builtin(), m, 100, None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("is not a principal in approver corp's tenant"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn approve_accepts_an_agent_in_the_approvers_tenant() {
+        // agent1 is in corp's tenant A, so the tenant check passes it.
+        let m = Mission {
+            agent: "agent1".into(),
+            ..mission(&["move_money"], corp_expiry())
+        };
+        approve(&Model::builtin(), m, 100, None).unwrap();
     }
 
     #[test]
