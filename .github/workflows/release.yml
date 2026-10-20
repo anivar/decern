@@ -55,7 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           bin="target/${{ matrix.target }}/release"
-          decision=$("$bin/decern${{ matrix.ext }}" decide --subject Principal:corp --action Read --resource Resource:claim1 | head -n 1)
+          decision=$("$bin/decern${{ matrix.ext }}" decide --subject Principal:corp --action Read --resource Resource:claim1 | sed -n 1p)
           [ "$decision" = "ALLOW" ] || { echo "decern decide said: $decision"; exit 1; }
           "$bin/decern-serve${{ matrix.ext }}" --trust-proxy --addr 127.0.0.1:18080 \
             --ledger "$RUNNER_TEMP/smoke-ledger.jsonl" --missions "$RUNNER_TEMP/smoke-missions.json" \

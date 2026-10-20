@@ -455,12 +455,14 @@ fn uid(ty: &str, id: &str) -> Result<EntityUid, String> {
 /// The stack Cedar evaluation needs. Cedar refuses to evaluate when less than 100 KiB of
 /// stack seems left, and musl reports only the part of the main thread's stack mapped so far,
 /// about 128 KiB, so a static musl binary that loaded a model on its main thread failed at
-/// startup. 8 MiB matches the main stack glibc usually gives.
+/// startup. 8 MiB is Linux's usual default stack limit for a main thread (`RLIMIT_STACK`).
 pub const EVALUATION_STACK: usize = 8 << 20;
 
 /// Run `f` on a thread named `name` with [`EVALUATION_STACK`] of stack, and return what it
-/// returns. A binary's `main` runs its work through this, so evaluation behaves the same
-/// however the binary was linked. A panic in `f` resumes on the calling thread.
+/// returns. A binary's `main` runs through this, so startup and anything evaluated on that
+/// thread behave the same however the binary was linked. Threads the binary spawns, such as
+/// an async runtime's workers, get their own stacks, which musl measures correctly. A panic
+/// in `f` resumes on the calling thread.
 pub fn with_evaluation_stack<T: Send + 'static>(
     name: &str,
     f: impl FnOnce() -> T + Send + 'static,
