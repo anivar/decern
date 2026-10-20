@@ -337,9 +337,19 @@ fn explain(
     Ok(ExitCode::SUCCESS)
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
-    match run().await {
+fn main() -> ExitCode {
+    // On a thread with the stack Cedar needs, not the main thread: see
+    // `decern_kernel::with_evaluation_stack`.
+    let outcome = decern_kernel::with_evaluation_stack("decern", || {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .context("starting the async runtime")?
+            .block_on(run())
+    })
+    .context("starting the main thread")
+    .and_then(|outcome| outcome);
+    match outcome {
         Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e:#}");

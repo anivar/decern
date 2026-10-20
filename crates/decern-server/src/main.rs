@@ -560,8 +560,20 @@ fn parse_issuer_key(hex_key: &str, flag: &str) -> Result<VerifyingKey> {
     VerifyingKey::from_bytes(&bytes).with_context(|| format!("invalid Ed25519 key for {flag}"))
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // On a thread with the stack Cedar needs, not the main thread: see
+    // `decern_kernel::with_evaluation_stack`.
+    decern_kernel::with_evaluation_stack("decern-serve", || {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .context("starting the async runtime")?
+            .block_on(serve())
+    })
+    .context("starting the main thread")?
+}
+
+async fn serve() -> Result<()> {
     let args = Args::parse();
     // First, before anything touches disk: a server that cannot say how its callers are
     // established refuses to start, and a refused boot should leave nothing behind.
