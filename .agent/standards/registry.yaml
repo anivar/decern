@@ -16,7 +16,6 @@ rule: >-
 # is neither here nor in a surface list fails scripts/standards.py check.
 non_surface:
   - crates/decern-server/src/main.rs
-  - crates/decern-server/src/args.rs
   - crates/decern-server/src/boot.rs
   - crates/decern-server/src/state.rs
   - crates/decern-server/src/mission.rs
@@ -414,6 +413,7 @@ standards:
     verified: 2026-10-20
     surface:
       - crates/decern-server/src/aauth.rs
+      - crates/decern-server/src/args.rs
     conformance: >-
       The resource half of **agent identity access** (§4.2.1) only. Person identity access
       verifies a person token and is not implemented. Resource-managed access has the
