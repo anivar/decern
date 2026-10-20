@@ -4,4 +4,4 @@
 from .client import Client, Decision, DecernError
 
 __all__ = ["Client", "Decision", "DecernError"]
-__version__ = "0.1.0"
+__version__ = "0.5.0"

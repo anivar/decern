@@ -6,6 +6,225 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-20
+
+This release fixes a published security advisory, adds the AuthZEN 1.0 batch evaluation, search
+and discovery endpoints, and makes the Linux release binaries start. Upgrade if you approve
+Missions in a model with more than one tenant: 0.2.0 through 0.4.0 let a principal in one tenant
+supply the approval behind a money movement in another
+([GHSA-rm33-3hf3-g366](https://github.com/anivar/decern/security/advisories/GHSA-rm33-3hf3-g366)).
+
+Some requests are answered differently: every malformed evaluation request is `400`; signature
+headers are parsed as structured fields, so `@method` is signed as sent; a Mission approval for
+an agent outside the approver's tenant is `422`; and `/healthz` answers `503` once the ledger has
+stopped after a write error. Each is described below.
+
+### Added
+
+- **AuthZEN Access Evaluations.** `POST /access/v1/evaluations` decides several evaluations in
+  one exchange (AuthZEN 1.0 §7): top-level `subject`, `action`, `resource` and `context` are
+  defaults an item replaces whole; `options.evaluations_semantic` picks `execute_all`,
+  `deny_on_first_deny` or `permit_on_first_permit`; answers come back in request order. Every
+  evaluated item is admitted, decided and recorded as a single evaluation is, before the batch
+  is served — as one durable step on the single-file ledger; an item that is not an evaluation,
+  or that this server refuses, is `decision: false` with `context.error` `{status, code,
+  message}` and, having decided nothing, is not recorded. Without items the endpoint is the
+  single evaluation. At most 1000 items. Discovery advertises `access_evaluations_endpoint`.
+  The certification scenario's Batch Core and Batch Properties tests run against
+  `examples/authzen-certification/model`. Authored by @anivar.
+- **AuthZEN Search.** `POST /access/v1/search/subject`, `/resource` and `/action` (AuthZEN 1.0 §8)
+  answer which subjects of a type may perform an action on a resource, which resources of a type a
+  subject may act on, and which actions a subject may perform on a resource. Every candidate is
+  decided as an evaluation would be, over the same prepared context, so a result is one the
+  evaluation endpoint would permit; results come back in the request's type spelling, the searched
+  side's id is ignored, and every result comes in one page (pagination is optional in the
+  specification and not implemented — a `page.limit` is accepted, a `page.token` is 400). A search
+  binds no Mission, is refused under `--require-mission`, and never lists an action a decision
+  would refuse for want of one; a caller bound to itself may search for what it may do and not for
+  subjects. Each search is recorded once, with the result ids (up to 1000) and the count. Discovery
+  advertises the three endpoints. The certification scenario's Search Core and Search Properties
+  tests run against `examples/authzen-certification/model`, whose resources now carry `status` and
+  whose policies read it, or a PEP's description, so a search finds what an evaluation would
+  permit. The searched side's id reaches neither the decision nor the record, which names no
+  subject for a subject search and lands in the resource's tenant's shard; a record carries the
+  context pruned to what the searched action (or, for an action search, any action) declares.
+  `decern-kernel` gains `search_actions` (which prunes per action) and `prune_to_any_declared`; an
+  action the schema does not declare now prunes everything but `now`. Authored by @anivar.
+- **AuthZEN discovery, and request types in the PEP's own words.** `decern-serve --public-url
+  https://pdp.example` serves `GET /.well-known/authzen-configuration` (AuthZEN 1.0 §9), naming
+  the decision point and its evaluation endpoint and nothing the deployment does not serve;
+  without the flag the document is 404 rather than assembled from a caller's `Host` header.
+  `--authzen-type-alias user=Principal` maps a request's entity types onto the model's, and the
+  record carries the model's. `X-Request-ID` comes back on every response (§10.1.3). The
+  certification scenario's Basic Core and Discovery sub-levels run as tests against
+  `examples/authzen-certification/model`. Authored by @anivar.
+- **AuthZEN Basic Properties.** What a PEP says about a party — `subject.properties`,
+  `resource.properties`, `action.properties` — reaches the policies as `context.subject`,
+  `context.resource` and `context.action`, where the action's schema declares it; the rest is
+  dropped before evaluation, at every level, and never recorded. Only a caller bound as a PEP
+  (`--pep`, a bearer caller, `--trust-proxy`) may describe a party through `properties`; a workload
+  bound to itself gets `403 caller_mismatch`, and those three context keys are reserved so there is
+  no second way in. The certification scenario's Basic Properties tests (rules 5–8) run against
+  `examples/authzen-certification/model`. Authored by @anivar.
+
+### Changed
+
+- **Signature headers are parsed as structured fields.** `Signature-Input` and `Signature` were
+  matched against one fixed string shape; the signed-request and AAuth postures now parse them
+  as RFC 8941 structured fields and build the RFC 9421 signature base the way the RFC defines it.
+  What a signer can notice: `@method` is signed as sent, case included (RFC 9421 §2.2.1),
+  where it was uppercased first, so a signature over `POST` no longer covers a request sent as
+  `post`. Every line of a signature header is read, joined with `", "` (§2.1), where only the
+  first was. The `@signature-params` line is serialized from the parsed input (§3.2 step 7)
+  rather than copied, so a signer that signs the serialization §2.3 defines verifies whatever
+  optional whitespace its `Signature-Input` carries. `@authority` is host and optional port,
+  from an absolute-form request target when there is one and from a single `Host` otherwise,
+  where it was always `Host` as sent; a missing or repeated `Host` is refused. A `Host`,
+  `Signature-Key`, `Signature-Input`, `Signature` or `Content-Digest` value that is not visible
+  ASCII is refused as malformed rather than read as absent, so a GET carrying such a
+  `Content-Digest`, once not checked, is refused. Parsing follows RFC 8941 rather than the old
+  string shape: a token `keyid`, `created=+1` and a trailing `;` are refused, and a `Signature`
+  whose base64 lacks its padding is accepted (RFC 9651 §4.2.7). The profile is otherwise
+  unchanged: one signature labelled `sig1`, exactly its covered components in order, `created`
+  and `keyid` only, Ed25519 only. The AAuth posture still does not meet
+  draft-hardt-oauth-aauth-protocol-11; the standards registry lists where. Authored by @anivar.
+- **Every malformed evaluation request is 400, and undeclared context is ignored.** A missing
+  field, a wrong type, a body that is not JSON or a content type that is not `application/json`
+  answers 400 with the parser's own detail, where the extractor spread them over 400, 415 and 422
+  (AuthZEN 1.0 §10.1.1). Context attributes the model's schema does not declare are dropped before
+  evaluation instead of denying the request as malformed: no validated policy can read them, so no
+  decision can turn on them. Declared attributes keep their schema validation, and what was dropped
+  never reaches the ledger. Authored by @anivar.
+- **Request bounds are settled at the edge.** An evaluation `context` that is not an object is
+  400, as any wrong type is (AuthZEN 1.0 §10.1.1), where it was quietly taken as empty; a
+  context over 64 KiB, properties included, is 413 and is neither evaluated nor recorded, and a
+  batch whose default context is that large answers each item so without copying it into every
+  item. What the record keeps of a `context.mission` is the `{approver, s256}` pair that was
+  looked up, never the object as sent. `--authzen-type-alias` refuses to start the server when
+  the model type it names is not one the schema declares, or when the request type is one of the
+  model's own; `--public-url` is parsed as a URL and refuses a bad port, a bad host or anything
+  beyond an origin, and takes any loopback address for a local walkthrough. Authored by @anivar.
+- **The Mission read is stated as unbound, and pinned.** `GET /mission/v1/{s256}` answers every
+  established caller, a workload bound to itself included, with the Mission's approver, state and
+  expiry, so a reference a caller can compute or obtain tells it who approved what and until when.
+  It stays unbound because a PEP consults mission state before honoring a grant, and binding it to the
+  approver would refuse the agent a Mission authorizes. A test pins the unbound read, so binding it is
+  a change of its own. Authored by @anivar.
+
+### Fixed
+
+- **The ledger stops recording after a write error.** When a write failed (a full disk, for
+  example), that request was answered `503`, but the next appends went into the file behind the
+  partial record. Decisions were served with `200` into a ledger that no longer verified, and
+  the server then refused to start. Now a write, flush or sync error on the single-file ledger
+  makes it refuse every append until it is reopened, so each later decision is a `503`, and
+  `/healthz` answers `503` so a liveness probe restarts the server. The restart trims an
+  unterminated record; a record written in full before its sync failed is kept, though its
+  request was answered `503`. The sharded ledger writes through its head store, a different
+  path this change does not touch. Authored by @anivar.
+- **The Linux release binaries start.** The static musl builds of `decern` and `decern-serve`
+  failed at startup with "entities error: error during entity deserialization". musl reports
+  only the part of the main thread's stack mapped so far, and Cedar refuses to evaluate when
+  less than 100 KiB seems left. Reproduced on aarch64; the same failure was measured on x86_64
+  on a native kernel under a full-system emulator, and x86_64 appeared to work in Docker on
+  Apple Silicon only because that emulation gives the main thread a larger stack. Both binaries
+  now run startup, and every `decern` command, on a thread with an explicit 8 MiB stack;
+  `decern-serve` handles requests on its async runtime's threads, which musl measures
+  correctly. The release workflow runs each built binary once, a `decern decide` and one
+  `decern-serve` evaluation, before anything is published. Authored by @anivar.
+- **Two claims narrowed to what the code checks.** `decern prove` states `money-gate` as
+  "MoveMoney is never allowed unless the context carries human_approved = true" and
+  `consent-gate` as "… unless the context carries consent = true", where they said "explicit
+  human approval" and "explicit consent". The solver checks a context flag. The server sets
+  `human_approved` only from a Mission covering `MoveMoney`, and `approve` does not check that
+  the approver is human or someone other than the agent; the enforcement point sets
+  `consent`. The proofs are unchanged. Bearer validation is described as RFC 9068's checks for
+  `EdDSA` tokens: RFC 9068 §2.1 requires a conforming resource server to support RS256, which
+  this does not, and the standards registry now says so. Authored by @anivar.
+- **A bearer token with `"crit": null` is refused.** A bearer token whose header carries
+  `"crit": null` is refused like any other `crit`, where `null` read as absent. `decern prove
+  --timeout` is described as a bound on the whole run: cvc5 stops itself 60 seconds after it
+  starts, so a higher value adds no solver time. Authored by @anivar.
+- **The documentation says what the code does.** Claims that overstated or named what is not
+  there are corrected across the repository:
+  - The README, `ARCHITECTURE.md`, the CLI reference, both diagrams and the website name all five
+    caller postures, AAuth included, and say the AAuth posture does not yet meet
+    draft-hardt-oauth-aauth-protocol-11.
+  - `SECURITY.md` says the proofs cover the Cedar model's symbolic input space, not the entire
+    input space.
+  - `docs/CLI.md` gains *Pairing with an identity provider* (bearer validation verifies `EdDSA`
+    tokens only, so a provider that signs `RS256` belongs in front), *What a record keeps*, and
+    *What a deployment supplies* (plain HTTP, keys read once at startup, no logging after
+    startup, one unbounded ledger file, a Mission registry per replica, and no check that the
+    served model is the proven one). The Missions section says a Mission binds only `Read`,
+    `MoveMoney` and `AccessPII`.
+  - The gateway adapter's Traefik example no longer says Traefik strips a client's
+    `X-Forwarded-Subject` (an earlier middleware must), and its Envoy example, which also let a
+    client choose its method and URI, is replaced by what a configuration must do. The adapter
+    README says each gateway example forwards the HTTP method as the action name, which the
+    builtin model does not declare.
+  - The MCP example says its server approves a Mission in `corp`'s name; the client READMEs say
+    `context` reaches the policies where the schema declares it and that `reasons` names
+    deciding forbid policies too; the Postgres store README drops a money-budget gate that does
+    not exist and says the Mission registry stays a per-host file.
+  - `RELEASES.md` says which version fields each publish workflow checks and that the SBOMs are
+    not signed; `DEPENDENCIES.md` gives the exact `cedar-policy` and `cedar-policy-symcc` pins;
+    the README no longer calls the file head store Unix-only; `decern-proof` no longer names a
+    flag that does not exist; the JCS module states that `-0` and `0` digest alike; and the
+    0.4.0 known limits, which said the AAuth posture followed draft `-10`, name its replay limit.
+    `scripts/changelog.sh --preview` exits 0 when the last fragment ends in a newline.
+    Authored by @anivar.
+
+### Security
+
+- **A Mission's approval stays inside one tenant.** `POST /mission/v1/approve` refuses a Mission
+  whose agent is not a principal in the approver's tenant (`422`, nothing recorded): an agent
+  in another tenant, and an agent the model does not name, are refused in the same words. At
+  decision time a Mission backs a decision only about a subject the model names, approved by a
+  principal the model names, in the same tenant, so a cross-tenant Mission a registry already
+  holds no longer counts. Before this, a principal in one tenant holding `move_money` could
+  supply the approval behind a money movement in another (GHSA-rm33-3hf3-g366, affecting 0.2.0
+  through 0.4.0). The approver is still not checked to differ from the agent; that is a
+  separate decision. Authored by @anivar.
+- **Standing tokens refuse `crit` and honour `nbf`.** A standing token whose header names a
+  critical extension is refused, where it was ignored and the token verified — RFC 7515 §4.1.11
+  requires the refusal of a recipient that implements no extension. An `nbf` in the future
+  refuses the token, and `exp` and `nbf` are read as RFC 7519 NumericDates: a fractional `exp`
+  is checked rather than read as missing, an `exp` too large for an unsigned 64-bit integer
+  reads as a far expiry where it was refused as missing, and a non-numeric `exp` is refused as
+  `standing_token exp is not a number` in place of `standing_token has no exp`. No standing token
+  ever changed a decision — a challenge is taken out of the context before the kernel runs — but
+  a validly signed one naming a critical extension, or not yet valid, could put a challenge
+  answer on the record. Still open: a standing token needs no `typ` (only an access-token `typ`
+  is refused), and header parameters that are not critical are ignored, as RFC 7515 §4 requires.
+  Authored by @anivar.
+
+### Known limits in this release
+
+Unchanged from 0.4.0 — consent, log pinning, `--trust-proxy`, replay, standing tokens, the
+SPIFFE posture's two ECDSA encodings, AAuth replay, and what the proofs cover — with these
+stated now:
+
+- **The AAuth posture does not meet draft-hardt-oauth-aauth-protocol-11.** It requires the
+  agent token's `alg` to be `EdDSA`, which -11 replaces with `Ed25519`, and it takes the token
+  from the `Signature-Key` member labelled `sig` while verifying the signature labelled `sig1`;
+  the drafts pair the two by label, so no conformant agent passes. The standards registry lists
+  each gap.
+- **Bearer validation verifies `EdDSA` tokens only**, so it is not a conforming RFC 9068
+  resource server, which §2.1 requires to support RS256. An identity provider that signs
+  `RS256` belongs in front ([#226](https://github.com/anivar/decern/issues/226)).
+- **A Mission's approver is not checked to differ from its agent**, so an agent holding
+  `move_money` can approve its own money movement
+  ([#229](https://github.com/anivar/decern/issues/229)).
+- **The single-file ledger takes no lock.** Two processes on one ledger file both serve
+  decisions and fork the chain; run one process per file
+  ([#243](https://github.com/anivar/decern/issues/243)).
+- **Keys, trust bundles and provider key sets load only at startup**
+  ([#227](https://github.com/anivar/decern/issues/227)), and after a ledger write error the
+  server records nothing until it is restarted.
+- **Under `--sharded postgres://…` each replica keeps its own Mission registry**
+  ([#228](https://github.com/anivar/decern/issues/228)).
+
 ## [0.4.0] - 2026-10-09
 
 ### Added
