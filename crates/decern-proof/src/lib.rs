@@ -44,7 +44,7 @@ pub fn suite() -> Vec<Invariant> {
     vec![
         Invariant {
             name: "money-gate",
-            statement: "MoveMoney is never allowed without explicit human approval",
+            statement: "MoveMoney is never allowed unless the context carries human_approved = true",
             guard: r#"permit(principal, action == Action::"MoveMoney", resource)
                       when { context has human_approved && context.human_approved == true };"#,
             only_actions: Some(&["MoveMoney"]),
@@ -134,7 +134,7 @@ pub fn suite() -> Vec<Invariant> {
         },
         Invariant {
             name: "consent-gate",
-            statement: "accessing a pii-labeled resource the principal does not own is never allowed (via any action) without explicit consent",
+            statement: "accessing a pii-labeled resource the principal does not own is never allowed (via any action) unless the context carries consent = true",
             guard: r#"permit(principal, action, resource)
                       when { !(resource has sensitivity && resource.sensitivity == "pii") ||
                              resource.owner == principal ||

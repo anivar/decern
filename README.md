@@ -88,9 +88,9 @@ space, not sampled. Each statement is calibrated to exactly what the solver chec
 proof never claims more than the machine verified — two invariants reason over attributes
 the kernel derives in Rust before the prover runs, and say so:
 
-- **money-gate** — no privileged money action without explicit approval
-- **isolation** — no decision ever crosses a tenant boundary
-- **decay** — no decision once authority has expired
+- **money-gate** — no `MoveMoney` allow unless the context carries `human_approved = true`
+- **isolation** — no allow ever crosses a tenant boundary
+- **decay** — no allow once authority has expired
 - **attenuation-edge** — no access without ownership, a delegation ancestor, or an explicit grant
 - **scope-gate** — bounded actions require their scope
 - **revocation-gate** — a revoked principal is allowed nothing
@@ -186,13 +186,13 @@ POST /mission/v1/{s256}/terminate   -> {reference, state: terminated}
 ## Deployment
 
 `decern-serve` refuses to start unless told how its callers are established, and naming two
-postures is also a startup failure. It validates RFC 9068 bearer tokens (`--bearer-issuer`), RFC
-9421 signed requests (`--signed-agent-key`), SPIFFE JWT-SVIDs (`--spiffe-trust-domain`) or AAuth
-agent tokens (`--aauth-provider`) itself — all against keys configured at startup, never fetched
-— or `--trust-proxy` states that something in front already authenticates them. The three
-workload postures (signed request, SPIFFE, AAuth) additionally bind a caller to the principals
-it may name. Which routes are guarded, which stay open on purpose, and why is in
-[docs/CLI.md](docs/CLI.md)'s trust-boundary section.
+postures is also a startup failure. It validates `EdDSA`-signed RFC 9068 bearer tokens
+(`--bearer-issuer`), RFC 9421 signed requests (`--signed-agent-key`), SPIFFE JWT-SVIDs
+(`--spiffe-trust-domain`) or AAuth agent tokens (`--aauth-provider`) itself — all against keys
+configured at startup, never fetched — or `--trust-proxy` states that something in front already
+authenticates them. The three workload postures (signed request, SPIFFE, AAuth) additionally
+bind a caller to the principals it may name. Which routes are guarded, which stay open on
+purpose, and why is in [docs/CLI.md](docs/CLI.md)'s trust-boundary section.
 
 Five worked examples ship, all runnable and CI-tested and none published as crates:
 [`mcp/`](examples/mcp/) consults decern before every tool call,
@@ -242,11 +242,12 @@ consent, log pinning, `--trust-proxy`, replay, and what the proofs actually cove
   purpose, so treat handles as secrets and rate-limit that route at whatever fronts the
   server. The full map is in
   [docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly).
-- **Bearer validation verifies `EdDSA` tokens only.** An identity provider that signs access
-  tokens `RS256` cannot authenticate to `decern-serve` directly; RSA support needs
-  a crate the supply-chain gate refuses. Put the provider in front, and authenticate the
-  enforcement point to decern with its own credential
-  ([docs/CLI.md](docs/CLI.md#pairing-with-an-identity-provider)).
+- **Bearer validation verifies `EdDSA` tokens only.** RFC 9068 §2.1 requires a conforming
+  resource server to support RS256, so `decern-serve` applies RFC 9068's checks without being a
+  conforming RFC 9068 resource server. An identity provider that signs access tokens `RS256`
+  cannot authenticate to it directly; RSA support needs a crate the supply-chain gate refuses.
+  Put the provider in front, and authenticate the enforcement point to decern with its own
+  credential ([docs/CLI.md](docs/CLI.md#pairing-with-an-identity-provider)).
 - **No key, bundle or key set reloads without a restart, and the server logs nothing after
   startup.** It also speaks plain HTTP. See
   [what a deployment supplies](docs/CLI.md#what-a-deployment-supplies).

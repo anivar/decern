@@ -35,7 +35,7 @@ Prints one line per invariant and a count. **Exit 0 only if every invariant prov
 counterexample is printed with the invariant it refutes.
 
 ```
-PASS  money-gate         no privileged money action without explicit approval
+PASS  money-gate         MoveMoney is never allowed unless the context carries human_approved = true
 ...
 9/9 invariants proven
 ```
@@ -230,7 +230,9 @@ names one posture:
   configured key, issuer matched exactly, audience containing this server, expiry honored. Absent
   or invalid gets `401` with an RFC 6750 challenge; a valid token missing a required scope gets
   `403`. Verification is signature-checking against configured keys, never fetching, so this adds
-  no TLS stack and no reliance on a third party being reachable.
+  no TLS stack and no reliance on a third party being reachable. RFC 9068 §2.1 requires a
+  conforming resource server to support RS256, and this verifies `EdDSA` only, so it applies
+  the profile's checks without conforming to it.
 - **Sender-constrained validation** (`--signed-agent-key`, `--signed-audience`): the guarded
   routes require an RFC 9421 HTTP Message Signature over `@method`, `@authority`, `@path`, and
   `signature-key`, plus `content-digest` (RFC 9530 `sha-256`) on a POST or any request carrying

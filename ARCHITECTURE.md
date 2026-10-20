@@ -38,11 +38,11 @@ Two binaries over seven library crates. The stock build is pure Rust; the one ex
 `decern-server` is split by layer, one seam per file: `main.rs` (flags, the caller-posture
 refusal, startup), `routes.rs` (the router and the guarded/open split), `caller.rs` (how the
 caller is established: the posture enum, the `CallerAuth` trait every posture implements, and
-the one guard layer over the protected routes), `bearer.rs` (RFC 9068 token validation),
-`sig.rs` (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), `aauth.rs` (AAuth agent
-tokens verified against provider keys pinned at startup), `spiffe.rs` (SPIFFE JWT-SVID
-validation against pinned trust bundles), `httpsig.rs` (the RFC 9421 verifier `sig.rs` and
-`aauth.rs` share: structured-field parsing and the signature base), `jose.rs` (compact-JWS
+the one guard layer over the protected routes), `bearer.rs` (RFC 9068 token validation, `EdDSA`
+only), `sig.rs` (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), `aauth.rs`
+(AAuth agent tokens verified against provider keys pinned at startup), `spiffe.rs` (SPIFFE
+JWT-SVID validation against pinned trust bundles), `httpsig.rs` (the RFC 9421 verifier `sig.rs`
+and `aauth.rs` share: structured-field parsing and the signature base), `jose.rs` (compact-JWS
 decoding every token reader shares), `record.rs` (the fail-closed append path), `decide.rs` (the
 decision handler and its derivations), `batch.rs` (AuthZEN batch evaluation), `search.rs`
 (AuthZEN subject, resource and action search), `discovery.rs` (AuthZEN PDP metadata),
