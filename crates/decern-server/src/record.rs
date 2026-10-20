@@ -95,6 +95,32 @@ pub(crate) fn evaluation_body(decision: bool, reasons: &[String], errors: &[Stri
 /// `Some(resp)` = it could not be written, so this 503 must be returned instead. No
 /// transition — a decision OR a Mission lifecycle event — is ever reported as succeeded
 /// unless its record landed.
+/// `GET /healthz`: `ok`, or `503` once the single-file ledger has stopped after a write
+/// error or its lock is poisoned. Neither recovers without a restart, so a liveness probe on
+/// this route restarts the process, and the restart reopens the ledger. A lock held by an
+/// append in progress counts as alive: the probe never waits behind a write.
+pub(crate) async fn healthz(
+    axum::extract::State(st): axum::extract::State<crate::AppState>,
+) -> Response {
+    let stopped = match &*st.backend {
+        LedgerBackend::Single(ledger) => match ledger.try_lock() {
+            Ok(ledger) => ledger.has_failed(),
+            Err(std::sync::TryLockError::Poisoned(_)) => true,
+            Err(std::sync::TryLockError::WouldBlock) => false,
+        },
+        LedgerBackend::Sharded(_) => false,
+    };
+    if stopped {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "ledger stopped after a write error; restart to recover",
+        )
+            .into_response()
+    } else {
+        "ok".into_response()
+    }
+}
+
 pub(crate) fn record_or_503(append: impl FnOnce() -> Result<(), LedgerError>) -> Option<Response> {
     match append() {
         Ok(()) => None,
