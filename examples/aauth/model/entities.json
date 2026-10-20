@@ -2,7 +2,7 @@
   {
     "uid": {
       "type": "Principal",
-      "id": "https://agent-provider.example/agents/agent-1"
+      "id": "aauth:agent-1@agent-provider.example"
     },
     "attrs": {
       "kind": "Agent",
@@ -39,7 +39,7 @@
       "owner": {
         "__entity": {
           "type": "Principal",
-          "id": "https://agent-provider.example/agents/agent-1"
+          "id": "aauth:agent-1@agent-provider.example"
         }
       },
       "tenant": "A"
