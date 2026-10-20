@@ -193,24 +193,19 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
                 }
             };
             let sharded = ShardedLedger::new(store, key, vec![]);
-            // Opening a shard verifies nothing, unlike a single-file ledger, so the key is
-            // checked against each shard's last record here. Every record of a shard is read
-            // to reach its last one, which is what the head store offers; a boot pays that
-            // once.
+            // Opening a shard verifies nothing, unlike a single-file ledger, so each shard is
+            // verified here under this key: the chain, and every record's signature. A record
+            // that names another key, or one with no key id that this key does not verify,
+            // refuses the boot. Every record is read, as a single-file open reads its whole
+            // file; a boot pays that once.
             for shard in sharded.list_shards()? {
-                let records = sharded.read_records(&shard, 0, usize::MAX)?;
-                if let Some(signed_by) = records
-                    .last()
-                    .and_then(|r| r.get("kid"))
-                    .and_then(|k| k.as_str())
-                    && signed_by != kid
-                {
-                    anyhow::bail!(
-                        "shard {shard} was last signed by key {signed_by}, and --key holds {kid}; a \
-                         sharded ledger is signed by one key across restarts and replicas, so \
-                         point --key at that key"
-                    );
-                }
+                sharded.self_verify(&shard).with_context(|| {
+                    format!(
+                        "shard {shard} does not verify under --key {kid}; a sharded ledger is \
+                         signed by one key across restarts and replicas, so point --key at the \
+                         key that signed it"
+                    )
+                })?;
             }
             (LedgerBackend::Sharded(sharded), desc)
         }
@@ -575,7 +570,7 @@ mod tests {
             .await
             .err()
             .expect("the boot should have been refused");
-        let msg = e.to_string();
+        let msg = format!("{e:#}");
         assert!(
             msg.contains("shard t") && msg.contains(&kid_of(&k1)) && msg.contains(&kid_of(&k2)),
             "{msg}"
@@ -589,7 +584,48 @@ mod tests {
         assert!(!k3.exists(), "a refused boot created the key file");
 
         prepare(argv(Some(&k1))).await.unwrap();
+
+        // A head record a label comparison would pass is refused by verification. With its
+        // key id stripped, as a legacy record has none, the other key does not verify the
+        // signature and the signing key does; with its key id relabelled to the other key,
+        // the signature does not match the key named.
+        let kid2 = kid_of(&k2);
+        edit_last_record(&heads, |r| {
+            format!("{}}}", &r[..r.rfind(",\"kid\":\"").unwrap()])
+        });
+        let e = prepare(argv(Some(&k2)))
+            .await
+            .err()
+            .expect("a record with no key id is still another key's record");
+        assert!(format!("{e:#}").contains("does not verify under"), "{e:#}");
+        prepare(argv(Some(&k1)))
+            .await
+            .expect("the signing key verifies a record with no key id");
+        edit_last_record(&heads, |r| {
+            format!("{},\"kid\":\"{kid2}\"}}", &r[..r.len() - 1])
+        });
+        let e = prepare(argv(Some(&k2)))
+            .await
+            .err()
+            .expect("a relabelled key id is not a pass");
+        assert!(format!("{e:#}").contains("does not verify under"), "{e:#}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Rewrite the last record of the one shard under `heads`, the way an operator with the
+    /// files could.
+    fn edit_last_record(heads: &std::path::Path, edit: impl Fn(&str) -> String) {
+        let shard = std::fs::read_dir(heads)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|x| x == "shard"))
+            .expect("a shard file");
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&shard).unwrap()).unwrap();
+        let last = state["records"].as_array_mut().unwrap().last_mut().unwrap();
+        let edited = edit(last["record_json"].as_str().unwrap());
+        last["record_json"] = serde_json::Value::String(edited);
+        std::fs::write(&shard, serde_json::to_vec(&state).unwrap()).unwrap();
     }
 
     /// The Mission registry defaults into the shard directory. The boot-time key check lists

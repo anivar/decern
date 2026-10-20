@@ -41,10 +41,11 @@ pub(crate) struct Args {
     /// Hosted mode. Target is either a directory (per-shard `flock` head store —
     /// several `decern-serve` processes on ONE host share one tamper-evident
     /// ledger) or a `postgres://` URL (multi-HOST head store, requires building
-    /// with `--features postgres`). Mutually exclusive with `--ledger`.
+    /// with `--features postgres`). Mutually exclusive with `--ledger`; requires `--key`.
     #[arg(long, value_name = "DIR_OR_POSTGRES_URL")]
     pub(crate) sharded: Option<String>,
-    /// 32-byte hex signing seed file; created if absent. Omit for an ephemeral key.
+    /// 32-byte hex signing seed file; created if absent, required with `--sharded`. Omit for
+    /// an ephemeral key, which a ledger that already exists refuses.
     #[arg(long, value_name = "PATH")]
     pub(crate) key: Option<PathBuf>,
     /// Mission registry file — the durable record of approved Missions the mint path
