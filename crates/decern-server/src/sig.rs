@@ -857,6 +857,12 @@ mod tests {
             let who = authenticate(&get_req(&key_h, &input_h, &sig_h), &cfg, NOW).unwrap();
             assert_eq!(who.agent, AGENT);
         }
+        // The signature is checked under the key the token confirms, not under any key the
+        // agent holds: a token bound to the new key but signed with the old one is refused.
+        let token = bound_token(&new.verifying_key(), |_| {});
+        let (key_h, input_h, sig_h) = sign_get(&old, &token, &UNBODIED_COMPONENTS, CREATED);
+        let e = authenticate(&get_req(&key_h, &input_h, &sig_h), &cfg, NOW).unwrap_err();
+        assert!(e.detail().contains("does not verify"), "{}", e.detail());
         let token = bound_token(&stranger.verifying_key(), |_| {});
         let (key_h, input_h, sig_h) = sign_get(&stranger, &token, &UNBODIED_COMPONENTS, CREATED);
         let e = authenticate(&get_req(&key_h, &input_h, &sig_h), &cfg, NOW).unwrap_err();
