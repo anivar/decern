@@ -62,6 +62,13 @@ no_lineage() {
        --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
   if grep -rnE '/admin/v1/|/observe/v1/' . \
        --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
+  # The comment standard's rule 5, for the words a grep can hold to it: an absolute
+  # claim no code and no solver delivers, over everything a reader sees. `proven`,
+  # `guaranteed`, `impossible` and `100%` have truthful uses here and stay on the author.
+  # The standard lists these words, so it is excluded.
+  if grep -rniE '[t]amper-?proof|[u]nforgeable|[u]nbreakable|[b]ulletproof|[m]ilitary-grade|[p]rovably secure|[z]ero data loss' . \
+       --include='*.rs' --include='*.md' --include='*.html' --include='*.toml' --include='*.py' --include='*.sh' \
+       --exclude='comments.md' --exclude-dir=target --exclude-dir=.git --exclude-dir=node_modules; then return 1; fi
   echo "clean"
 }
 

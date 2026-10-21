@@ -22,10 +22,14 @@ Every rule below is enforced by `scripts/verify.sh` where a grep can enforce it.
    attribute the design to a named individual as its authority, and do not use
    undefined vocabulary as if canonical — define a term in `docs/` or don't use it.
 
-5. **Honor the honesty bar.** Never write `proven`, `guaranteed`, `tamper-proof`,
+5. **State only what the code delivers.** Never write `proven`, `guaranteed`, `tamper-proof`,
    `impossible`, `unbreakable`, or `100%` beyond what the code (or cvc5) actually
    delivers. Where a property is trusted-base rather than machine-checked, say so
-   in the same sentence.
+   in the same sentence. `scripts/verify.sh`'s `no-lineage` step refuses the words a
+   grep can judge on their own — `tamper-proof`, `unforgeable`, `unbreakable`,
+   `bulletproof`, `military-grade`, `provably secure`, `zero data loss` — in every
+   file a reader sees; `proven`, `guaranteed`, `impossible` and `100%` have truthful
+   uses in this repository and stay on the author.
 
 6. **No business framing in code.** No pricing, billing, plans, tiers, or
    tenancy-as-revenue in shipped source.
