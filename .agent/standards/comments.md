@@ -28,8 +28,9 @@ Every rule below is enforced by `scripts/verify.sh` where a grep can enforce it.
    in the same sentence. `scripts/verify.sh`'s `no-lineage` step refuses the words a
    grep can judge on their own — `tamper-proof`, `unforgeable`, `unbreakable`,
    `bulletproof`, `military-grade`, `provably secure`, `zero data loss`, spaced or
-   hyphenated — in Rust, Markdown, HTML, TOML, Python, shell, TypeScript, JavaScript,
-   Go, JSON, YAML, Cedar, CFF and text files, this file excepted; `proven`,
+   hyphenated, within one line — in Rust, Markdown, HTML, TOML, Python, shell,
+   TypeScript, JavaScript, Go, JSON, YAML, Cedar, CFF, text, SVG, XML and Go module
+   files and in `NOTICE`, `MAINTAINERS` and `CODEOWNERS`, this file excepted; `proven`,
    `guaranteed`, `impossible` and `100%` have truthful uses in this repository and
    stay on the author.
 

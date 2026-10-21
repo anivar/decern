@@ -86,6 +86,8 @@ standards:
     verified: 2026-10-21
     surface:
       - crates/decern-server/src/decide.rs
+      - crates/decern-server/src/batch.rs
+      - crates/decern-server/src/search.rs
       - crates/decern-ledger/src/record.rs
     conformance: >-
       A decision records the party it was taken upon as a pseudonymous handle, with an optional
@@ -95,9 +97,11 @@ standards:
       handle containing `@`, an address §6 forbids, and drops one equal to the request's subject
       or the resource's owner, where §3 says the claim is omitted. One reference per decision:
       §9's array form is refused. Who may name a handle is a deployment rule the draft leaves
-      open (§7 trusts no unsigned `dsub` to address a party): a caller bound to itself may name
-      only itself, which is then dropped, so a workload cannot write a handle onto another
-      party's audit view; a PEP names whom it likes. Resolving a handle to a person is out of
+      open; §7 says only that "An *unsigned* dsub MUST NOT be trusted to identify or address a
+      party". Here a caller bound to itself may name only itself, which is then dropped, on an
+      evaluation, each batch item and a search, so a workload cannot write a handle onto
+      another party's audit view; a PEP names whom it likes. A search reads the handle for
+      admission only and drops it without an evaluation's shape checks. Resolving a handle to a person is out of
       scope here. Verified against the draft (-00, unchanged) 2026-10-21.
 
   - name: Cedar policy language
