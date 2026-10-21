@@ -311,6 +311,48 @@ async fn a_search_missing_what_its_kind_requires_is_400() {
     }
 }
 
+/// A caller bound to itself may not name another party as the decision subject on a
+/// search either, before the search drops the handle; the same search without it is
+/// answered.
+#[tokio::test]
+async fn a_caller_bound_to_itself_may_not_name_another_decision_subject_in_a_search() {
+    let (st, _base) = fixture_state();
+    let workload =
+        || crate::caller::Authenticated::new("bob", "bob", "https://iss.example/").self_only();
+    let parse = |v: Value| serde_json::from_value::<crate::search::SearchReq>(v).unwrap();
+    let about = |decision_subject: Option<&str>| {
+        let mut ctx = json!({ "ip": "192.168.1.1" });
+        if let Some(h) = decision_subject {
+            ctx["decision_subject"] = json!(h);
+        }
+        parse(json!({
+            "subject": { "type": "user", "id": "bob" }, "action": { "name": "read" },
+            "resource": { "type": "record" }, "context": ctx,
+        }))
+    };
+    let (status, resp) = body_json(
+        crate::search::search_resource(
+            State(st.clone()),
+            Some(axum::Extension(workload())),
+            Ok(Json(about(Some("ppid:carol")))),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(resp["error"], "caller_mismatch");
+    let (status, resp) = body_json(
+        crate::search::search_resource(
+            State(st.clone()),
+            Some(axum::Extension(workload())),
+            Ok(Json(about(None))),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+}
+
 /// A caller bound to itself may search for what it may do, and for nothing about
 /// others: a subject search names everyone, a resource or action search for another
 /// principal names them, and describing a party is a PEP's act.

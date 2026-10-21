@@ -83,7 +83,7 @@ standards:
 
   - name: OAuth Decision Subject (draft-aravind-oauth-decision-subject-00)
     url: https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/
-    verified: 2026-10-20
+    verified: 2026-10-21
     surface:
       - crates/decern-server/src/decide.rs
       - crates/decern-ledger/src/record.rs
@@ -94,8 +94,11 @@ standards:
       context before the kernel runs, so it is recorded and never decides (§4). It refuses a
       handle containing `@`, an address §6 forbids, and drops one equal to the request's subject
       or the resource's owner, where §3 says the claim is omitted. One reference per decision:
-      §9's array form is refused. Resolving a handle to a person is out of scope here. Verified
-      against the draft 2026-10-20.
+      §9's array form is refused. Who may name a handle is a deployment rule the draft leaves
+      open (§7 trusts no unsigned `dsub` to address a party): a caller bound to itself may name
+      only itself, which is then dropped, so a workload cannot write a handle onto another
+      party's audit view; a PEP names whom it likes. Resolving a handle to a person is out of
+      scope here. Verified against the draft (-00, unchanged) 2026-10-21.
 
   - name: Cedar policy language
     url: https://docs.cedarpolicy.com/

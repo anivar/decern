@@ -27,9 +27,11 @@ Every rule below is enforced by `scripts/verify.sh` where a grep can enforce it.
    delivers. Where a property is trusted-base rather than machine-checked, say so
    in the same sentence. `scripts/verify.sh`'s `no-lineage` step refuses the words a
    grep can judge on their own — `tamper-proof`, `unforgeable`, `unbreakable`,
-   `bulletproof`, `military-grade`, `provably secure`, `zero data loss` — in every
-   file a reader sees; `proven`, `guaranteed`, `impossible` and `100%` have truthful
-   uses in this repository and stay on the author.
+   `bulletproof`, `military-grade`, `provably secure`, `zero data loss`, spaced or
+   hyphenated — in Rust, Markdown, HTML, TOML, Python, shell, TypeScript, JavaScript,
+   Go, JSON, YAML, Cedar, CFF and text files, this file excepted; `proven`,
+   `guaranteed`, `impossible` and `100%` have truthful uses in this repository and
+   stay on the author.
 
 6. **No business framing in code.** No pricing, billing, plans, tiers, or
    tenancy-as-revenue in shipped source.

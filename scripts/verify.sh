@@ -63,12 +63,16 @@ no_lineage() {
   if grep -rnE '/admin/v1/|/observe/v1/' . \
        --include='*.rs' --exclude-dir=target --exclude-dir=.git; then return 1; fi
   # The comment standard's rule 5, for the words a grep can hold to it: an absolute
-  # claim no code and no solver delivers, over everything a reader sees. `proven`,
-  # `guaranteed`, `impossible` and `100%` have truthful uses here and stay on the author.
-  # The standard lists these words, so it is excluded.
-  if grep -rniE '[t]amper-?proof|[u]nforgeable|[u]nbreakable|[b]ulletproof|[m]ilitary-grade|[p]rovably secure|[z]ero data loss' . \
+  # claim no code and no solver delivers, in every text file a reader or a tool reads,
+  # spaced and hyphenated spellings alike. `proven`, `guaranteed`, `impossible` and `100%`
+  # have truthful uses here and stay on the author. The standard lists these words, so
+  # that one file is skipped by path; GNU grep prints `./`, BSD grep does not.
+  if grep -rniE '[t]amper[- ]?proof|[u]nforgeable|[u]nbreakable|[b]ullet[- ]?proof|[m]ilitary[- ]?grade|[p]rovably[- ]secure|[z]ero[- ]data[- ]loss' . \
        --include='*.rs' --include='*.md' --include='*.html' --include='*.toml' --include='*.py' --include='*.sh' \
-       --exclude='comments.md' --exclude-dir=target --exclude-dir=.git --exclude-dir=node_modules; then return 1; fi
+       --include='*.ts' --include='*.js' --include='*.go' --include='*.json' --include='*.yml' --include='*.yaml' \
+       --include='*.cedar' --include='*.cedarschema' --include='*.cff' --include='*.txt' \
+       --exclude-dir=target --exclude-dir=.git --exclude-dir=node_modules \
+     | grep -vE '^(\./)?\.agent/standards/comments\.md:'; then return 1; fi
   echo "clean"
 }
 

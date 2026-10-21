@@ -10,8 +10,9 @@
 //! What a search is not: a decision under a Mission (it binds none, is refused where one
 //! would be required, and never lists an action a decision would refuse for want of one),
 //! a decision about a third party (a `decision_subject` or a challenge in its context is
-//! dropped, since nothing is decided about anyone), or paginated (every result comes back
-//! in one page, as the specification allows).
+//! dropped, since nothing is decided about anyone, once admission has held a named handle
+//! to the caller's bind as on an evaluation), or paginated (every result comes back in one
+//! page, as the specification allows).
 
 use axum::Json;
 use axum::extract::State;
