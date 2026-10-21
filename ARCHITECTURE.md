@@ -80,7 +80,7 @@ method and the standards registry. `scripts/verify.sh` is the one gate every cha
    verified, is appended to the `decern-ledger` — Ed25519-signed and hash-chained, the exact
    request digest-bound (`digests.parameters`).
 4. The decision is returned **only if that record was written**. If it couldn't be, the server
-   returns `503`, never a bare allow. This fail-closed contract is the whole point of the PDP.
+   returns `503`, never a bare allow.
 5. Anyone can run `decern verify` over the ledger afterwards. The signatures prove each
    record is authentic, and the chain proves the log hangs together. Neither proves nothing
    was dropped — whoever wrote the log can rewrite it and re-chain it, and it will still

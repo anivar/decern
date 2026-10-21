@@ -137,7 +137,7 @@ pub(crate) fn record_or_503(append: impl FnOnce() -> Result<(), LedgerError>) ->
 }
 
 /// Serve a decision ONLY if its audit record was written. An append failure returns 503 —
-/// a decision that cannot be recorded is never served. This is the whole contract.
+/// a decision that cannot be recorded is never served.
 pub(crate) fn record_and_respond(
     decision: bool,
     reasons: Vec<String>,
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn unrecordable_decision_returns_503_never_the_allow() {
-        // The thesis: a proven Allow whose audit record fails to write must NOT be served.
+        // A proven Allow whose audit record fails to write is not served.
         let resp = record_and_respond(true, vec!["policy0".into()], vec![], || {
             Err(LedgerError::Serde("disk wedged".into()))
         });

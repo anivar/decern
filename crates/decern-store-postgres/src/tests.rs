@@ -49,7 +49,7 @@ async fn connect_from_within_tokio_runtime_returns_err_not_panic() {
 /// `postgres::Client` lives on the actor thread, so dropping the store here must
 /// close the channel and join that thread cleanly — never abort with "Cannot
 /// drop a runtime in a context where blocking is not allowed". A SIGABRT here
-/// fails the whole test binary, which is the point.
+/// fails the whole test binary, as intended.
 #[tokio::test]
 async fn constructed_used_and_dropped_inside_runtime_does_not_abort() {
     let Some(url) = test_url() else {

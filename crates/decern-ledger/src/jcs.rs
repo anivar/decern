@@ -241,7 +241,7 @@ mod tests {
         }
     }
 
-    /// The whole point of canonicalizing: one value, one digest, however it was
+    /// Canonicalizing gives one value one digest, however it was
     /// written. `3` and `3.0` are the same IEEE-754 double, so they must agree.
     #[test]
     fn integral_floats_and_integers_share_a_digest() {

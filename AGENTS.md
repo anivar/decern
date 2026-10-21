@@ -2,8 +2,7 @@
 # decern — agent & contributor guide
 
 decern is a deterministic authorization kernel: its safety properties are machine-checked over
-the Cedar model's symbolic input space, and every decision lands in a tamper-evident ledger. The
-guarantees are the product — a change that weakens one is a regression, even if it compiles.
+the Cedar model's symbolic input space, and every decision lands in a tamper-evident ledger. A change that weakens a guarantee is a regression, even if it compiles.
 
 ## Layout
 - 7 library crates, plus `decern-cli` (binary `decern`: `prove` / `decide` / `explain` /
@@ -103,8 +102,7 @@ still cost a guarantee:
   that no longer matches the code is the same defect as a doc that overstates.
   `scripts/standards.py check` (in `verify.sh`) catches missing paths and missing dates; it
   does not catch a stale reading — that is still on the author.
-- **A claim in a doc is part of the product.** The project's whole pitch is that it is
-  checkable, so a sentence that overstates is a defect the same way a wrong return value is.
+- **A claim in a doc is checked like code.** The project claims to be checkable, so a sentence that overstates is a defect the same way a wrong return value is.
   Say what the code does, name the limit in the same breath, and when two files state the same
   claim, change both. Prefer deleting a claim to softening it.
 

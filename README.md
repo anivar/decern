@@ -268,7 +268,7 @@ release still does not claim and carries each earlier release's limits forward.
   registry](.agent/standards/registry.yaml) lists each gap.
 - **The default build is not free of compiled native code.** No TLS, no OpenSSL, no cmake —
   but `cedar-policy` → `stacker` → `psm` compiles a small assembly routine through `cc`.
-  The honest claim is "no TLS/OpenSSL/cmake in the default build," not "zero compiled
+  The claim that holds is "no TLS/OpenSSL/cmake in the default build," not "zero compiled
   native code."
 
 ## Contributing

@@ -8,7 +8,7 @@
 # JWT-SVIDs against it, so the example runs with no SPIRE daemon and no network.
 #
 # Like examples/mcp/mint.py, the key is FIXED and PUBLIC so the walkthrough is
-# reproducible. That is the whole of its honesty: it is a key that signs, not a SPIFFE
+# reproducible. It is a key that signs, not a SPIFFE
 # control plane. There is no attestation, no Workload API, and none will be added —
 # a working stand-in issuer is exactly the thing someone ships by mistake.
 #

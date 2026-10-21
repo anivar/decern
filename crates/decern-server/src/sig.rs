@@ -456,8 +456,8 @@ pub(crate) fn authenticate(
         ));
     }
 
-    // The claimed identity must be one this deployment already governs. This is the
-    // whole point of "configured, not discovered": a `sub` decern has no key for is
+    // The claimed identity must be one this deployment already governs. This is what
+    // "configured, not discovered" means: a `sub` decern has no key for is
     // refused here, before any cryptography runs on its behalf.
     let configured_keys = cfg.agents.get(&subject).ok_or_else(|| {
         Denied::Invalid(format!(
@@ -778,7 +778,7 @@ mod tests {
     }
 
     /// A caller must already exist in this deployment's configuration before any
-    /// cryptography runs on its behalf — the whole point of "configured, not discovered".
+    /// cryptography runs on its behalf, which is what "configured, not discovered" means.
     #[test]
     fn an_unconfigured_agent_is_refused() {
         let k = decern_crypto::generate().unwrap();

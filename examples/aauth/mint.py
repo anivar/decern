@@ -22,8 +22,8 @@
 # example component list does not carry. --no-digest omits it, so the walkthrough can show
 # that refusal rather than describe it.
 #
-# The seeds are FIXED and PUBLIC, like every other example here. That is the whole of their
-# honesty: these are keys that sign, not an agent provider. There is no metadata document
+# The seeds are FIXED and PUBLIC, like every other example here. These are keys that sign,
+# not an agent provider. There is no metadata document
 # and none will be added — decern never fetches one.
 #
 #   uv run mint.py --jwks
