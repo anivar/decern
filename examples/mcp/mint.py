@@ -5,8 +5,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # A stand-in issuer for the walkthrough: signs RFC 9068 access tokens with a FIXED,
-# PUBLIC Ed25519 key so the demo is reproducible. That is the whole of its honesty:
-# it is a key that signs, not an authorization server. There is no metadata document,
+# PUBLIC Ed25519 key so the demo is reproducible. It is a key that signs, not an
+# authorization server. There is no metadata document,
 # no token endpoint, no client authentication, and none will be added — a working
 # stand-in /token endpoint is exactly the thing someone ships.
 #

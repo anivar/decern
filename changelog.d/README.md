@@ -32,7 +32,7 @@ it carries its own formatting:
 ```
 
 Write it for someone deciding whether this release affects them, not for the reviewer of the diff.
-Lead with what it does; say where the guarantee stops if that is not obvious. The honesty rules in
+Lead with what it does; say where the guarantee stops if that is not obvious. The rules in
 [`.agent/standards/comments.md`](../.agent/standards/comments.md) apply here too, and no sentence
 goes beyond what carries meaning.
 

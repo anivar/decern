@@ -247,8 +247,8 @@ pub(crate) fn default_missions_path(
     PathBuf::from(DEFAULT_MISSIONS_FILE)
 }
 
-/// How the caller of the deciding routes is established, from the flags. Refusing to start
-/// with no answer is the point: a server that cannot say who is asking should say so in its
+/// How the caller of the deciding routes is established, from the flags. With no answer the
+/// server refuses to start: one that cannot say who is asking should say so in its
 /// configuration, not in an audit. There is no bind-address carve-out — loopback is not a
 /// trust boundary on a shared host or inside a container's network namespace, and nothing
 /// here checks peer credentials.

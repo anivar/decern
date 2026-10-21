@@ -10,7 +10,7 @@
 # it, so a captured signature over one body cannot authorize a different one.
 #
 # Like examples/mcp/mint.py, the seeds here are FIXED and PUBLIC so the walkthrough is
-# reproducible. That is the whole of its honesty: these are keys that sign, not an
+# reproducible. These are keys that sign, not an
 # issuer. There is no token endpoint and none will be added.
 #
 #   uv run sign.py <agent-id> <audience> <method> <authority> <path> [--body JSON]

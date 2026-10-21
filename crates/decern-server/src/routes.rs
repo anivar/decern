@@ -77,8 +77,8 @@ pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
     // the tree head and the disclosure are what an operator publishes on purpose, so a
     // third party can check this deployment without holding a credential for it; and
     // `/audit/v1/subject` answers the party a decision was about — who will not hold a
-    // credential for the deployment that decided about them, which is the point of the
-    // subject-side surface. The pseudonymous handle is that route's whole access control.
+    // credential for the deployment that decided about them; the subject-side surface
+    // exists for them. The pseudonymous handle is that route's whole access control.
     Router::new()
         .route("/healthz", get(healthz))
         .route("/pubkey", get(pubkey))

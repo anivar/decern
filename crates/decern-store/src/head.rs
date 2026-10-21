@@ -242,7 +242,7 @@ struct ShardState {
 /// **Single-host, multi-process** persistent `LedgerHeadStore` — the durable
 /// reference backend for the sharded ledger on ONE machine.
 ///
-/// The whole point is the lock. [`with_shard`](FileLedgerHeadStore::with_shard)
+/// The lock is what this backend provides. [`with_shard`](FileLedgerHeadStore::with_shard)
 /// holds an **exclusive file lock (`File::lock`) on a per-shard
 /// sidecar for the ENTIRE critical section** — acquire → read the shard's
 /// cursor+records FRESH from disk → run `f` → durably write → release. That
@@ -253,7 +253,7 @@ struct ShardState {
 /// a last-writer-wins rename (two writers each read head=N, both write N+1, one
 /// silently clobbered → forked ledger — the exact failure this trait prevents).
 ///
-/// **Scope / honesty.** The lock is host-local, so this backend is single-host
+/// **Scope.** The lock is host-local, so this backend is single-host
 /// multi-process. It is NOT a multi-*host* distributed store: a second machine's
 /// lock on its own filesystem does not see this one's. Multi-host coordination is
 /// `decern-store-postgres`, behind this same trait, which serializes a shard with
