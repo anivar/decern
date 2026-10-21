@@ -316,7 +316,7 @@ async fn a_search_missing_what_its_kind_requires_is_400() {
 /// answered.
 #[tokio::test]
 async fn a_caller_bound_to_itself_may_not_name_another_decision_subject_in_a_search() {
-    let (st, _base) = fixture_state();
+    let (st, base) = fixture_state();
     let workload =
         || crate::caller::Authenticated::new("bob", "bob", "https://iss.example/").self_only();
     let parse = |v: Value| serde_json::from_value::<crate::search::SearchReq>(v).unwrap();
@@ -341,6 +341,7 @@ async fn a_caller_bound_to_itself_may_not_name_another_decision_subject_in_a_sea
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
     assert_eq!(resp["error"], "caller_mismatch");
+    assert!(records_in(&base, &st).is_empty(), "nothing was recorded");
     let (status, resp) = body_json(
         crate::search::search_resource(
             State(st.clone()),

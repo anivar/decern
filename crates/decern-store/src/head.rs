@@ -242,7 +242,7 @@ struct ShardState {
 /// **Single-host, multi-process** persistent `LedgerHeadStore` — the durable
 /// reference backend for the sharded ledger on ONE machine.
 ///
-/// What this backend adds over the in-memory store is the lock. [`with_shard`](FileLedgerHeadStore::with_shard)
+/// Over the in-memory store this backend adds persistence and a cross-process lock. [`with_shard`](FileLedgerHeadStore::with_shard)
 /// holds an **exclusive file lock (`File::lock`) on a per-shard
 /// sidecar for the ENTIRE critical section** — acquire → read the shard's
 /// cursor+records FRESH from disk → run `f` → durably write → release. That

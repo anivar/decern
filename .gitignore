@@ -4,6 +4,10 @@ target/
 *.pub
 *.bundle
 *.ledger
+# The ledger and Mission registry `decern-serve` writes in the working directory by
+# default, so a walkthrough run from a checkout leaves nothing for `git status` to show.
+/decern-ledger.jsonl
+/decern-missions.json
 # proptest failure corpus (local)
 **/proptest-regressions/
 # Bytecode from scripts/standards.py, which verify.sh runs and agents import. Regenerable,

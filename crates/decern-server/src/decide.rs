@@ -265,8 +265,8 @@ impl DecideReq {
 
 /// The handle a request names as its decision subject, read for admission only: a string,
 /// or an object's `handle`. A `null` names nobody and is taken as absent; any other shape
-/// names nobody here and is refused as malformed where the subject is taken out of the
-/// context.
+/// names nobody here, is refused as malformed when an evaluation takes the subject out of
+/// the context, and is dropped unread by a search.
 pub(crate) fn named_decision_subject(raw: Option<&Value>) -> Option<&str> {
     let raw = raw?;
     raw.as_str()
@@ -1400,13 +1400,13 @@ mod tests {
             decern_ledger::read_verified(&base.join("decern-ledger.jsonl"), Some(&pubkey), 0, 100)
                 .unwrap();
         let last = records.last().expect("decision recorded");
-        assert!(
-            last["entry"]
-                .get("decision_subject")
-                .is_none_or(Value::is_null),
-            "a self-named handle is dropped, not recorded: {last}"
-        );
-        // A PEP names whom it likes, as it does for `subject.id`.
+        for at in [&last["entry"], &last["entry"]["context"]] {
+            assert!(
+                at.get("decision_subject").is_none_or(Value::is_null),
+                "a self-named handle is dropped, not recorded: {last}"
+            );
+        }
+        // A PEP names whom it likes, as it does for `subject.id`, and the record carries it.
         let pep = crate::caller::Authenticated::new("gateway", "gateway", "https://iss.example/");
         let (status, body) = body_json(
             decide(
@@ -1417,7 +1417,15 @@ mod tests {
             .await,
         )
         .await;
-        assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_r, records) =
+            decern_ledger::read_verified(&base.join("decern-ledger.jsonl"), Some(&pubkey), 0, 100)
+                .unwrap();
+        let last = records.last().expect("decision recorded");
+        assert_eq!(
+            last["entry"]["decision_subject"]["handle"], "ppid:carol",
+            "{last}"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
