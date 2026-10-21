@@ -18,13 +18,13 @@ archives the source for citation, and writes the release notes from `CHANGELOG.m
 
 2. **Set the version** in `Cargo.toml` (workspace and the inter-crate pins),
    `sdks/python/pyproject.toml`, `sdks/typescript/package.json` and both `version` fields of its
-   `package-lock.json`, `examples/ext_authz_adapter/Cargo.toml` (outside the workspace, so the
-   workspace version does not reach it), and the website's at-a-glance version badge in
-   `docs/index.html`. `publish-crates.yml` stops before crates.io when `Cargo.toml`, an
+   `package-lock.json`, and `examples/ext_authz_adapter/Cargo.toml` (outside the workspace, so the
+   workspace version does not reach it). The website carries no version string. `publish-crates.yml`
+   stops before crates.io when `Cargo.toml`, an
    inter-crate pin or the `CHANGELOG.md` section disagrees with the tag; `publish-sdks.yml`
    stops before PyPI and npm when `pyproject.toml` or `package.json` does. Neither checks the
    other's files, so one mismatch can still leave the other registries published. Nothing checks
-   the lockfile, the example or the badge; they are on whoever cuts the release.
+   the lockfile or the example; they are on whoever cuts the release.
 
 3. **Verify**, with no flags, so the proofs run:
 
