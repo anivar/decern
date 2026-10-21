@@ -3,4 +3,5 @@
   refuses to start, and that `decern verify --sharded` audits a directory store only, since a
   Postgres head store has no `decern verify` path; the README's Known-limitations entry on the
   file head store carries the boot-only key check, and its pointer to the release's known limits
-  no longer lists items from an older release. Authored by @anivar.
+  no longer lists items from an older release. The website drops its version badge, so it carries
+  no version string and no release step has to move one. Authored by @anivar.
