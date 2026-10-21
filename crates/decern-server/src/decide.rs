@@ -264,8 +264,9 @@ impl DecideReq {
 }
 
 /// The handle a request names as its decision subject, read for admission only: a string,
-/// or an object's `handle`. Any other shape names nobody here and is refused as malformed
-/// where the subject is taken out of the context.
+/// or an object's `handle`. A `null` names nobody and is taken as absent; any other shape
+/// names nobody here and is refused as malformed where the subject is taken out of the
+/// context.
 pub(crate) fn named_decision_subject(raw: Option<&Value>) -> Option<&str> {
     let raw = raw?;
     raw.as_str()
@@ -1364,7 +1365,7 @@ mod tests {
     #[tokio::test]
     async fn a_self_only_caller_may_not_name_another_decision_subject() {
         let base = mission_base();
-        let (st, _pk) = mission_state_at(&base);
+        let (st, pubkey) = mission_state_at(&base);
         for named in [json!("ppid:carol"), json!({"handle": "ppid:carol"})] {
             let who =
                 crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")
@@ -1381,7 +1382,8 @@ mod tests {
             assert_eq!(status, StatusCode::FORBIDDEN, "{named} {body}");
             assert_eq!(body["error"], "caller_mismatch", "{named}");
         }
-        // Itself is admitted, and then dropped as redundant: no decision subject is recorded.
+        // Itself is admitted, and then dropped as redundant: the record carries no
+        // decision subject.
         let who = crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")
             .self_only();
         let (status, body) = body_json(
@@ -1393,7 +1395,17 @@ mod tests {
             .await,
         )
         .await;
-        assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_r, records) =
+            decern_ledger::read_verified(&base.join("decern-ledger.jsonl"), Some(&pubkey), 0, 100)
+                .unwrap();
+        let last = records.last().expect("decision recorded");
+        assert!(
+            last["entry"]
+                .get("decision_subject")
+                .is_none_or(Value::is_null),
+            "a self-named handle is dropped, not recorded: {last}"
+        );
         // A PEP names whom it likes, as it does for `subject.id`.
         let pep = crate::caller::Authenticated::new("gateway", "gateway", "https://iss.example/");
         let (status, body) = body_json(
