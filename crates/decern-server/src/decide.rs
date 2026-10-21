@@ -244,9 +244,10 @@ impl IntoResponse for Refusal {
 }
 
 impl DecideReq {
-    /// What admission needs to know: whom the request names, and whether it describes a
-    /// party through `properties` (an empty `properties` describes nothing).
-    pub(crate) fn facts(&self) -> (Option<&str>, bool) {
+    /// What admission needs to know: whom the request names, whether it describes a
+    /// party through `properties` (an empty `properties` describes nothing), and whom it
+    /// names as the party the decision is about.
+    pub(crate) fn facts(&self) -> (Option<&str>, bool, Option<&str>) {
         let describes = [
             &self.subject.properties,
             &self.resource.properties,
@@ -254,29 +255,55 @@ impl DecideReq {
         ]
         .iter()
         .any(|p| p.as_ref().is_some_and(|m| !m.is_empty()));
-        (Some(&self.subject.id), describes)
+        let decision_subject = self
+            .context
+            .as_ref()
+            .and_then(|c| named_decision_subject(c.get("decision_subject")));
+        (Some(&self.subject.id), describes, decision_subject)
     }
 }
 
+/// The handle a request names as its decision subject, read for admission only: a string,
+/// or an object's `handle`. Any other shape names nobody here and is refused as malformed
+/// where the subject is taken out of the context.
+pub(crate) fn named_decision_subject(raw: Option<&Value>) -> Option<&str> {
+    let raw = raw?;
+    raw.as_str()
+        .or_else(|| raw.get("handle").and_then(Value::as_str))
+}
+
 /// What a caller may ask at all, checked before anything is evaluated or recorded: a
-/// caller bound to itself may neither name another principal nor describe a party.
+/// caller bound to itself may neither name another principal, describe a party, nor name
+/// another party as the one the decision is about.
 pub(crate) fn admit(
     caller: &Option<axum::Extension<crate::caller::Authenticated>>,
     req: &DecideReq,
 ) -> Option<Response> {
-    let (subject_id, describes) = req.facts();
-    admit_named(caller, subject_id, describes)
+    let (subject_id, describes, decision_subject) = req.facts();
+    admit_named(caller, subject_id, describes, decision_subject)
 }
 
 /// The same admission over what a request names, for a request that could not be parsed
 /// whole: a batch item that is not an evaluation still names whom it names.
+///
+/// The decision subject binds as `subject.id` does. Its handle keys the open subject-side
+/// audit route, so a workload naming a handle it has nothing to do with would attach a
+/// record it asserted to another party's audit view, with nothing to tell planted from
+/// genuine. A caller bound to itself may name only itself, which the record then drops as
+/// redundant; the gateway postures keep the freedom they have for `subject.id`.
 pub(crate) fn admit_named(
     caller: &Option<axum::Extension<crate::caller::Authenticated>>,
     subject_id: Option<&str>,
     describes: bool,
+    decision_subject: Option<&str>,
 ) -> Option<Response> {
     if let Some(id) = subject_id
         && let Some(refusal) = crate::caller::refuse_unless_admits(caller, id)
+    {
+        return Some(refusal);
+    }
+    if let Some(handle) = decision_subject
+        && let Some(refusal) = crate::caller::refuse_unless_admits(caller, handle)
     {
         return Some(refusal);
     }
@@ -1317,6 +1344,68 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
         assert_eq!(body["error"], "caller_mismatch");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn read_as_about(subject: &str, decision_subject: Value) -> DecideReq {
+        serde_json::from_value(json!({
+            "subject": {"type": "Principal", "id": subject},
+            "action": {"name": "Read"},
+            "resource": {"type": "Resource", "id": "claim1"},
+            "context": {"decision_subject": decision_subject}
+        }))
+        .unwrap()
+    }
+
+    /// The handle keys the open subject-side audit route, so a workload naming another
+    /// party's handle plants a record on that party's view. It binds as `subject.id` does:
+    /// refused before the kernel, as a string and as an object, while a PEP keeps the
+    /// freedom it has for `subject.id`.
+    #[tokio::test]
+    async fn a_self_only_caller_may_not_name_another_decision_subject() {
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        for named in [json!("ppid:carol"), json!({"handle": "ppid:carol"})] {
+            let who =
+                crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")
+                    .self_only();
+            let (status, body) = body_json(
+                decide(
+                    State(st.clone()),
+                    Some(axum::Extension(who)),
+                    Ok(Json(read_as_about("agent-1", named.clone()))),
+                )
+                .await,
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{named} {body}");
+            assert_eq!(body["error"], "caller_mismatch", "{named}");
+        }
+        // Itself is admitted, and then dropped as redundant: no decision subject is recorded.
+        let who = crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")
+            .self_only();
+        let (status, body) = body_json(
+            decide(
+                State(st.clone()),
+                Some(axum::Extension(who)),
+                Ok(Json(read_as_about("agent-1", json!("agent-1")))),
+            )
+            .await,
+        )
+        .await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
+        // A PEP names whom it likes, as it does for `subject.id`.
+        let pep = crate::caller::Authenticated::new("gateway", "gateway", "https://iss.example/");
+        let (status, body) = body_json(
+            decide(
+                State(st),
+                Some(axum::Extension(pep)),
+                Ok(Json(read_as_about("corp", json!("ppid:carol")))),
+            )
+            .await,
+        )
+        .await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
         let _ = std::fs::remove_dir_all(&base);
     }
 

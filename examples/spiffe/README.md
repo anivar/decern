@@ -36,8 +36,8 @@ supply-chain gate runs with no advisory exceptions, so admitting RSA would mean 
 for a known key-recovery bug. A SPIRE deployment issuing RSA SVIDs will not work here.
 
 **A workload speaks only for itself.** Like a signed-request agent, a verified SVID may
-only name itself as AuthZEN `subject`, mission `approver`, stored approver on terminate, and
-directory principal — unless it is listed in `--pep`. A mismatch is `403 caller_mismatch`.
+only name itself as AuthZEN `subject`, `decision_subject`, mission `approver`, stored approver on
+terminate, and directory principal — unless it is listed in `--pep`. A mismatch is `403 caller_mismatch`.
 Without this the posture would reopen an escalation the signed-request posture already
 closes: any valid SVID could mint a Mission under someone else's authority.
 

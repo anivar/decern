@@ -99,12 +99,13 @@ fn field<'a>(
 }
 
 /// What admission needs to know about an item, read in place: whom it names, and whether
-/// it describes a party through `properties`. An item that is not an object names nobody,
-/// and is answered for what it is when its turn comes. The same two facts
-/// [`DecideReq::facts`] reads off a parsed request, which a test holds them to.
-fn facts<'a>(top: &'a BatchReq, item: &'a Value) -> (Option<&'a str>, bool) {
+/// it describes a party through `properties`, and whom it names as the decision subject.
+/// An item that is not an object names nobody, and is answered for what it is when its
+/// turn comes. The same three facts [`DecideReq::facts`] reads off a parsed request, which
+/// a test holds them to.
+fn facts<'a>(top: &'a BatchReq, item: &'a Value) -> (Option<&'a str>, bool, Option<&'a str>) {
     let Some(item) = item.as_object() else {
-        return (None, false);
+        return (None, false, None);
     };
     let subject_id = field(top, item, "subject")
         .and_then(|s| s.get("id"))
@@ -115,7 +116,10 @@ fn facts<'a>(top: &'a BatchReq, item: &'a Value) -> (Option<&'a str>, bool) {
             .and_then(Value::as_object)
             .is_some_and(|m| !m.is_empty())
     });
-    (subject_id, describes)
+    let decision_subject = crate::decide::named_decision_subject(
+        field(top, item, "context").and_then(|c| c.get("decision_subject")),
+    );
+    (subject_id, describes, decision_subject)
 }
 
 /// Item `i` with the defaults filled in, as the request one evaluation would be — or what
@@ -242,8 +246,8 @@ pub(crate) async fn evaluations(
     // read off the items and the defaults in place: a refusal is for the whole exchange,
     // costs no copies, and comes before a single record has landed.
     for item in items {
-        let (subject_id, describes) = facts(&top, item);
-        if let Some(refusal) = admit_named(&caller, subject_id, describes) {
+        let (subject_id, describes, decision_subject) = facts(&top, item);
+        if let Some(refusal) = admit_named(&caller, subject_id, describes, decision_subject) {
             return refusal;
         }
     }
@@ -298,16 +302,37 @@ mod tests {
             json!({ "resource": { "type": "record", "id": "record-2", "properties": { "status": "archived" } } }),
             json!({ "action": { "name": "delete", "properties": { "soft": true } } }),
             json!({ "action": { "name": "delete", "properties": {} } }),
+            json!({ "context": { "decision_subject": "ppid:carol" } }),
+            json!({ "context": { "decision_subject": { "handle": "ppid:carol" } } }),
+            json!({ "context": { "decision_subject": null } }),
         ] {
-            let (id, describes) = facts(&top, &item);
+            let (id, describes, about) = facts(&top, &item);
             let parsed = merged(&top, Some(0), &item).expect("a well-formed item");
-            let (parsed_id, parsed_describes) = parsed.facts();
+            let (parsed_id, parsed_describes, parsed_about) = parsed.facts();
             assert_eq!(id, parsed_id, "{item}");
             assert_eq!(describes, parsed_describes, "{item}");
+            assert_eq!(about, parsed_about, "{item}");
         }
+        // A decision subject in the defaults reaches every item that names none of its own.
+        let about_top: BatchReq = serde_json::from_value(json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "resource": { "type": "record", "id": "record-1" },
+            "context": { "decision_subject": "ppid:carol" },
+        }))
+        .unwrap();
+        assert_eq!(facts(&about_top, &json!({})).2, Some("ppid:carol"));
+        assert_eq!(
+            facts(
+                &about_top,
+                &json!({ "context": { "decision_subject": "ppid:dave" } })
+            )
+            .2,
+            Some("ppid:dave")
+        );
         // What cannot be parsed still names whom it names.
         let unparseable = json!({ "subject": { "type": "user", "id": "bob" }, "action": 7 });
-        assert_eq!(facts(&top, &unparseable), (Some("bob"), false));
-        assert_eq!(facts(&top, &json!("not an object")), (None, false));
+        assert_eq!(facts(&top, &unparseable), (Some("bob"), false, None));
+        assert_eq!(facts(&top, &json!("not an object")), (None, false, None));
     }
 }

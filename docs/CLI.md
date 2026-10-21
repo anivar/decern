@@ -270,7 +270,7 @@ names one posture:
   limit, stated rather than softened.
   A verified `spiffe://…` identity is recorded as the caller on the decision. Like a
   signed-request agent it is a **workload**, so unless it is listed in `--pep` it may only name
-  itself as AuthZEN `subject`, mission `approver`, stored approver on terminate, and directory
+  itself as AuthZEN `subject`, `decision_subject`, mission `approver`, stored approver on terminate, and directory
   principal, and may not describe a party with `properties`; either is `403 caller_mismatch`.
   It is never minted into the authority graph
   either: what a decision may be *about* is unchanged, and stays closed-world exactly as under
@@ -298,7 +298,7 @@ enforcement point asking about other parties is the entire job. `--trust-proxy` 
 identity to bind in the first place.
 
 The workload postures are the opposite. A signed-request, SPIFFE or AAuth caller may only
-name itself as subject, approver, stored approver on terminate, and directory principal, and
+name itself as subject, decision subject, approver, stored approver on terminate, and directory principal, and
 may neither describe a party with `properties` nor search for subjects; a mismatch is
 `403 caller_mismatch`. `--pep` is the way out for a workload that genuinely is a gateway.
 
