@@ -176,7 +176,16 @@ fn search(
         return refusal;
     }
     let named_subject = req.subject.id.clone();
-    if let Some(refusal) = admit_named(caller, named_subject.as_deref(), describes) {
+    let decision_subject = req
+        .context
+        .as_ref()
+        .and_then(|c| crate::decide::named_decision_subject(c.get("decision_subject")));
+    if let Some(refusal) = admit_named(
+        caller,
+        named_subject.as_deref(),
+        describes,
+        decision_subject,
+    ) {
         return refusal;
     }
     // A search binds no Mission. Where one would be required, or one is named, the
