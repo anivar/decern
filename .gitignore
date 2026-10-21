@@ -4,8 +4,9 @@ target/
 *.pub
 *.bundle
 *.ledger
-# The ledger and Mission registry `decern-serve` writes in the working directory by
-# default, so a walkthrough run from a checkout leaves nothing for `git status` to show.
+# The ledger and Mission registry `decern-serve` writes in the working directory when
+# `--ledger` and `--missions` are not given, so a bare run from the checkout root leaves
+# nothing for `git status` to show.
 /decern-ledger.jsonl
 /decern-missions.json
 # proptest failure corpus (local)

@@ -100,7 +100,8 @@ standards:
       open; §7 says only that "An *unsigned* dsub MUST NOT be trusted to identify or address a
       party". Here a caller bound to itself may name only itself, which is then dropped, on an
       evaluation, each batch item and a search, so a workload cannot write a handle onto
-      another party's audit view; a PEP names whom it likes. A search drops the handle unread. Resolving a handle to a person is out of
+      another party's audit view; a PEP names whom it likes. A search reads the handle for
+      admission only and drops it without an evaluation's shape checks. Resolving a handle to a person is out of
       scope here. Verified against the draft (-00, unchanged) 2026-10-21.
 
   - name: Cedar policy language

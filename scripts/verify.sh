@@ -38,14 +38,23 @@ step() {
 
 # One denylist scan: `deny SKIP GREP-ARGS...`. A match fails it, and so does a grep that
 # could not read the tree or parse its pattern, whose exit 2 would otherwise read as no
-# match. SKIP, when not empty, is an extended regex for output lines (`path:line:`) to drop
-# before deciding.
+# match. GNU grep 3.5 and later reports a match in a binary file on stderr and prints
+# nothing here, so a match that printed nothing fails too. SKIP, when not empty, is an
+# extended regex for output lines (`path:line:`) to drop before deciding; a SKIP grep
+# cannot parse fails the scan.
 deny() {
   local skip="$1"; shift
-  local out rc
+  local out rc kept src
   out=$(grep "$@"); rc=$?
   if [ "${rc}" -gt 1 ]; then echo "grep exited ${rc}: grep $*"; return 1; fi
-  if [ -n "${skip}" ]; then out=$(printf '%s\n' "${out}" | grep -vE "${skip}"); fi
+  if [ "${rc}" -eq 0 ] && [ -z "${out}" ]; then
+    echo "grep matched without printing, as it does for a binary file: grep $*"; return 1
+  fi
+  if [ -n "${skip}" ]; then
+    kept=$(printf '%s\n' "${out}" | grep -vE "${skip}"); src=$?
+    if [ "${src}" -gt 1 ]; then echo "grep -vE exited ${src} on SKIP ${skip}"; return 1; fi
+    out="${kept}"
+  fi
   if [ -n "${out}" ]; then printf '%s\n' "${out}"; return 1; fi
 }
 

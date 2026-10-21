@@ -102,7 +102,7 @@ still cost a guarantee:
   that no longer matches the code is the same defect as a doc that overstates.
   `scripts/standards.py check` (in `verify.sh`) catches missing paths and missing dates; it
   does not catch a stale reading — that is still on the author.
-- **A claim in a doc is a defect when it overstates.** The project claims to be checkable, so a sentence that overstates is wrong the same way a wrong return value is. Tests hold `docs/CLI.md`'s option tables to the binaries, `cargo doc` refuses a broken intra-doc link, and the `no-lineage` step refuses the words it lists; no gate reads the rest of the prose.
+- **A claim in a doc is a defect when it overstates.** The project claims to be checkable, so a sentence that overstates is wrong the same way a wrong return value is. Tests hold `docs/CLI.md`'s option tables to the binaries and the README's invariant count to the proof suite, `cargo doc` refuses a broken intra-doc link, and the `no-lineage` step refuses the words it lists; no gate reads the rest of the prose.
   Say what the code does, name the limit in the same breath, and when two files state the same
   claim, change both. Prefer deleting a claim to softening it.
 
