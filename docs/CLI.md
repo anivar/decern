@@ -185,7 +185,7 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | `--signed-agent-key <ID=HEX>` | An agent identifier this deployment recognizes and an Ed25519 key it may sign requests with. Repeatable: one entry per agent, and a key rollover is a second entry rather than an atomic swap. Turns on RFC 9421 + RFC 7800 sender-constrained request validation for the guarded routes; requires `--signed-audience`. One posture per deployment: naming a second is a startup failure. An identifier with no entry here cannot authenticate under this mode, by design: keys are configured, never fetched. |
 | `--signed-audience <URI>` | This deployment's resource identifier, which a signed request's bound token's `aud` must contain. Required with `--signed-agent-key` and refused without it, same role as `--bearer-audience`. |
 | `--pep <ID>` | A workload caller that may name principals other than itself. Repeatable. Applies to every workload posture — `--signed-agent-key`, `--spiffe-trust-domain` and `--aauth-provider`; the id must be one this deployment can already authenticate, since a PEP still has to prove who it is; under `--aauth-provider` that is an agent identifier in a configured provider's domain. Omit to bind every workload caller to itself. |
-| `--aauth-provider <ISS=PATH>` | An AAuth agent provider this deployment accepts, named as `https://` and a lowercase host alone, and the JWK Set holding the Ed25519 keys it signs agent tokens with. An agent token's `sub` must be an agent identifier, `aauth:local@domain`, in that provider's domain. Repeatable: one entry per provider. Read once at startup and refused there if it carries no usable signing key or an entry without a `kid`. Turns on AAuth agent-token validation; requires `--aauth-audience`. Keys are configured, never fetched: the draft's `dwk` discovery is deliberately not performed, so an agent whose provider is not named here is refused before any cryptography runs. |
+| `--aauth-provider <ISS=PATH>` | An AAuth agent provider this deployment accepts, named as `https://` and a lowercase host alone, and the JWK Set holding the Ed25519 keys it signs agent tokens with. A usable key names `kty: OKP`, `crv: Ed25519`, `alg: Ed25519` and a `kid`, and no `use` other than `sig`; every other member of the set is skipped. An agent token's `sub` must be an agent identifier, `aauth:local@domain`, in that provider's domain. Repeatable: one entry per provider. Read once at startup and refused there if it carries no usable key, or two usable keys under one `kid`. Turns on AAuth agent-token validation; requires `--aauth-audience`. Keys are configured, never fetched: the draft's `dwk` discovery is deliberately not performed, so an agent whose provider is not named here is refused before any cryptography runs. |
 | `--aauth-audience <AUTHORITY>` | This deployment's authority, which a request's authority — the target URI's, or `Host` — must equal. Required with `--aauth-provider` and refused without it — an agent token carries no `aud`, so without it a request signed for one deployment would verify at another pinning the same provider. |
 | `--spiffe-trust-domain <TRUST_DOMAIN=PATH>` | A SPIFFE trust domain this deployment accepts, and the JWK Set holding its JWT-SVID signing keys. Repeatable: one entry per federated domain. Read once at startup and refused there if it carries no `use: jwt-svid` key, an entry without a `kid`, or a key this deployment cannot verify with. Turns on JWT-SVID validation; requires `--spiffe-audience`. |
 | `--spiffe-audience <URI>` | This deployment's resource identifier, which an SVID's `aud` must contain. Required with `--spiffe-trust-domain` and refused without it, same role as `--bearer-audience`. |
@@ -276,14 +276,21 @@ names one posture:
   either: what a decision may be *about* is unchanged, and stays closed-world exactly as under
   every other posture.
 - **AAuth agent tokens** (`--aauth-provider`, `--aauth-audience`): the guarded routes require an
-  `aa-agent+jwt` agent token in `Signature-Key`, from an agent provider configured here, whose
-  own signature verifies against that provider's pinned key, and an RFC 9421 signature over the
-  request, under the same profile as signed requests, by the key the token's `cnf` confirms. An
-  agent token carries no `aud`, so the request's authority must equal `--aauth-audience`. A
-  verified agent is a workload, bound to itself as a signed-request or SPIFFE caller is, unless
-  listed in `--pep`. This covers the draft's agent identity access only, and does not yet
-  conform to draft-hardt-oauth-aauth-protocol-11: an agent token minted to -11 is refused. The
-  [standards registry](../.agent/standards/registry.yaml) lists each gap.
+  `aa-agent+jwt` agent token whose header names `alg: Ed25519`, from an agent provider
+  configured here, whose own signature verifies against that provider's pinned key, and an
+  RFC 9421 signature over the request by the key the token's `cnf` confirms, which must name
+  its `alg` too. The token is the `Signature-Key` member under the signature's own label, scheme
+  `jwt`. The signature must cover `@method`, `@authority`, `@path` and `signature-key`, and
+  `content-digest` on a request with a body, in any order and beside any other header field;
+  an `alg` parameter is not read, `nonce` and `tag` are refused, `expires` is honoured, and
+  `created` may be up to 60 seconds either side of this clock. A second `jwt` member in
+  `Signature-Key` is refused. An agent token carries no `aud`, so the request's authority must
+  equal `--aauth-audience`. A verified agent is a workload, bound to itself as a
+  signed-request or SPIFFE caller is, unless listed in `--pep`. This covers the draft's agent
+  identity access only; a refusal other than clock skew carries no `Signature-Error` code, so
+  an agent that leaves `content-digest` out learns why only from the response body. The [standards
+  registry](../.agent/standards/registry.yaml) lists each departure from
+  draft-hardt-oauth-aauth-protocol-11.
   [`examples/aauth/`](../examples/aauth/README.md) runs this mode end to end.
 - **`--trust-proxy`**: every caller is accepted, because the operator states that something in
   front — an authenticating proxy, a service mesh, the OS boundary around a local walkthrough —

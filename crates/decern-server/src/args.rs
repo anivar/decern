@@ -143,8 +143,10 @@ pub(crate) struct Args {
     spiffe_audience: Option<String>,
     /// An AAuth agent provider this deployment accepts, and the JWK Set holding the keys it
     /// signs agent tokens with, as `ISS=PATH`. Repeatable: one entry per provider. The file
-    /// is read once at startup and refused there if it carries no usable Ed25519 signing key
-    /// or an entry without a `kid`. Keys are configured, never fetched: the draft's `dwk`
+    /// is read once at startup and refused there if it carries no usable key, one with
+    /// `kty: OKP`, `crv: Ed25519`, `alg: Ed25519`, a `kid` and no `use` other than `sig`, or if
+    /// two usable keys share a `kid`; any other entry is skipped.
+    /// Keys are configured, never fetched: the draft's `dwk`
     /// discovery is deliberately not performed, so an agent whose provider is not named here
     /// is refused before any cryptography runs. Turns on AAuth agent-token validation for the
     /// decision and mission-mutation endpoints.
@@ -996,7 +998,7 @@ mod tests {
         std::fs::write(
             &keys,
             serde_json::json!({ "keys": [{
-                "kty": "OKP", "crv": "Ed25519", "kid": "k1",
+                "kty": "OKP", "crv": "Ed25519", "alg": "Ed25519", "kid": "k1",
                 "x": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(vk.to_bytes()),
             }] })
             .to_string(),

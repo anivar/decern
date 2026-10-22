@@ -39,6 +39,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -54,17 +55,36 @@ use crate::sig;
 /// more, because with no nonce cache a long-lived token is a long replay window.
 const MAX_AGENT_TOKEN_LIFETIME_SECS: i64 = 24 * 60 * 60;
 
-/// The one refusal `refuse` must recognise on its way out: draft -11 §11.5.2 answers an
-/// `iat` ahead of the verifier's clock with `Signature-Error: error=clock_skew`, so the
-/// agent can tell skew from a bad token. [`Denied`] carries no variant for it — the enum
-/// is shared by every posture and the other postures have no such signal — so the detail
-/// text is the marker, compared whole.
+/// The two refusals `refuse` must recognise on its way out: draft -11 §11.3.4 step 3 and
+/// §11.5.2 answer a signature `created`, or an agent token `iat`, further ahead of the
+/// verifier's clock than its window with `Signature-Error: error=clock_skew`, so the agent
+/// can tell skew from a bad request. [`Denied`] carries no variant for it — the enum is
+/// shared by every posture and the other postures have no such signal — so the detail text
+/// is the marker, compared whole.
 const CLOCK_SKEW_DETAIL: &str = "agent token is issued ahead of this server's clock";
+const CREATED_AHEAD_DETAIL: &str = "signature is created ahead of this server's clock";
 
-/// The draft RECOMMENDs EdDSA and forbids `none`. This deployment accepts EdDSA only, which
-/// is the curve every other decern signature path already uses, so the posture adds no new
-/// cryptography — unlike the SPIFFE posture, whose spec has no EdDSA at all.
-const ACCEPTED_ALG: &str = "EdDSA";
+/// The token's `alg`: the fully-specified Ed25519, never the polymorphic `EdDSA`, which -11
+/// §11.3.1 and §11.5.1 forbid (RFC 9864 §2.2). Ed25519 is the algorithm every other decern
+/// signature path already uses, so the posture adds no new cryptography.
+const TOKEN_ALG: &str = crate::jwk::ED25519;
+
+/// The signature validity window, applied to `created` behind and ahead of this clock and
+/// to an agent token `iat` ahead of it: -11 §11.3.4 step 3's default, which §11.5.2 has the
+/// `iat` bound share.
+const SIGNATURE_WINDOW_SECS: i64 = 60;
+
+/// What this posture accepts in `Signature-Input`: the label the agent chose, which
+/// `Signature-Key` must carry a member under (§11.3.4 step 4); an `alg` parameter, not read
+/// at all, since the key names the algorithm (§11.3.3.2); and `expires`, honoured
+/// (§11.3.4.2). A `keyid` is checked to be a string, as RFC 9421 §2.3 defines it, and never
+/// chooses the key, which is the one `Signature-Key` conveys (§11.3.3.2). `nonce` and `tag`
+/// are refused, a choice of this profile: -11 defines no nonce mechanism and no tag.
+const PROFILE: crate::httpsig::Profile<'static> = crate::httpsig::Profile {
+    label: None,
+    ignore_alg: true,
+    accept_expires: true,
+};
 
 /// The token type an agent token carries. Anything else is refused rather than validated as
 /// some other kind of JWT.
@@ -98,58 +118,45 @@ pub(crate) struct AauthConfig {
     pub(crate) pep: BTreeSet<String>,
 }
 
-/// A JWK as it appears in a provider's key set. Only the OKP/Ed25519 shape is accepted, and
-/// every other key type is refused at startup rather than at request time, so a deployment
-/// learns its configuration is unusable when it boots and not when a caller arrives.
-#[derive(Deserialize)]
-struct ProviderJwk {
-    kty: String,
-    #[serde(default)]
-    crv: String,
-    #[serde(default)]
-    x: String,
-    #[serde(default)]
-    kid: String,
-    #[serde(default, rename = "use")]
-    use_: Option<String>,
-}
-
 #[derive(Deserialize)]
 struct ProviderJwks {
-    keys: Vec<ProviderJwk>,
+    keys: Vec<Value>,
 }
 
-/// Read one provider's JWK Set. Refuses a set this deployment could not verify with anyway,
-/// at startup. Returns a human-facing error because every caller is configuration.
+/// Read one provider's JWK Set. A member is usable when it has no `use` other than `sig`,
+/// names a key this deployment can verify with under the rules in [`crate::jwk`], and carries
+/// a `kid` to select it by. Every other member is skipped, one that does not parse as a JWK
+/// included: RFC 7517 §5 has an implementation ignore a JWK it cannot use, and sig-key §3.3
+/// forbids failing because of a member that is not selected. A member name given twice in a
+/// JWK keeps the last, as RFC 7517 §4 permits. The set is refused at startup when no member
+/// is usable, or when two usable members share a `kid`, which would make the selection a
+/// token's `kid` names ambiguous; a deployment learns its configuration is unusable when it
+/// boots and not when a caller arrives. Returns a human-facing error because every caller is
+/// configuration.
 pub(crate) fn load_provider_keys(raw: &str) -> Result<Vec<ProviderKey>, String> {
     let doc: ProviderJwks =
         serde_json::from_str(raw).map_err(|e| format!("key set is not valid JSON: {e}"))?;
     let mut out = Vec::new();
-    for jwk in doc.keys {
-        // A set may legitimately carry keys for other purposes; skip those rather than
-        // failing the whole document.
+    for member in doc.keys {
+        let Ok(jwk) = serde_json::from_value::<crate::jwk::Jwk>(member) else {
+            continue;
+        };
         if matches!(jwk.use_.as_deref(), Some(u) if u != "sig") {
             continue;
         }
-        if jwk.kty != "OKP" || jwk.crv != "Ed25519" {
+        let (Ok(key), Some(kid)) = (jwk.ed25519(), jwk.kid.filter(|k| !k.is_empty())) else {
             continue;
+        };
+        if out.iter().any(|k: &ProviderKey| k.kid == kid) {
+            return Err(format!("two usable keys in the set share the kid {kid}"));
         }
-        if jwk.kid.is_empty() {
-            return Err("a signing key in the set carries no kid".into());
-        }
-        let bytes = URL_SAFE_NO_PAD
-            .decode(&jwk.x)
-            .map_err(|_| format!("key {} has an x that is not base64url", jwk.kid))?;
-        let arr: [u8; 32] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| format!("key {} is not a 32-byte Ed25519 key", jwk.kid))?;
-        let key = VerifyingKey::from_bytes(&arr)
-            .map_err(|_| format!("key {} is not a valid Ed25519 key", jwk.kid))?;
-        out.push(ProviderKey { kid: jwk.kid, key });
+        out.push(ProviderKey { kid, key });
     }
     if out.is_empty() {
-        return Err("key set carries no usable Ed25519 signing key".into());
+        return Err(format!(
+            "key set carries no usable signing key; one needs kty OKP, crv Ed25519, \
+             alg {TOKEN_ALG}, a kid, and no use other than sig"
+        ));
     }
     Ok(out)
 }
@@ -194,30 +201,83 @@ pub(crate) fn agent_identifier_domain(id: &str) -> Option<&str> {
     (local_ok && valid_domain(domain)).then_some(domain)
 }
 
-/// Pull the token out of `Signature-Key: sig=jwt; jwt="…"`, the presentation the draft
-/// specifies. The raw header is what the outer signature covers, so only the token is taken
-/// here; the header value itself is passed through untouched.
-fn token_from_signature_key(raw: &str) -> Result<&str, Denied> {
-    let (scheme, rest) = raw
-        .split_once(';')
-        .ok_or_else(|| Denied::Invalid("Signature-Key names no jwt parameter".into()))?;
-    let scheme = scheme.trim();
-    // `sig=jwt`, where `sig` is the signature label this deployment accepts.
-    if !scheme.eq_ignore_ascii_case("sig=jwt") {
-        return Err(Denied::Invalid(format!(
-            "Signature-Key scheme {} is not jwt",
-            brief(scheme)
-        )));
+/// The agent token from `Signature-Key`, an RFC 9651 Dictionary keyed by signature label
+/// (sig-key §3): the member under `label`, whose scheme must be `jwt` (-11 §11.3.2) and whose
+/// `jwt` parameter is the token. Members under other labels are ignored (sig-key §3.1), as is
+/// a `cache` request (§3.8), which this deployment does not act on. The raw header is what
+/// the signature covers, so only the token is taken here.
+///
+/// The header is parsed as RFC 9651 says, so a repeated label or a repeated `jwt` parameter
+/// keeps the last, the value every conforming parser reads. One refusal is this deployment's
+/// own, a departure from RFC 9651 §3.2's default of ignoring members a recipient does not
+/// use: a second `jwt`-scheme member under another label is refused. This deployment
+/// verifies one signature, so such a member confirms nothing here, and with two of them the
+/// label, which RFC 9421 §7.2.5 says carries no meaning and an intermediary may change,
+/// would choose which agent the request is recorded as.
+fn token_from_signature_key(raw: &str, label: &str) -> Result<String, Denied> {
+    let members = crate::httpsig::dictionary_9651(raw, "Signature-Key")?;
+    let jwt_members = members
+        .values()
+        .filter(|m| {
+            matches!(m, sfv::ListEntry::Item(i)
+                if matches!(&i.bare_item, sfv::BareItem::Token(t) if t.as_str() == "jwt"))
+        })
+        .count();
+    if jwt_members > 1 {
+        return Err(Denied::Invalid(
+            "Signature-Key carries more than one jwt-scheme member; one signature is verified here"
+                .into(),
+        ));
     }
-    let rest = rest.trim();
-    let value = rest
-        .strip_prefix("jwt=")
-        .ok_or_else(|| Denied::Invalid("Signature-Key names no jwt parameter".into()))?;
-    let token = value.trim().trim_matches('"');
+    let Some(member) = members.get(label) else {
+        return Err(Denied::Invalid(format!(
+            "Signature-Key carries no member labelled {}",
+            brief(label)
+        )));
+    };
+    let sfv::ListEntry::Item(item) = member else {
+        return Err(Denied::Invalid(
+            "Signature-Key member is not a scheme".into(),
+        ));
+    };
+    match &item.bare_item {
+        sfv::BareItem::Token(t) if t.as_str() == "jwt" => {}
+        sfv::BareItem::Token(t) => {
+            return Err(Denied::Invalid(format!(
+                "Signature-Key scheme {} is not jwt",
+                brief(t.as_str())
+            )));
+        }
+        _ => {
+            return Err(Denied::Invalid(
+                "Signature-Key scheme is not a token".into(),
+            ));
+        }
+    }
+    let token = match item.params.iter().find(|(k, _)| k.as_str() == "jwt") {
+        Some((_, sfv::BareItem::String(s))) => s.as_str().to_owned(),
+        Some(_) => {
+            return Err(Denied::Invalid(
+                "Signature-Key jwt parameter is not a string".into(),
+            ));
+        }
+        None => {
+            return Err(Denied::Invalid(
+                "Signature-Key names no jwt parameter".into(),
+            ));
+        }
+    };
     if token.is_empty() {
         return Err(Denied::Invalid("Signature-Key carries an empty jwt".into()));
     }
     Ok(token)
+}
+
+/// An agent token's `cnf`, whose `jwk` is held to the key rules in [`crate::jwk`]: -11
+/// §11.5.1 requires it to carry a fully-specified `alg`.
+#[derive(Deserialize)]
+struct AgentCnf {
+    jwk: crate::jwk::Jwk,
 }
 
 impl CallerAuth for AauthConfig {
@@ -228,7 +288,12 @@ impl CallerAuth for AauthConfig {
         body: &[u8],
     ) -> Result<Authenticated, Denied> {
         let fields = sig::SignatureFields::from_request(req)?;
-        authenticate(&fields.request(req, body), self, now_secs as i64)
+        authenticate_with(
+            &fields.request(req, body),
+            req.headers(),
+            self,
+            now_secs as i64,
+        )
     }
 
     /// Two refusals carry a header the draft defines; the rest state which check failed
@@ -237,8 +302,9 @@ impl CallerAuth for AauthConfig {
     /// cannot succeed. Draft -11 §6.1: a resource deciding on the agent's identity alone
     /// answers a request that presented no agent token with the one requirement it has,
     /// `AAuth-Requirement: requirement=agent-token`, with no parameters — and AAuth never
-    /// conveys a requirement through `WWW-Authenticate`. §11.5.2: an `iat` ahead of this
-    /// clock is a signature failure answered `Signature-Error: error=clock_skew`.
+    /// conveys a requirement through `WWW-Authenticate`. §11.3.4 step 3 and §11.5.2: a
+    /// signature `created`, or a token `iat`, ahead of this clock by more than the window is
+    /// a signature failure answered `Signature-Error: error=clock_skew`.
     fn refuse(&self, denied: Denied) -> Response {
         let body = axum::Json(
             serde_json::json!({ "error": "invalid_request", "error_description": denied.detail() }),
@@ -251,7 +317,9 @@ impl CallerAuth for AauthConfig {
                     axum::http::HeaderValue::from_static("requirement=agent-token"),
                 );
             }
-            Denied::Invalid(detail) if detail == CLOCK_SKEW_DETAIL => {
+            Denied::Invalid(detail)
+                if detail == CLOCK_SKEW_DETAIL || detail == CREATED_AHEAD_DETAIL =>
+            {
                 response.headers_mut().insert(
                     "signature-error",
                     axum::http::HeaderValue::from_static("error=clock_skew"),
@@ -263,10 +331,23 @@ impl CallerAuth for AauthConfig {
     }
 }
 
-/// Validate an AAuth agent token and the signature it is bound to, cheap self-asserted checks
-/// ahead of the expensive ones. Nothing before the two signature checks is believed.
+/// [`authenticate_with`] for a request whose signature covers no header field beyond
+/// `signature-key` and `content-digest`.
+#[cfg(test)]
 pub(crate) fn authenticate(
     req: &sig::SignedRequest<'_>,
+    cfg: &AauthConfig,
+    now_secs: i64,
+) -> Result<Authenticated, Denied> {
+    authenticate_with(req, &HeaderMap::new(), cfg, now_secs)
+}
+
+/// Validate an AAuth agent token and the signature it is bound to, cheap self-asserted checks
+/// ahead of the expensive ones. Nothing before the two signature checks is believed. `headers`
+/// supplies any further header field the signature covers.
+pub(crate) fn authenticate_with(
+    req: &sig::SignedRequest<'_>,
+    headers_in: &HeaderMap,
     cfg: &AauthConfig,
     now_secs: i64,
 ) -> Result<Authenticated, Denied> {
@@ -285,9 +366,18 @@ pub(crate) fn authenticate(
         ));
     }
 
-    let presented = req.presented(&headers, now_secs)?;
+    // -11 §11.3.4 steps 2 and 3, and §11.3.4.2. The covered set must include the required
+    // components, in any order and beside any others; this profile requires `content-digest`
+    // on a bodied request too.
+    let presented = crate::httpsig::presented_under(&PROFILE, headers.input, headers.signature)?;
+    presented.covers(sig::required_components(req.method, req.body))?;
+    if presented.created.saturating_sub(now_secs) > SIGNATURE_WINDOW_SECS {
+        return Err(Denied::Invalid(CREATED_AHEAD_DETAIL.into()));
+    }
+    presented.fresh(now_secs, SIGNATURE_WINDOW_SECS, SIGNATURE_WINDOW_SECS)?;
+    presented.unexpired(now_secs)?;
 
-    let token = token_from_signature_key(headers.key)?;
+    let token = token_from_signature_key(headers.key, &presented.label)?;
     let mut parts = token.split('.');
     let (h, p, s) = match (parts.next(), parts.next(), parts.next(), parts.next()) {
         (Some(h), Some(p), Some(s), None) if !s.is_empty() => (h, p, s),
@@ -316,10 +406,10 @@ pub(crate) fn authenticate(
         None => return Err(Denied::Invalid("agent token names no typ".into())),
     }
     match head.get("alg").and_then(Value::as_str) {
-        Some(a) if a == ACCEPTED_ALG => {}
+        Some(a) if a == TOKEN_ALG => {}
         Some(other) => {
             return Err(Denied::Invalid(format!(
-                "algorithm {} is not accepted here; this deployment verifies {ACCEPTED_ALG} only",
+                "algorithm {} is not accepted here; this deployment verifies {TOKEN_ALG} only",
                 brief(other)
             )));
         }
@@ -438,7 +528,7 @@ pub(crate) fn authenticate(
     // Draft -11 §11.5.2: `iat` is not a validity check. A verifier that refuses an `iat`
     // ahead of its clock bounds the refusal by its signature validity window rather than
     // demanding an exact clock, so the tolerance is the one the signature's `created` gets.
-    if iat > (now_secs + sig::MAX_CLOCK_SKEW_AHEAD_SECS) as f64 {
+    if iat > (now_secs + SIGNATURE_WINDOW_SECS) as f64 {
         return Err(Denied::Invalid(CLOCK_SKEW_DETAIL.into()));
     }
     if exp - iat > MAX_AGENT_TOKEN_LIFETIME_SECS as f64 {
@@ -481,16 +571,34 @@ pub(crate) fn authenticate(
     }
 
     // The confirmed key, and the second signature check: the request itself.
-    let cnf: sig::Cnf = serde_json::from_value(
+    let cnf: AgentCnf = serde_json::from_value(
         claims
             .get("cnf")
             .cloned()
             .ok_or_else(|| Denied::Invalid("agent token carries no cnf".into()))?,
     )
-    .map_err(|_| Denied::Invalid("cnf does not carry a usable jwk".into()))?;
-    let confirmed = sig::jwk_to_verifying_key(&cnf.jwk)?;
+    .map_err(|_| Denied::Invalid("cnf does not carry a jwk".into()))?;
+    let confirmed = cnf
+        .jwk
+        .ed25519()
+        .map_err(|e| Denied::Invalid(format!("cnf.jwk is not usable: {e}")))?;
 
-    let base = req.signature_base(headers.key, &presented)?;
+    // Every further header field the signature covers, as the request carries it.
+    let mut extra: Vec<(&str, String)> = Vec::new();
+    for name in &presented.components {
+        if name.starts_with('@') || name == "signature-key" || name == "content-digest" {
+            continue;
+        }
+        let value = crate::httpsig::field(headers_in, name)?.ok_or_else(|| {
+            Denied::Invalid(format!(
+                "covered field {} is not in the request",
+                brief(name)
+            ))
+        })?;
+        extra.push((name.as_str(), value));
+    }
+    let extra: Vec<(&str, &str)> = extra.iter().map(|(n, v)| (*n, v.as_str())).collect();
+    let base = req.signature_base_with(headers.key, &presented, &extra)?;
     let request_sig = Signature::from_slice(&presented.signature)
         .map_err(|_| Denied::Invalid("signature is malformed".into()))?;
     confirmed
@@ -525,7 +633,8 @@ mod tests {
     const NOW: i64 = 1_010;
 
     fn jwk(key: &VerifyingKey) -> Value {
-        json!({ "kty": "OKP", "crv": "Ed25519", "x": URL_SAFE_NO_PAD.encode(key.to_bytes()) })
+        json!({ "kty": "OKP", "crv": "Ed25519", "alg": "Ed25519",
+                "x": URL_SAFE_NO_PAD.encode(key.to_bytes()) })
     }
 
     /// An agent token as a provider would mint it: signed by the provider's key over the
@@ -536,7 +645,7 @@ mod tests {
         head_patch: impl FnOnce(&mut Value),
         claims_patch: impl FnOnce(&mut Value),
     ) -> String {
-        let mut header = json!({ "typ": AGENT_TOKEN_TYP, "alg": ACCEPTED_ALG, "kid": KID });
+        let mut header = json!({ "typ": AGENT_TOKEN_TYP, "alg": TOKEN_ALG, "kid": KID });
         head_patch(&mut header);
         let mut claims = json!({
             "iss": ISS,
@@ -555,8 +664,9 @@ mod tests {
         format!("{signed}.{}", URL_SAFE_NO_PAD.encode(sig.to_bytes()))
     }
 
+    /// The presentation -11 §11.3.3.1's example uses: label `sig`, scheme `jwt`.
     fn signature_key_header(token: &str) -> String {
-        format!("sig=jwt; jwt=\"{token}\"")
+        format!("sig=jwt;jwt=\"{token}\"")
     }
 
     fn cfg(provider_key: &VerifyingKey) -> AauthConfig {
@@ -599,21 +709,55 @@ mod tests {
         digest: Option<&str>,
         created: i64,
     ) -> (String, String) {
-        let lines: Vec<(&str, &str)> = components
+        sign_as(
+            agent,
+            &Signing {
+                method: "POST",
+                components,
+                key_header,
+                digest,
+                fields: &[],
+                label: "sig",
+                tail: &format!(";created={created}"),
+            },
+        )
+    }
+
+    /// What a test signs: the method, the covered components in order, the values of covered
+    /// header fields beyond `signature-key` and `content-digest`, the label and the parameter
+    /// tail as written.
+    struct Signing<'a> {
+        method: &'a str,
+        components: &'a [&'a str],
+        key_header: &'a str,
+        digest: Option<&'a str>,
+        fields: &'a [(&'a str, &'a str)],
+        label: &'a str,
+        tail: &'a str,
+    }
+
+    fn sign_as(agent: &SigningKey, s: &Signing<'_>) -> (String, String) {
+        let lines: Vec<(&str, &str)> = s
+            .components
             .iter()
             .map(|c| {
                 let value = match *c {
-                    "@method" => "POST",
+                    "@method" => s.method,
                     "@authority" => AUTHORITY,
                     "@path" => PATH,
-                    "content-digest" => digest.expect("fixture digest"),
-                    "signature-key" => key_header,
-                    other => panic!("fixture component {other}"),
+                    "content-digest" => s.digest.expect("fixture digest"),
+                    "signature-key" => s.key_header,
+                    other => s
+                        .fields
+                        .iter()
+                        .find(|(n, _)| *n == other)
+                        .map(|(_, v)| *v)
+                        .unwrap_or_else(|| panic!("fixture component {other}")),
                 };
                 (*c, value)
             })
             .collect();
-        crate::httpsig::sign_for_test(agent, &lines, created)
+        crate::httpsig::sign_for_test_as(agent, &lines, s.label, s.tail)
     }
 
     struct Fixture {
@@ -787,13 +931,20 @@ mod tests {
         assert!(matches!(err, Denied::Invalid(ref d) if d.contains("is not an agent token")));
     }
 
+    /// -11 §11.3.1 and §11.5.1: the token names the fully-specified `Ed25519`, and the
+    /// polymorphic `EdDSA` a 0.6 agent sent is refused like any other algorithm.
     #[test]
-    fn a_non_eddsa_algorithm_is_refused() {
+    fn a_token_algorithm_other_than_ed25519_is_refused() {
         let (provider, agent) = keys();
-        let f = fixture_with(&provider, &agent, |h| h["alg"] = json!("RS256"), |_| {});
-        let err = authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
-            .expect_err("should refuse");
-        assert!(matches!(err, Denied::Invalid(ref d) if d.contains("is not accepted here")));
+        for alg in ["EdDSA", "RS256", "none"] {
+            let f = fixture_with(&provider, &agent, |h| h["alg"] = json!(alg), |_| {});
+            let err = authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
+                .expect_err("should refuse");
+            assert!(
+                matches!(err, Denied::Invalid(ref d) if d.contains("is not accepted here")),
+                "{alg}: {err:?}"
+            );
+        }
     }
 
     #[test]
@@ -854,7 +1005,7 @@ mod tests {
             &provider,
             &agent,
             |_| {},
-            |c| c["iat"] = json!((NOW + 60) as f64),
+            |c| c["iat"] = json!((NOW + 2 * SIGNATURE_WINDOW_SECS) as f64),
         );
         let err = authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
             .expect_err("should refuse");
@@ -897,7 +1048,7 @@ mod tests {
             &provider,
             &agent,
             |_| {},
-            |c| c["iat"] = json!((NOW + sig::MAX_CLOCK_SKEW_AHEAD_SECS) as f64),
+            |c| c["iat"] = json!((NOW + SIGNATURE_WINDOW_SECS) as f64),
         );
         assert!(
             authenticate(
@@ -912,7 +1063,7 @@ mod tests {
             &provider,
             &agent,
             |_| {},
-            |c| c["iat"] = json!((NOW + sig::MAX_CLOCK_SKEW_AHEAD_SECS + 1) as f64),
+            |c| c["iat"] = json!((NOW + SIGNATURE_WINDOW_SECS + 1) as f64),
         );
         let err = authenticate(
             &req(&beyond, AUTHORITY),
@@ -1068,10 +1219,340 @@ mod tests {
         assert!(matches!(err, Denied::Invalid(ref d) if d.contains("is not jwt")));
     }
 
+    fn provider_member(key: &VerifyingKey, patch: impl FnOnce(&mut Value)) -> Value {
+        let mut m = jwk(key);
+        m["kid"] = json!(KID);
+        patch(&mut m);
+        m
+    }
+
+    /// A key the token could not name by `kid` is not usable: skipped beside a usable one, and
+    /// alone it leaves the set with nothing, which is refused at startup.
     #[test]
-    fn a_key_set_without_a_kid_is_refused_at_startup() {
-        let raw = json!({ "keys": [{ "kty": "OKP", "crv": "Ed25519", "x": "AAAA" }] }).to_string();
-        assert!(load_provider_keys(&raw).is_err());
+    fn a_key_without_a_kid_is_not_usable() {
+        let (provider, other) = keys();
+        let kidless = provider_member(&other.verifying_key(), |m| {
+            m.as_object_mut().unwrap().remove("kid");
+        });
+        let e = load_provider_keys(&json!({ "keys": [kidless.clone()] }).to_string())
+            .expect_err("nothing usable");
+        assert!(e.contains("a kid"), "{e}");
+        let usable = provider_member(&provider.verifying_key(), |_| {});
+        let keys = load_provider_keys(&json!({ "keys": [kidless, usable] }).to_string())
+            .expect("the usable one is kept");
+        assert_eq!(keys.len(), 1);
+    }
+
+    /// sig-key §3.3: the rules bind the selected key, and an unusable member does not fail the
+    /// set. A set with no usable key at all is refused at startup.
+    #[test]
+    fn a_provider_set_keeps_its_usable_keys_and_needs_one() {
+        let (provider, other) = keys();
+        let usable = provider_member(&provider.verifying_key(), |_| {});
+        let unusable = [
+            provider_member(&other.verifying_key(), |m| {
+                m.as_object_mut().unwrap().remove("alg");
+                m["kid"] = json!("no-alg");
+            }),
+            provider_member(&other.verifying_key(), |m| {
+                m["alg"] = json!("EdDSA");
+                m["kid"] = json!("polymorphic");
+            }),
+            provider_member(&other.verifying_key(), |m| {
+                m["kty"] = json!("EC");
+                m["kid"] = json!("inconsistent");
+            }),
+            json!({ "kty": "RSA", "alg": "RS256", "kid": "rsa", "n": "AQAB", "e": "AQAB" }),
+            // Fields of the wrong JSON type: not a JWK of the shape read here, so skipped.
+            json!({ "kty": "OKP", "crv": "Ed25519", "alg": 5, "kid": "typed" }),
+            json!({ "kty": "OKP", "crv": "Ed25519", "alg": "Ed25519", "kid": 7 }),
+            json!("not an object"),
+        ];
+        let mut all = unusable.to_vec();
+        all.push(usable);
+        let keys = load_provider_keys(&json!({ "keys": all }).to_string()).expect("one usable");
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].kid, KID);
+        assert!(load_provider_keys(&json!({ "keys": unusable }).to_string()).is_err());
+        // A key for encryption is not a signing key, whatever else it names.
+        let enc = provider_member(&provider.verifying_key(), |m| m["use"] = json!("enc"));
+        assert!(load_provider_keys(&json!({ "keys": [enc] }).to_string()).is_err());
+        // Two usable keys under one kid would make a token's kid ambiguous.
+        let twin = provider_member(&other.verifying_key(), |_| {});
+        let e = load_provider_keys(
+            &json!({ "keys": [provider_member(&provider.verifying_key(), |_| {}), twin] })
+                .to_string(),
+        )
+        .expect_err("a shared kid");
+        assert!(e.contains("share the kid"), "{e}");
+    }
+
+    /// -11 §11.5.1: the key `cnf` confirms carries a fully-specified `alg` consistent with it.
+    #[test]
+    fn a_confirmation_key_the_rules_refuse_is_refused() {
+        let (provider, agent) = keys();
+        for patch in [
+            (|c: &mut Value| {
+                c["cnf"]["jwk"].as_object_mut().unwrap().remove("alg");
+            }) as fn(&mut Value),
+            |c| c["cnf"]["jwk"]["alg"] = json!("EdDSA"),
+            |c| c["cnf"]["jwk"]["kty"] = json!("EC"),
+        ] {
+            let f = fixture_with(&provider, &agent, |_| {}, patch);
+            let err = authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
+                .expect_err("should refuse");
+            assert!(
+                matches!(err, Denied::Invalid(ref d) if d.contains("cnf.jwk is not usable")),
+                "{err:?}"
+            );
+        }
+    }
+
+    /// -11 §11.3.3.1's example: a GET under label `sig`, covering a header field beyond the
+    /// required four. Without that header the covered field cannot be resolved.
+    #[test]
+    fn a_request_shaped_as_the_drafts_example_authenticates() {
+        let (provider, agent) = keys();
+        let token = agent_token(&provider, &agent.verifying_key(), |_| {}, |_| {});
+        let key_header = signature_key_header(&token);
+        let auth = "AAuth session-token-placeholder";
+        let (input, sig) = sign_as(
+            &agent,
+            &Signing {
+                method: "GET",
+                components: &[
+                    "@method",
+                    "@authority",
+                    "@path",
+                    "authorization",
+                    "signature-key",
+                ],
+                key_header: &key_header,
+                digest: None,
+                fields: &[("authorization", auth)],
+                label: "sig",
+                tail: &format!(";created={CREATED}"),
+            },
+        );
+        let r = sig::SignedRequest {
+            method: "GET",
+            authority: AUTHORITY,
+            path: PATH,
+            signature_key_header: Some(&key_header),
+            signature_input_header: Some(&input),
+            signature_header: Some(&sig),
+            content_digest_header: None,
+            body: b"",
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", auth.parse().unwrap());
+        let who = authenticate_with(&r, &headers, &cfg(&provider.verifying_key()), NOW)
+            .expect("the draft's shape authenticates");
+        assert_eq!(who.subject, AGENT);
+        let err = authenticate_with(&r, &HeaderMap::new(), &cfg(&provider.verifying_key()), NOW)
+            .expect_err("a covered field must be in the request");
+        assert!(matches!(err, Denied::Invalid(ref d) if d.contains("authorization")));
+    }
+
+    /// -11 §11.3.4 step 2 asks that the required components be covered, not in an order and
+    /// not alone: a POST covering them reordered, with `content-type` beside them, verifies.
+    #[test]
+    fn the_covered_components_may_be_reordered_and_extended() {
+        let (provider, agent) = keys();
+        let body = br#"{"subject":{"type":"Principal","id":"corp"}}"#.to_vec();
+        let token = agent_token(&provider, &agent.verifying_key(), |_| {}, |_| {});
+        let key_header = signature_key_header(&token);
+        let digest = sig::content_digest_header_value(&body);
+        let (input, sig) = sign_as(
+            &agent,
+            &Signing {
+                method: "POST",
+                components: &[
+                    "signature-key",
+                    "content-type",
+                    "@path",
+                    "content-digest",
+                    "@authority",
+                    "@method",
+                ],
+                key_header: &key_header,
+                digest: Some(&digest),
+                fields: &[("content-type", "application/json")],
+                label: "sig",
+                tail: &format!(";created={CREATED}"),
+            },
+        );
+        let f = Fixture {
+            key_header,
+            input,
+            sig,
+            digest,
+            body,
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        authenticate_with(
+            &req(&f, AUTHORITY),
+            &headers,
+            &cfg(&provider.verifying_key()),
+            NOW,
+        )
+        .expect("reordered and extended");
+    }
+
+    /// -11 §11.3.4 step 4 selects the `Signature-Key` member by the signature's label, so the
+    /// label the agent chose must name a member there; members under other labels are
+    /// ignored (sig-key §3.1); `Signature-Input` and `Signature` must agree on the label.
+    #[test]
+    fn the_token_is_selected_by_the_signatures_label() {
+        let (provider, agent) = keys();
+        let token = agent_token(&provider, &agent.verifying_key(), |_| {}, |_| {});
+        let body = br#"{"subject":{"type":"Principal","id":"corp"}}"#.to_vec();
+        let c = cfg(&provider.verifying_key());
+        let run = |key_header: String, label: &str, sig_label: &str| {
+            let (input, sig, digest) = {
+                let digest = sig::content_digest_header_value(&body);
+                let (input, sig) = sign_as(
+                    &agent,
+                    &Signing {
+                        method: "POST",
+                        components: sig::required_components("POST", &body),
+                        key_header: &key_header,
+                        digest: Some(&digest),
+                        fields: &[],
+                        label,
+                        tail: &format!(";created={CREATED}"),
+                    },
+                );
+                (input, sig.replacen(label, sig_label, 1), digest)
+            };
+            let f = Fixture {
+                key_header,
+                input,
+                sig,
+                digest,
+                body: body.clone(),
+            };
+            authenticate(&req(&f, AUTHORITY), &c, NOW)
+        };
+        run(format!("sig=jwt;jwt=\"{token}\""), "sig", "sig").expect("sig everywhere");
+        run(format!("agent=jwt;jwt=\"{token}\""), "agent", "agent").expect("any one label");
+        run(
+            format!("sig=jwt;jwt=\"{token}\", other=hwk;kty=\"OKP\""),
+            "sig",
+            "sig",
+        )
+        .expect("another member is ignored");
+        run(
+            format!("sig=jwt;jwt=\"{token}\", other=hwk, other=hwk"),
+            "sig",
+            "sig",
+        )
+        .expect("a repeat under another label is folded, as RFC 9651 says");
+        // A second jwt member would let the label choose the agent recorded.
+        let err = run(
+            format!("sig=jwt;jwt=\"{token}\", other=jwt;jwt=\"{token}\""),
+            "sig",
+            "sig",
+        )
+        .expect_err("two jwt members");
+        assert!(
+            matches!(err, Denied::Invalid(ref d) if d.contains("more than one jwt-scheme member"))
+        );
+        // RFC 9651 §4.2.2 and §4.2.3.2: a repeated key, and a repeated parameter, keep the last.
+        run(
+            format!("sig=jwt;jwt=\"x\", sig=jwt;jwt=\"{token}\""),
+            "sig",
+            "sig",
+        )
+        .expect("the verified label given twice keeps the last");
+        run(format!("sig=jwt;jwt=\"x\";jwt=\"{token}\""), "sig", "sig")
+            .expect("a repeated jwt parameter keeps the last");
+        let err =
+            run("sig=jwt;jwt=abc".to_owned(), "sig", "sig").expect_err("a token, not a string");
+        assert!(matches!(err, Denied::Invalid(ref d) if d.contains("not a string")));
+        let err = run(format!("other=jwt;jwt=\"{token}\""), "sig", "sig")
+            .expect_err("no member under the label");
+        assert!(matches!(err, Denied::Invalid(ref d) if d.contains("no member labelled sig")));
+        let err = run(format!("sig=jwt;jwt=\"{token}\""), "sig", "sig2")
+            .expect_err("the two signature headers disagree");
+        assert!(matches!(err, Denied::Invalid(ref d) if d.contains("different labels")));
+    }
+
+    /// -11 §11.3.3.2: an `alg` parameter is ignored, the key naming the algorithm.
+    /// §11.3.4.2: `expires` in the past is refused, and one still ahead is honoured.
+    #[test]
+    fn an_alg_parameter_is_ignored_and_expires_is_honoured() {
+        let (provider, agent) = keys();
+        let c = cfg(&provider.verifying_key());
+        let run = |tail: String| {
+            let body = br#"{"subject":{"type":"Principal","id":"corp"}}"#.to_vec();
+            let token = agent_token(&provider, &agent.verifying_key(), |_| {}, |_| {});
+            let key_header = signature_key_header(&token);
+            let digest = sig::content_digest_header_value(&body);
+            let (input, sig) = sign_as(
+                &agent,
+                &Signing {
+                    method: "POST",
+                    components: sig::required_components("POST", &body),
+                    key_header: &key_header,
+                    digest: Some(&digest),
+                    fields: &[],
+                    label: "sig",
+                    tail: &tail,
+                },
+            );
+            let f = Fixture {
+                key_header,
+                input,
+                sig,
+                digest,
+                body,
+            };
+            authenticate(&req(&f, AUTHORITY), &c, NOW)
+        };
+        run(format!(";created={CREATED};alg=\"ed25519\"")).expect("alg ignored");
+        run(format!(";created={CREATED};alg=1")).expect("alg not read, whatever its type");
+        let err = run(format!(";created={CREATED};nonce=\"n\"")).expect_err("nonce refused");
+        assert!(matches!(err, Denied::Invalid(ref d) if d.contains("nonce")));
+        run(format!(";created={CREATED};expires={}", NOW + 30)).expect("expires ahead");
+        let err = run(format!(";created={CREATED};expires={}", NOW - 1)).expect_err("expired");
+        assert!(matches!(err, Denied::Invalid(ref d) if d.contains("expired")));
+    }
+
+    /// -11 §11.3.4 step 3: `created` within 60 seconds of this clock either way; further
+    /// ahead is `clock_skew`, further behind a stale signature.
+    #[test]
+    fn created_is_held_to_a_sixty_second_window_both_ways() {
+        let (provider, agent) = keys();
+        let c = cfg(&provider.verifying_key());
+        let body = br#"{"subject":{"type":"Principal","id":"corp"}}"#.to_vec();
+        let at = |created: i64| {
+            let token = agent_token(&provider, &agent.verifying_key(), |_| {}, |_| {});
+            let key_header = signature_key_header(&token);
+            let (input, sig, digest) = sign_post(&agent, &key_header, &body, created);
+            let f = Fixture {
+                key_header,
+                input,
+                sig,
+                digest,
+                body: body.clone(),
+            };
+            authenticate(&req(&f, AUTHORITY), &c, NOW)
+        };
+        at(NOW + SIGNATURE_WINDOW_SECS).expect("60 s ahead");
+        at(NOW - SIGNATURE_WINDOW_SECS).expect("60 s behind");
+        let ahead = at(NOW + SIGNATURE_WINDOW_SECS + 1).expect_err("61 s ahead");
+        assert!(matches!(ahead, Denied::Invalid(ref d) if d == CREATED_AHEAD_DETAIL));
+        assert_eq!(
+            c.refuse(ahead)
+                .headers()
+                .get("signature-error")
+                .and_then(|v| v.to_str().ok()),
+            Some("error=clock_skew")
+        );
+        let behind = at(NOW - SIGNATURE_WINDOW_SECS - 1).expect_err("61 s behind");
+        assert!(matches!(behind, Denied::Invalid(ref d) if d.contains("freshness")));
     }
 
     /// §5.2 gives an agent identifier the form `aauth:local@domain`, and §5.1 names the

@@ -8,11 +8,12 @@ posture end to end with no agent provider and no network — `mint.py` writes th
 signs both the agent token and the request, so it works from a fresh checkout.
 
 ```
-agent ──Signature-Key: sig=jwt; jwt="<aa-agent+jwt>"──▶ decern-serve ──▶ ledger
-        Signature-Input: ("@method" "@authority" "@path"   (--aauth-provider
-                          "content-digest" "signature-key")  ISS=jwks.json
-        Content-Digest:  sha-256=:<SHA-256 of the body>:     --aauth-audience AUTHORITY)
-        Signature:       sig1=:<Ed25519 over the base>:
+agent ──Signature-Key: sig=jwt;jwt="<aa-agent+jwt>"──▶ decern-serve ──▶ ledger
+        Signature-Input: sig=("@method" "@authority"       (--aauth-provider
+                          "@path" "content-digest"           ISS=jwks.json
+                          "signature-key");created=…         --aauth-audience AUTHORITY)
+        Content-Digest:  sha-256=:<SHA-256 of the body>:
+        Signature:       sig=:<Ed25519 over the base>:
 ```
 
 ## Run it
@@ -21,13 +22,14 @@ agent ──Signature-Key: sig=jwt; jwt="<aa-agent+jwt>"──▶ decern-serve �
 examples/aauth/run.sh      # needs cargo, uv, jq, python3, curl
 ```
 
-Twelve asserted beats: a valid agent token allowed **as itself** and recorded; **the same
+Thirteen asserted beats: a valid agent token allowed **as itself** and recorded; **the same
 agent refused when asking as `corp`**; **the same token refused when the request is signed by
 a different key**; **a POST refused for covering only the draft's own component list**; a
 token from an unconfigured provider refused; a token signed by a key the pinned provider does
-not hold refused; a signature refused for age alone; **a request minted for a different
-deployment refused**; no credentials refused; the deployment disclosing `mode: aauth` and
-`bind: self`; and the ledger naming the agent decern verified.
+not hold refused; **a token whose header names the polymorphic `EdDSA` refused**; a signature
+refused for age alone; **a request minted for a different deployment refused**; no
+credentials refused; the deployment disclosing `mode: aauth` and `bind: self`; and the ledger
+naming the agent decern verified.
 
 ## Which mode of AAuth this is
 
@@ -42,13 +44,17 @@ consent.
 
 Stated here rather than discovered as a `401`.
 
-**A conformant draft -11 agent is refused today.** The agent token's header must carry `alg:
-EdDSA`, which -11 forbids in favour of `Ed25519`. The token is taken from the `Signature-Key`
-member labelled `sig` while the signature verified is labelled `sig1`; the drafts pair the token
-with the signature by label, so no conformant agent satisfies both. The covered components must
-be exactly this profile's list, in its order, and `created` may be at most 5 seconds ahead.
-[`.agent/standards/registry.yaml`](../../.agent/standards/registry.yaml) lists every departure,
-including what this deployment accepts that the draft refuses.
+**The signature profile is draft -11's, narrowed in three ways an agent learns of only from a
+response body.** The token's header names `Ed25519`, never the polymorphic `EdDSA` (beat 8);
+every key names its `alg`, consistent with `kty` and `crv`; the token is taken from the
+`Signature-Key` member under the signature's own label; the covered components need only include
+the required ones, in any order; an `alg` signature parameter is not read and `expires` is
+honoured; and `created` may be up to 60 seconds either side of this clock. The narrowings:
+`content-digest` is required on a request with a body, below; `nonce` and `tag` signature
+parameters are refused; and a `Signature-Key` carrying a second `jwt`-scheme member is refused,
+so the label cannot choose the agent recorded. A signature failure other than clock skew carries
+no `Signature-Error` code, and the response body is not problem details.
+[`.agent/standards/registry.yaml`](../../.agent/standards/registry.yaml) lists every departure.
 
 **Providers are pinned, never discovered.** The draft has a verifier discover the issuer's JWKS
 at `{iss}/.well-known/{dwk}`. decern checks that `dwk` names that document and then selects a
@@ -63,7 +69,8 @@ AuthZEN evaluation is a POST, so accepting that list would mean one captured sig
 authorizing any body at the same path. RFC 9421 §1.4 assigns component requirements to the
 application profile, and the draft lets a resource require further components, so requiring the
 digest is conformant rather than a departure. This deployment publishes no resource metadata,
-and the refusal names no component, so an agent learns of the requirement only from this README.
+and the refusal names the missing component only in its response body, which the draft tells an
+agent not to depend on (§11.9.1).
 An AAuth agent must sign it to talk to decern (beat 5).
 
 ## Why there is an `--aauth-audience`
@@ -74,7 +81,7 @@ target of an absolute-form request line — so on its own it binds the signature
 authority rather than to this server. Without a configured authority to compare against, a
 correctly signed request from a pinned provider would verify at **any** deployment pinning the
 same provider. `--aauth-audience` is therefore required, and the request's authority must equal
-it. Beat 9 is that refusal.
+it. Beat 10 is that refusal.
 
 ## Why the token's own signature is verified here
 

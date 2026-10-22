@@ -260,12 +260,14 @@ release still does not claim and carries each earlier release's limits forward.
   synced to its directory. The ledger key check runs at boot only: two replicas started at once
   on an empty store under different keys both boot and the store then verifies under neither,
   so start the first replica alone, or give every replica the same key before any starts.
-- **The AAuth posture does not yet meet draft-hardt-oauth-aauth-protocol-11.** It covers agent
-  identity access only, and an agent built to -11 is refused: the posture requires the agent
-  token's `alg` to be `EdDSA`, which -11 replaces with `Ed25519`, and it takes the token from
-  the `Signature-Key` member labelled `sig` while verifying the signature labelled `sig1`. The
-  drafts pair the two by label, so no conformant agent satisfies both. The [standards
-  registry](.agent/standards/registry.yaml) lists each gap.
+- **The AAuth posture covers agent identity access only, and does not yet signal its
+  refusals as draft-hardt-oauth-aauth-protocol-11 asks.** It verifies the draft's signature
+  profile for Ed25519 keys (ES256, which the draft says every party SHOULD support, is not
+  verified), and on a request with a body it also requires `content-digest`, which an agent
+  following the draft's base component list leaves out and learns of only from the response
+  body, since a signature failure other than clock skew carries no `Signature-Error` code and
+  no resource metadata is published. Providers are configured, never discovered. The [standards
+  registry](.agent/standards/registry.yaml) lists each departure.
 - **The default build is not free of compiled native code.** No TLS, no OpenSSL, no cmake —
   but `cedar-policy` → `stacker` → `psm` compiles a small assembly routine through `cc`.
   The claim that holds is "no TLS/OpenSSL/cmake in the default build," not "zero compiled

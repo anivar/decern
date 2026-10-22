@@ -19,7 +19,7 @@ JWKS="$WORK/provider-jwks.json"
 ISS="https://agent-provider.example"
 AGENT="aauth:agent-1@agent-provider.example"
 # The authority is what stands in for the audience an agent token does not carry, so it is
-# exactly the Host curl will send. Getting this wrong is a refusal, which beat 9 shows.
+# exactly the Host curl will send. Getting this wrong is a refusal, which beat 10 shows.
 AUTHORITY="127.0.0.1:$PORT"
 PDP="http://127.0.0.1:$PORT"
 MINT=examples/aauth/mint.py
@@ -131,14 +131,23 @@ jq -e '.error_description | contains("does not verify against its provider")' "$
 echo "   401 $(jq -r .error_description "$WORK/body")"
 
 echo
-echo "== 8. A signature refused for age alone =="
+echo "== 8. A token minted with the polymorphic EdDSA — refused =="
+# -11 forbids the polymorphic EdDSA identifier in favour of the fully-specified Ed25519, and
+# decern 0.6 required EdDSA. An agent built to that earlier shape is refused here.
+CODE=$(send "$(mint_for "$BODY" --eddsa)" "$BODY")
+[ "$CODE" = 401 ]
+jq -e '.error_description | contains("algorithm EdDSA is not accepted")' "$WORK/body" >/dev/null
+echo "   401 $(jq -r .error_description "$WORK/body")"
+
+echo
+echo "== 9. A signature refused for age alone =="
 CODE=$(send "$(mint_for "$BODY" --stale)" "$BODY")
 [ "$CODE" = 401 ]
 jq -e '.error_description | contains("freshness")' "$WORK/body" >/dev/null
 echo "   401 $(jq -r .error_description "$WORK/body")"
 
 echo
-echo "== 9. A request minted for a DIFFERENT deployment — refused =="
+echo "== 10. A request minted for a DIFFERENT deployment — refused =="
 # An agent token carries no aud, and @authority is only the Host the caller sent. Without
 # --aauth-audience, this request — internally consistent, correctly signed, from a pinned
 # provider — would verify at any deployment pinning the same provider.
@@ -149,20 +158,20 @@ jq -e '.error_description | contains("not this deployment")' "$WORK/body" >/dev/
 echo "   401 $(jq -r .error_description "$WORK/body")"
 
 echo
-echo "== 10. No credentials at all — refused =="
+echo "== 11. No credentials at all — refused =="
 CODE=$(curl -s -o "$WORK/body" -w '%{http_code}' "$PDP$PATH_EVAL" \
   -H 'Content-Type: application/json' -H "Host: $AUTHORITY" -d "$BODY")
 [ "$CODE" = 401 ]
 echo "   401 $(jq -r .error_description "$WORK/body")"
 
 echo
-echo "== 11. The deployment discloses the posture it is running =="
+echo "== 12. The deployment discloses the posture it is running =="
 curl -s "$PDP/.well-known/decern-subject-side-disclosure" -H "Host: $AUTHORITY" >"$WORK/disc"
 jq -e '.caller.mode == "aauth" and .caller.bind == "self"' "$WORK/disc" >/dev/null
 echo "   $(jq -c .caller "$WORK/disc")"
 
 echo
-echo "== 12. The ledger names the agent decern verified, and the chain holds =="
+echo "== 13. The ledger names the agent decern verified, and the chain holds =="
 # asserted_by is the identity the server established, not one the request asserted about
 # itself, and the issuer is the provider whose key verified the token.
 jq -e --arg a "$AGENT" --arg i "$ISS" \

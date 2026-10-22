@@ -308,9 +308,9 @@ impl<'a> SignedRequest<'a> {
         })
     }
 
-    /// The one signature this request carries, held to the profile both postures share:
-    /// exactly the covered components for this method and body, and `created` inside the
-    /// freshness window. Parsing only; no key is consulted yet.
+    /// The one signature this request carries, held to the signed-request profile: label
+    /// `sig1`, exactly the covered components for this method and body, and `created` inside
+    /// the freshness window. Parsing only; no key is consulted yet.
     pub(crate) fn presented(
         &self,
         headers: &SignatureHeaders<'_>,
@@ -333,11 +333,23 @@ impl<'a> SignedRequest<'a> {
         signature_key: &str,
         presented: &crate::httpsig::Presented,
     ) -> Result<String, Denied> {
+        self.signature_base_with(signature_key, presented, &[])
+    }
+
+    /// As [`Self::signature_base`], with the further covered header fields a profile lets a
+    /// request cover, each read with [`crate::httpsig::field`].
+    pub(crate) fn signature_base_with(
+        &self,
+        signature_key: &str,
+        presented: &crate::httpsig::Presented,
+        extra: &[(&str, &str)],
+    ) -> Result<String, Denied> {
         let authority = self.authority.to_ascii_lowercase();
         let mut fields = vec![("signature-key", signature_key)];
         if presented.components.iter().any(|c| c == "content-digest") {
             fields.push(("content-digest", self.bound_content_digest()?));
         }
+        fields.extend_from_slice(extra);
         let msg = crate::httpsig::Message {
             method: self.method,
             authority: &authority,
@@ -355,7 +367,7 @@ impl<'a> SignedRequest<'a> {
     fn bound_content_digest(&self) -> Result<&'a str, Denied> {
         let raw = self
             .content_digest_header
-            .ok_or_else(|| Denied::Invalid("POST carries no Content-Digest".into()))?;
+            .ok_or_else(|| Denied::Invalid("request carries no Content-Digest".into()))?;
         if raw.len() > MAX_TOKEN_BYTES {
             return Err(Denied::Invalid(
                 "Content-Digest exceeds the accepted size".into(),
@@ -526,10 +538,10 @@ pub(crate) fn authenticate(
     })
 }
 
-/// The one label either signature posture accepts. RFC 9421 §4 has the signer choose the
+/// The one label the signed-request posture accepts. RFC 9421 §4 has the signer choose the
 /// label, and §7.2.5 advises an application not to rely on a specific one, since an
-/// intermediary may relabel; these profiles depart from that, so a relabelled signature is
-/// refused. [`crate::httpsig::presented`] refuses a request carrying more than one
+/// intermediary may relabel; this profile departs from that, so a relabelled signature is
+/// refused. The AAuth posture takes the signer's label instead. [`crate::httpsig::presented`] refuses a request carrying more than one
 /// signature; the fixed label is what lets that check name the member it reads.
 pub(crate) const LABEL: &str = "sig1";
 
