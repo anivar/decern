@@ -18,6 +18,11 @@
 #   2. There is no `aud` claim — the draft defines none. What pins a request to one
 #      deployment is `--aauth-audience` against the request's Host.
 #
+# The shape is draft -11's: the token's header names `alg: Ed25519`, every key names its
+# `alg`, and the signature, `Signature-Input` and `Signature-Key` share the label `sig`.
+# --eddsa mints the header with the polymorphic `EdDSA` that -11 forbids, which decern 0.6
+# required, so the walkthrough can show that token refused.
+#
 # decern's profile requires `content-digest` on a bodied request, which the draft's own
 # example component list does not carry. --no-digest omits it, so the walkthrough can show
 # that refusal rather than describe it.
@@ -28,7 +33,8 @@
 #
 #   uv run mint.py --jwks
 #   uv run mint.py <agent-id> <method> <authority> <path> [--body JSON]
-#                  [--wrong-key] [--wrong-provider] [--stale] [--no-digest] [--iss URL]
+#                  [--wrong-key] [--wrong-provider] [--stale] [--no-digest] [--eddsa]
+#                  [--iss URL]
 #
 # Prints the provider JWK Set with --jwks, otherwise
 # {"token", "signature_key", "signature_input", "signature", "content_digest"}.
@@ -79,8 +85,9 @@ print("mint.py: fixed public demo keys, no agent provider, no TLS. Never deploy.
 
 argv = sys.argv[1:]
 
-# The key set an operator pins with --aauth-provider. `use: sig` and a `kid` are both
-# present because decern requires a kid on every signing key it will select from.
+# The key set an operator pins with --aauth-provider. A `kid` is present because decern
+# requires one on every key it will select from, and `alg` because -11 requires every key to
+# name its algorithm.
 if "--jwks" in argv:
     provider = Ed25519PrivateKey.from_private_bytes(PROVIDER_SEED)
     print(
@@ -90,6 +97,7 @@ if "--jwks" in argv:
                     {
                         "kty": "OKP",
                         "crv": "Ed25519",
+                        "alg": "Ed25519",
                         "use": "sig",
                         "kid": KID,
                         "x": b64url(raw_pub(provider)),
@@ -100,7 +108,8 @@ if "--jwks" in argv:
     )
     sys.exit(0)
 
-FLAGS = ("--wrong-key", "--wrong-provider", "--stale", "--no-digest")
+FLAGS = ("--wrong-key", "--wrong-provider", "--stale", "--no-digest", "--eddsa")
+eddsa = "--eddsa" in argv
 wrong_key = "--wrong-key" in argv
 wrong_provider = "--wrong-provider" in argv
 stale = "--stale" in argv
@@ -129,7 +138,7 @@ now = int(time.time())
 # metadata document (decern checks the name and never dereferences it), `sub` is the agent,
 # `jti` is required, and `cnf.jwk` names the one key whose holder may present this token.
 # Note the absence of `aud` — the draft defines none for an agent token.
-header = {"typ": "aa-agent+jwt", "alg": "EdDSA", "kid": KID}
+header = {"typ": "aa-agent+jwt", "alg": "EdDSA" if eddsa else "Ed25519", "kid": KID}
 claims = {
     "iss": iss,
     "dwk": DWK,
@@ -137,17 +146,17 @@ claims = {
     "jti": f"demo-{now}",
     "iat": now,
     "exp": now + 3600,
-    "cnf": {"jwk": {"kty": "OKP", "crv": "Ed25519", "x": b64url(raw_pub(agent))}},
+    "cnf": {"jwk": {"kty": "OKP", "crv": "Ed25519", "alg": "Ed25519", "x": b64url(raw_pub(agent))}},
 }
 h = b64url(json.dumps(header).encode())
 p = b64url(json.dumps(claims).encode())
 token = f"{h}.{p}.{b64url(signing_provider.sign(f'{h}.{p}'.encode()))}"
 
-# The presentation the draft specifies. The whole header value is what the signature
-# covers, so it is emitted verbatim and signed as-is.
-signature_key = f'sig=jwt; jwt="{token}"'
-
-label = "sig1"
+# The presentation the draft specifies: a Dictionary member under the signature's label,
+# scheme `jwt`. The whole header value is what the signature covers, so it is emitted
+# verbatim and signed as-is.
+label = "sig"
+signature_key = f'{label}=jwt;jwt="{token}"'
 method_u = method.upper()
 content_digest = None
 if method_u == "POST" and not no_digest:

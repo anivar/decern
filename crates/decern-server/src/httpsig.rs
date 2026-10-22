@@ -11,10 +11,9 @@
 //! This module owns what the RFC fixes: how the fields parse, how each covered component's
 //! value is derived (§2.1, §2.2), and how the signature base is assembled (§2.5), with
 //! `@signature-params` serialized from the parsed input as §3.2 step 7 requires rather than
-//! copied from the bytes received. It also holds the one profile rule both signature
-//! postures share, which signature parameters are accepted. Each posture owns the rest of
-//! its profile (§1.4): the label, the components it requires, how fresh `created` must be,
-//! and the key that verifies.
+//! copied from the bytes received. Each posture hands it a [`Profile`] (§1.4): the label and
+//! which signature parameters it accepts. The posture owns the rest: the components it
+//! requires, how fresh `created` must be, and the key that verifies.
 
 use axum::http::{HeaderMap, Uri};
 use sfv::{BareItem, Dictionary, FieldType, ListEntry, Parser, Version};
@@ -73,32 +72,95 @@ pub(crate) fn authority(uri: &Uri, headers: &HeaderMap) -> Result<String, Denied
 /// One signature as the request presents it, before any key is consulted.
 #[derive(Debug)]
 pub(crate) struct Presented {
+    /// The label it was presented under, in both headers.
+    pub(crate) label: String,
     /// The covered components, in the order they were signed.
     pub(crate) components: Vec<String>,
     pub(crate) created: i64,
+    /// `expires`, where the profile accepts it and the signer set it.
+    pub(crate) expires: Option<i64>,
     /// `@signature-params` as RFC 9421 §2.3 serializes it.
     params: String,
     pub(crate) signature: Vec<u8>,
 }
 
-/// The one signature labelled `label`, from `Signature-Input` and `Signature`.
+/// What a posture accepts in `Signature-Input` beyond what RFC 9421 fixes (§1.4 leaves these
+/// to the application). `created` is always required and `keyid` always accepted and
+/// shape-checked only, since keys are chosen by the posture and never by the signer; `nonce`,
+/// `tag` and any other parameter are always refused, because accepting one nothing here
+/// enforces would let a signer claim a property that was never checked.
+pub(crate) struct Profile<'a> {
+    /// The label the one signature must carry, or `None` to take the one signature's own,
+    /// provided both headers name it.
+    pub(crate) label: Option<&'a str>,
+    /// Accept an `alg` parameter, of any type, and ignore it, as a profile that takes the
+    /// algorithm from the key must; otherwise refuse it.
+    pub(crate) ignore_alg: bool,
+    /// Accept `expires` and hand it to the posture to honour; otherwise refuse it.
+    pub(crate) accept_expires: bool,
+}
+
+/// The one signature labelled `label`, from `Signature-Input` and `Signature`, held to the
+/// strictest profile: no `alg`, no `expires`.
+pub(crate) fn presented(label: &str, input: &str, signature: &str) -> Result<Presented, Denied> {
+    presented_under(
+        &Profile {
+            label: Some(label),
+            ignore_alg: false,
+            accept_expires: false,
+        },
+        input,
+        signature,
+    )
+}
+
+/// The one signature `Signature-Input` and `Signature` carry, held to `profile`.
 ///
 /// RFC 9421 §3.2 step 1 lets a verifier choose among several signatures. This one does not
-/// choose, so a second signature, or one under another label, is refused rather than passed
-/// over. A parameter other than `created` and `keyid` is refused as well: §2.3 lets a signer
-/// attach any, and accepting one nothing here enforces would let it claim a property —
-/// `nonce`, `expires`, `tag` — that was never checked. `keyid` is shape-checked only; keys
-/// are chosen by the posture, never by the signer.
-pub(crate) fn presented(label: &str, input: &str, signature: &str) -> Result<Presented, Denied> {
+/// choose, so a second signature, or one under another label than the profile names, is
+/// refused rather than passed over.
+pub(crate) fn presented_under(
+    profile: &Profile<'_>,
+    input: &str,
+    signature: &str,
+) -> Result<Presented, Denied> {
     let inputs = dictionary(input, "Signature-Input")?;
     let signatures = dictionary(signature, "Signature")?;
-    for (what, d) in [("Signature-Input", &inputs), ("Signature", &signatures)] {
-        if d.len() != 1 || !d.contains_key(label) {
-            return Err(Denied::Invalid(format!(
-                "{what} must carry exactly one signature, labelled {label}"
-            )));
+    let label = match profile.label {
+        Some(label) => {
+            for (what, d) in [("Signature-Input", &inputs), ("Signature", &signatures)] {
+                if d.len() != 1 || !d.contains_key(label) {
+                    return Err(Denied::Invalid(format!(
+                        "{what} must carry exactly one signature, labelled {label}"
+                    )));
+                }
+            }
+            label.to_owned()
         }
-    }
+        None => {
+            for (what, d) in [("Signature-Input", &inputs), ("Signature", &signatures)] {
+                if d.len() != 1 {
+                    return Err(Denied::Invalid(format!(
+                        "{what} must carry exactly one signature"
+                    )));
+                }
+            }
+            let (Some((input_label, _)), Some((signature_label, _))) =
+                (inputs.first(), signatures.first())
+            else {
+                return Err(Denied::Invalid(
+                    "the signature headers carry no signature".into(),
+                ));
+            };
+            if input_label != signature_label {
+                return Err(Denied::Invalid(
+                    "Signature-Input and Signature name different labels".into(),
+                ));
+            }
+            input_label.as_str().to_owned()
+        }
+    };
+    let label = label.as_str();
 
     let Some(ListEntry::InnerList(list)) = inputs.get(label) else {
         return Err(Denied::Invalid(
@@ -138,6 +200,7 @@ pub(crate) fn presented(label: &str, input: &str, signature: &str) -> Result<Pre
     }
 
     let mut created = None;
+    let mut expires = None;
     for (key, value) in &list.params {
         match (key.as_str(), value) {
             ("created", BareItem::Integer(i)) => created = Some(i64::from(*i)),
@@ -150,6 +213,17 @@ pub(crate) fn presented(label: &str, input: &str, signature: &str) -> Result<Pre
             ("keyid", _) => {
                 return Err(Denied::Invalid(
                     "Signature-Input keyid is not a string".into(),
+                ));
+            }
+            // Ignored whatever it holds: a profile that takes the algorithm from the key does
+            // not read it at all (draft-hardt-httpbis-signature-key-09 §7.4).
+            ("alg", _) if profile.ignore_alg => {}
+            ("expires", BareItem::Integer(i)) if profile.accept_expires => {
+                expires = Some(i64::from(*i));
+            }
+            ("expires", _) if profile.accept_expires => {
+                return Err(Denied::Invalid(
+                    "Signature-Input expires is not an integer".into(),
                 ));
             }
             (other, _) => {
@@ -178,8 +252,10 @@ pub(crate) fn presented(label: &str, input: &str, signature: &str) -> Result<Pre
     }
 
     Ok(Presented {
+        label: label.to_owned(),
         components,
         created,
+        expires,
         params,
         signature: bytes.clone(),
     })
@@ -200,6 +276,28 @@ impl Presented {
             ));
         }
         Ok(())
+    }
+
+    /// Every component in `required` is covered, in any order and beside any others: the
+    /// covered set is the signer's, and a profile asks only that it include these.
+    pub(crate) fn covers(&self, required: &[&str]) -> Result<(), Denied> {
+        if let Some(missing) = required
+            .iter()
+            .find(|r| !self.components.iter().any(|c| c == *r))
+        {
+            return Err(Denied::Invalid(format!(
+                "Signature-Input does not cover the required components: {missing} is missing"
+            )));
+        }
+        Ok(())
+    }
+
+    /// An `expires` the signer set has not passed.
+    pub(crate) fn unexpired(&self, now: i64) -> Result<(), Denied> {
+        match self.expires {
+            Some(expires) if now > expires => Err(Denied::Invalid("signature has expired".into())),
+            _ => Ok(()),
+        }
     }
 
     /// `created` no more than `behind` seconds old and no more than `ahead` seconds in
@@ -303,6 +401,15 @@ fn dictionary(raw: &str, what: &str) -> Result<Dictionary, Denied> {
         .map_err(malformed)
 }
 
+/// `raw` as an RFC 9651 Dictionary, parsed exactly as §4.2.2 says: a repeated key, and a
+/// repeated parameter within a member (§4.2.3.2), keep the last.
+pub(crate) fn dictionary_9651(raw: &str, what: &str) -> Result<Dictionary, Denied> {
+    Parser::new(raw)
+        .with_version(Version::Rfc9651)
+        .parse::<Dictionary>()
+        .map_err(|_| Denied::Invalid(format!("{what} is not a structured-field dictionary")))
+}
+
 /// Collects a Dictionary's keys in order, repeats included, and discards the values.
 struct Labels(Vec<String>);
 
@@ -344,13 +451,25 @@ pub(crate) fn sign_for_test(
     lines: &[(&str, &str)],
     created: i64,
 ) -> (String, String) {
+    sign_for_test_as(key, lines, "sig1", &format!(";created={created}"))
+}
+
+/// As [`sign_for_test`], under `label` and with the parameter tail `tail` as written (for
+/// example `;created=1;expires=2`), so a test can sign what a profile accepts or refuses.
+#[cfg(test)]
+pub(crate) fn sign_for_test_as(
+    key: &decern_crypto::SigningKey,
+    lines: &[(&str, &str)],
+    label: &str,
+    tail: &str,
+) -> (String, String) {
     use base64::Engine as _;
     use decern_crypto::Signer as _;
     let components: Vec<String> = lines
         .iter()
         .map(|(name, _)| format!("\"{name}\""))
         .collect();
-    let params = format!("({});created={created}", components.join(" "));
+    let params = format!("({}){tail}", components.join(" "));
     let mut base: String = lines
         .iter()
         .map(|(name, value)| format!("\"{name}\": {value}\n"))
@@ -358,9 +477,9 @@ pub(crate) fn sign_for_test(
     base.push_str(&format!("\"@signature-params\": {params}"));
     let signature = key.sign(base.as_bytes());
     (
-        format!("sig1={params}"),
+        format!("{label}={params}"),
         format!(
-            "sig1=:{}:",
+            "{label}=:{}:",
             base64::engine::general_purpose::STANDARD.encode(signature.to_bytes())
         ),
     )
@@ -536,6 +655,78 @@ mod tests {
         }
     }
 
+    /// A profile that takes the label from the request still wants one signature, under one
+    /// label in both headers; one that takes the algorithm from the key ignores `alg`; one
+    /// that honours `expires` reads it. `nonce` and `tag` stay refused under every profile.
+    #[test]
+    fn a_profile_names_what_it_accepts() {
+        let open = Profile {
+            label: None,
+            ignore_alg: true,
+            accept_expires: true,
+        };
+        let p = presented_under(
+            &open,
+            r#"sig=("@method");created=1;alg="ed25519";expires=9;keyid="k""#,
+            "sig=:AAAA:",
+        )
+        .unwrap();
+        assert_eq!(p.label, "sig");
+        assert_eq!(p.expires, Some(9));
+        assert_eq!(
+            p.params,
+            r#"("@method");created=1;alg="ed25519";expires=9;keyid="k""#
+        );
+        // `alg` is not read at all, so its type does not matter; `keyid` is still a String
+        // (RFC 9421 §2.3).
+        assert!(presented_under(&open, r#"sig=("@method");created=1;alg=1"#, "sig=:AAAA:").is_ok());
+        assert!(
+            presented_under(&open, r#"sig=("@method");created=1;keyid=1"#, "sig=:AAAA:").is_err()
+        );
+        for (input, signature) in [
+            (r#"sig=("@method");created=1"#, "other=:AAAA:"),
+            (
+                r#"sig=("@method");created=1, b=("@path");created=1"#,
+                "sig=:AAAA:",
+            ),
+            (r#"sig=("@method");created=1;nonce="n""#, "sig=:AAAA:"),
+            (r#"sig=("@method");created=1;tag="t""#, "sig=:AAAA:"),
+            (r#"sig=("@method");created=1;expires="x""#, "sig=:AAAA:"),
+        ] {
+            assert!(
+                presented_under(&open, input, signature).is_err(),
+                "{input} / {signature}"
+            );
+        }
+        // The strict profile refuses what the open one accepts.
+        for param in [r#"alg="ed25519""#, "expires=9"] {
+            let input = format!(r#"sig1=("@method");created=1;{param}"#);
+            assert!(presented("sig1", &input, "sig1=:AAAA:").is_err(), "{param}");
+        }
+    }
+
+    #[test]
+    fn covers_is_set_inclusion_and_unexpired_honours_expires() {
+        let p = |components: &[&str], expires| Presented {
+            label: "sig".into(),
+            components: components.iter().map(|c| (*c).to_owned()).collect(),
+            created: 0,
+            expires,
+            params: String::new(),
+            signature: vec![],
+        };
+        let required = ["@method", "@path"];
+        assert!(
+            p(&["@path", "content-type", "@method"], None)
+                .covers(&required)
+                .is_ok()
+        );
+        assert!(p(&["@method"], None).covers(&required).is_err());
+        assert!(p(&[], Some(100)).unexpired(100).is_ok());
+        assert!(p(&[], Some(100)).unexpired(101).is_err());
+        assert!(p(&[], None).unexpired(i64::MAX).is_ok());
+    }
+
     #[test]
     fn unsupported_component_names_are_refused() {
         for input in [
@@ -632,8 +823,10 @@ mod tests {
     #[test]
     fn freshness_is_bounded_both_ways() {
         let p = |created| Presented {
+            label: "sig1".into(),
             components: vec![],
             created,
+            expires: None,
             params: String::new(),
             signature: vec![],
         };

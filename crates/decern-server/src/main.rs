@@ -19,6 +19,7 @@ mod deployment;
 mod discovery;
 mod httpsig;
 mod jose;
+mod jwk;
 mod mission;
 mod record;
 mod routes;

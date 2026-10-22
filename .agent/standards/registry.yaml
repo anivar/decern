@@ -166,7 +166,7 @@ standards:
 
   - name: JSON Web Signature (RFC 7515)
     url: https://www.rfc-editor.org/rfc/rfc7515
-    verified: 2026-10-19
+    verified: 2026-10-22
     surface:
       - crates/decern-server/src/bearer.rs
       - crates/decern-server/src/spiffe.rs
@@ -177,7 +177,10 @@ standards:
     conformance: >-
       Standing tokens are compact-serialization JWS verified in `decern-server`:
       `alg` must be `EdDSA` (RFC 8037) and is checked before the signature, so no
-      other algorithm reaches a verification path. Every reader decodes its segments
+      other algorithm reaches a verification path. An AAuth agent token's `alg` must be
+      the fully-specified `Ed25519` (RFC 9864), the `EdDSA` the standing token takes being
+      one AAuth forbids, and is likewise checked before its signature (§4.1.1, read again
+      2026-10-22). Every reader decodes its segments
       through `jose.rs`: base64url without padding (§2) into strict JSON, trailing
       characters refused (§10.12), a duplicated member name kept last in a map and,
       for a member a derived struct declares, refused there (§4 permits either; a
@@ -333,34 +336,44 @@ standards:
       derived components only `@method`, `@authority` and `@path` are computed, the ones a
       profile here requires: `@target-uri` and `@scheme` need the scheme, which a server
       behind a TLS-terminating front does not see, and for that reason `@authority` keeps a
-      default port where §2.2.3 drops it. Both signature postures apply one profile (§1.4): exactly one signature,
-      labelled `sig1`; covered components exactly `@method`, `@authority`, `@path` and
-      `signature-key`, with `content-digest` before `signature-key` on any request carrying
-      a body; `created` required and `keyid` shape-checked, never used to choose a key; any
-      other parameter refused rather than ignored (§2.3), so a signer cannot claim a
-      property such as `nonce` or `tag` that nothing checked; `created` no more than 60s old
-      and no more than 5s ahead; Ed25519 only. §7.2.2 raises replay and §3.2.1 leaves nonce
+      default port where §2.2.3 drops it. Each signature posture hands the engine its own
+      profile (§1.4). Both take exactly one signature, require `created`, shape-check `keyid`
+      and never use it to choose a key, refuse `nonce`, `tag` and any parameter not listed
+      rather than ignore it (§2.3), so a signer cannot claim a property nothing checked, and
+      verify Ed25519 only. The signed-request profile: label `sig1`; covered components
+      exactly `@method`, `@authority`, `@path` and `signature-key`, with `content-digest`
+      before `signature-key` on any request carrying a body; `alg` and `expires` refused;
+      `created` no more than 60s old and no more than 5s ahead; the fixed label departs from
+      §7.2.5's advice not to rely on one, so a relabelled signature is refused. The AAuth
+      profile follows draft-hardt-oauth-aauth-protocol-11 §11.3: the signer's own label;
+      covered components including the required ones in any order, with any further header
+      field read from the request; an `alg` parameter ignored; `expires` honoured; `created`
+      within 60s either side of this clock. §7.2.2 raises replay and §3.2.1 leaves nonce
       enforcement to the application; there is no nonce cache, so a verbatim replay verifies
-      again inside the window. A label repeated in either field is refused (§4), and the
-      fixed label departs from §7.2.5's advice not to rely on one, so a relabelled signature
-      is refused. The RFC's Ed25519 vectors (Appendix B.2.6, B.4) are tests. Errata 8102 and
+      again inside the window. A label repeated in either field is refused (§4). The RFC's Ed25519 vectors (Appendix B.2.6, B.4) are tests. Errata 8102 and
       8103 (verified) rename `@signature-input` to `@signature-params` in two passages and
       change nothing implemented. Read in full 2026-10-19.
 
   - name: Structured Field Values for HTTP (RFC 9651)
     url: https://www.rfc-editor.org/rfc/rfc9651
-    verified: 2026-10-19
+    verified: 2026-10-22
     surface:
       - crates/decern-server/src/httpsig.rs
+      - crates/decern-server/src/aauth.rs
     conformance: >-
       `Signature-Input` and `Signature` are parsed as Dictionaries by the `sfv` crate, never
-      by hand, from every line of the field combined (§4.2). RFC 9421 references RFC 8941,
+      by hand, from every line of the field combined (§4.2). The AAuth posture parses
+      `Signature-Key` the same way, held to RFC 9651, the version
+      draft-hardt-httpbis-signature-key cites. RFC 9421 references RFC 8941,
       so §2.4 keeps Dates and Display Strings out of those two fields and the parser is held
       to RFC 8941. A failed parse refuses the request (§4.2). §4.2.2 keeps the last of a
       repeated key, but RFC 9421 §4 requires each label to be unique, so the keys are read
-      in a first pass and a repeat is refused before that rule could fold it away. `Content-Digest` is
+      in a first pass and a repeat is refused before that rule could fold it away.
+      `Signature-Key` is parsed exactly as §4.2.2 says: a repeated label, and a repeated
+      parameter within a member, keep the last. `Content-Digest` is
       not parsed here; see the RFC 9530 entry. Erratum 8869 (verified) adds Display String to
-      §3.3's list and changes nothing implemented. Read in full 2026-10-19.
+      §3.3's list and changes nothing implemented. Read in full 2026-10-19; §3.2, §4.2 and
+      §4.2.2 read again 2026-10-22 for `Signature-Key`.
 
   - name: Proof-of-Possession Key Semantics for JWTs (RFC 7800)
     url: https://www.rfc-editor.org/rfc/rfc7800
@@ -412,33 +425,47 @@ standards:
 
   - name: Signature-Key HTTP header (draft-hardt-httpbis-signature-key)
     url: https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/
-    verified: 2026-10-19
+    verified: 2026-10-21
     surface:
       - crates/decern-server/src/sig.rs
       - crates/decern-server/src/aauth.rs
+      - crates/decern-server/src/jwk.rs
     conformance: >-
       The token binding the signing key travels in `Signature-Key`, and that header is itself
       one of the covered components (§7.8) — so tampering with any claim inside it
       invalidates the outer signature. That is why the signed-request posture does not
       verify the token's own JWS signature: the outer signature already covers it, and the
-      key it confirms must be the one configured for the agent. Neither posture meets -09
-      as written. The signed-request posture carries the token as the whole `Signature-Key`
-      value, not as a dictionary member under the `jwt` scheme (§3, §3.8). AAuth splits the
-      header by hand for one `sig=jwt;jwt="…"` member rather than parsing it as a
-      Dictionary (§3 step 2), and does not correlate its label with `Signature-Input` (§3
-      steps 3–4): it takes the member under `sig` while verifying the signature labelled
-      `sig1`.
-      Neither reads a JWK's `alg`, which §3.3 requires present, fully specified and
-      consistent with `kty`/`crv`; both refuse a `Signature-Input` `alg` parameter that §7.4
-      has a verifier ignore; and no refusal carries `Signature-Error` (§5) except AAuth's
-      `clock_skew`. Read in full 2026-10-19 against -09 (2026-09-13).
+      key it confirms must be the one configured for the agent. The signed-request posture
+      does not meet -09 as written: it carries the token as the whole `Signature-Key` value,
+      not as a dictionary member under the `jwt` scheme (§3, §3.8), reads no JWK `alg`, and
+      refuses a `Signature-Input` `alg` parameter that §7.4 has a verifier ignore. The AAuth
+      posture parses `Signature-Key` as a Dictionary (§3 step 2) and selects the member under
+      the label `Signature-Input` and `Signature` share, ignoring members under other labels
+      (§3 steps 3–4, §3.1); that member's scheme must be `jwt` and a `cache` request is
+      ignored (§3.8). The key the agent token confirms and every provider key it is verified
+      against are held to §3.3: `alg` present and fully specified, the polymorphic `EdDSA`
+      refused, `kty` and `crv` consistent with `alg`, `oct` and `HS*` refused, and Ed25519
+      the one algorithm implemented. A provider key set keeps its usable members rather than
+      failing for another (§3.3), skipping a member that does not parse as a JWK or names no
+      `kid` to select it by, or with no `use` other than `sig`; two usable members sharing a
+      `kid` refuse the set, the selection being ambiguous. A second `jwt`-scheme member
+      under another label is refused, a departure from RFC 9651 §3.2's default that a
+      recipient ignores members it does not use (§3.1 lets a verifier ignore them and
+      requires nothing more): one signature is verified here, and with two such members the
+      label would choose the agent recorded. Under AAuth an `alg` signature parameter is not
+      read at all (§7.4); a `keyid` is checked to be a string and
+      never chooses the key, which comes from `Signature-Key` (§4.3). No refusal carries
+      `Signature-Error` (§5) except AAuth's `clock_skew`, for an `iat` or a `created` ahead
+      of the window (§5.4.14). Read in full 2026-10-19 against -09 (2026-09-13) and again
+      2026-10-21, unchanged.
 
   - name: AAuth Protocol (draft-hardt-oauth-aauth-protocol)
     url: https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/
-    verified: 2026-10-20
+    verified: 2026-10-21
     surface:
       - crates/decern-server/src/aauth.rs
       - crates/decern-server/src/args.rs
+      - crates/decern-server/src/jwk.rs
     conformance: >-
       The resource half of **agent identity access** (§4.2.1) only. Person identity access
       verifies a person token and is not implemented. Resource-managed access has the
@@ -454,27 +481,31 @@ standards:
       configured is refused before any cryptography. `content-digest` is required on a
       bodied request, a component §11.2.4 lets a resource declare in
       `additional_signature_components`; this deployment publishes no resource metadata and
-      the refusal names no component, so an agent cannot learn of it from the protocol. An agent token carries no `aud`, so
+      the refusal names the component only in its body, which §11.9.1 tells an agent not to
+      depend on, with no `Signature-Error: error=invalid_input` carrying `required_input`. An agent token carries no `aud`, so
       `--aauth-audience` is required and the request's authority must equal it. `jti` is
       required and shape-checked, not used for replay detection. `parent_agent` is
       shape-checked and never reaches the kernel. A verified agent is a workload and binds
       to itself unless listed in `--pep`. A request with no agent token is answered 401 with
-      `AAuth-Requirement: requirement=agent-token` (§6.1); an `iat` ahead of this clock by
-      more than 5s is refused with `Signature-Error: error=clock_skew` (§11.5.2); a token
-      claiming a lifetime above 24 hours is refused (§5.3.1, a verifier policy). Not met,
-      so a conformant agent is refused today: the token header must carry the polymorphic
-      `alg: EdDSA`, which §11.3.1 and §11.5.1 forbid in favour of `Ed25519`; the token is
-      taken from the `Signature-Key` member labelled `sig` while the signature verified is
-      labelled `sig1`, and §11.3.4 step 4 selects the member by the signature's label, so no
-      conformant agent satisfies both; the covered components must be exactly this profile's list in its
-      order, where §11.3.4 step 2 asks only that the required ones be covered; an `alg`
-      signature parameter is refused where §11.3.3.2 says to ignore it, and `expires` is
-      refused where §11.3.4.2 says to honour it; `created` may be 5s ahead, not the 60s
-      window §11.3.4 step 3 defaults to. Not met, accepted where the draft refuses: a JWK
-      with no `alg`, or one whose `alg` disagrees with `kty`/`crv` (§11.3.1). Signature
-      failures other than `clock_skew` carry no
-      `Signature-Error` (§11.3.4) and the body is not problem details (§11.9.2). Read in
-      full 2026-10-19 against -11 (2026-09-25).
+      `AAuth-Requirement: requirement=agent-token` (§6.1); a signature `created`, or an
+      `iat`, more than 60s ahead of this clock is refused with `Signature-Error:
+      error=clock_skew` (§11.3.4 step 3, §11.5.2); a token claiming a lifetime above 24 hours
+      is refused (§5.3.1, a verifier policy). The signature profile is §11.3's: the token
+      header names `Ed25519` and the polymorphic `EdDSA` is refused (§11.3.1, §11.5.1); the
+      key the token confirms and every provider key carry a fully-specified `alg` consistent
+      with `kty` and `crv` (§11.3.1, §11.5.1); the token is the `Signature-Key` member under
+      the signature's own label, scheme `jwt` (§11.3.2, §11.3.4 step 4); the covered set must
+      include the required components, in any order and beside any others (§11.3.4 step 2);
+      an `alg` signature parameter is not read, and a `keyid` never chooses the key
+      (§11.3.3.2); `expires` is honoured (§11.3.4.2); `created` may be up to 60s either side
+      of this clock (§11.3.4 step 3). `nonce` and `tag` are refused, a choice of this
+      profile, and a `Signature-Key` with a second `jwt`-scheme member is refused, a
+      departure from RFC 9651 §3.2's default. Not met: a signature failure other than `clock_skew` carries no
+      `Signature-Error`, so `unsupported_scheme`, `unsupported_algorithm`, `invalid_input`
+      with `required_input` and the rest are not signalled (§11.3.4, §11.3.4.1), and the
+      body is not problem details (§11.9.2); ES256, which §11.3.1 says every party SHOULD
+      support, is not verified. Read in full 2026-10-19 against -11 (2026-09-25); §11.3 to
+      §11.5 and §11.9 read again 2026-10-21, unchanged.
       Agent identifiers follow §5.2: `aauth:local@domain`, the local part non-empty and at
       most 255 characters of letters, digits, `-`, `_`, `+` and `.`, the domain a lowercase
       host; a token whose `sub` is not in the issuing provider's domain (§5.1, §11.2.1) is
