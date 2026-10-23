@@ -103,6 +103,7 @@ pub(crate) fn mission_state_at(base: &Path) -> (AppState, VerifyingKey) {
         backend: Arc::new(LedgerBackend::Single(Mutex::new(ledger))),
         missions: Arc::new(FileMissionRegistry::open(&missions_path).unwrap()),
         pubkey,
+        retired_keys: Arc::new(Vec::new()),
         require_mission: false,
         standing_issuers: Arc::new(Vec::new()),
         authority_digest: Arc::from("test-authority"),

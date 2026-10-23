@@ -146,6 +146,7 @@ mod tests {
             backend: Arc::new(LedgerBackend::Sharded(sharded)),
             missions: test_missions(),
             pubkey,
+            retired_keys: Arc::new(Vec::new()),
             require_mission: false,
             standing_issuers: Arc::new(Vec::new()),
             authority_digest: Arc::from("test-authority"),

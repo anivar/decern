@@ -47,9 +47,9 @@ func main() {
 
 `Token` is optional: set it when the deployment requires bearer tokens on the evaluation
 endpoint, and every request carries `Authorization: Bearer <token>`. Also on the client:
-`Pubkey` (the Ed25519 key id the log is signed with) and `Healthy`. `Context` reaches the
-policies wherever the model's schema declares it, apart from keys the server reserves for the
-caller, the Mission and the challenge. The server sets `now` from its own clock, and records the
+`Pubkey` (the Ed25519 key id signing the log now; `GET /pubkey` lists earlier ones under `keys`)
+and `Healthy`. `Context` reaches the policies wherever the model's schema declares it, apart from
+keys the server reserves for the caller, the Mission and the challenge. The server sets `now` from its own clock, and records the
 accountable owner and any verified caller itself, whatever the context says.
 
 ## What the server gives you

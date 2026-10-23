@@ -38,7 +38,8 @@ d.errors    # evaluation failures and server gates (a missing Mission); neither:
 When `token` is set it is sent as `Authorization: Bearer` on every request, for a
 deployment that requires bearer tokens on the evaluation endpoint.
 
-Also on the client: `c.pubkey()` (the Ed25519 key id the log is signed with) and `c.healthy()`.
+Also on the client: `c.pubkey()` (the Ed25519 key id signing the log now; `GET /pubkey` lists
+earlier ones under `keys`) and `c.healthy()`.
 A non-2xx response or transport failure raises `DecernError` with the HTTP status and body, so a
 denial is distinguishable from a misconfigured endpoint. `context` reaches the policies wherever
 the model's schema declares it, apart from keys the server reserves for the caller, the Mission

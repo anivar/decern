@@ -17,8 +17,9 @@ names another path, so a Mission approved or terminated through one replica is u
 still live on, the others. The release binaries are built without this crate: build
 `decern-serve` with `--features postgres`. The connection URL is a command-line argument, so
 any password in it is visible in the process list to other users of the host. `--sharded`
-requires `--key`, the one key every replica signs with: a store whose records another key
-signed refuses to start, and a Postgres head store has no `decern verify` path.
+requires `--key`, the key every replica signs with, and `--retired-key` names each key it
+replaced: a store whose records a key in neither signed refuses to start, and a Postgres head
+store has no `decern verify` path.
 
 ## How the exclusive, cross-host critical section works
 
