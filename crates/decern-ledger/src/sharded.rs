@@ -532,8 +532,10 @@ fn may_extend(
     Ok(())
 }
 
-/// The key a stored record is attributed to: the one its `kid` names, or for a record without
-/// one, whichever of `verifiers` its signature verifies under, as verification attributes it. `None` when no key is named and none verifies.
+/// The key a stored record is attributed to: the one its `kid` names, taken as written, or for a
+/// record without one, whichever of `verifiers` its signature verifies under. `None` when no key
+/// is named and none verifies. A label is not checked here: a forged one fails verification,
+/// and the guard only keeps honest replicas from writing what verification would refuse.
 fn signer_of(record: &serde_json::Value, verifiers: &[VerifyingKey]) -> Option<String> {
     if let Some(kid) = record.get("kid").and_then(serde_json::Value::as_str) {
         return Some(kid.to_owned());

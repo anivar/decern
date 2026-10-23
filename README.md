@@ -219,9 +219,8 @@ processes on one host extend safely (`flock` head store); `--sharded postgres://
 same across hosts (`--features postgres` — the one optional TLS dependency, not built into
 the release binaries). `--sharded` requires `--key`, the key every replica signs with, and
 `--retired-key` names each key it replaced; a store whose records a key in neither signed refuses
-to start. Audit a directory
-store with `decern verify --sharded <dir>`; a Postgres head store has no `decern verify`
-path. What a deployment has to supply around the server — TLS, key rollover, logging,
+to start. Audit a directory store with `decern verify --sharded <dir>`; a Postgres head store has
+no `decern verify` path. What a deployment has to supply around the server — TLS, key rollover, logging,
 retention, high availability — is in [docs/CLI.md](docs/CLI.md#what-a-deployment-supplies).
 
 ## Architecture
