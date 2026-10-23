@@ -5,8 +5,7 @@
 use crate::checkpoint::{Checkpoint, TreeHead, verify_checkpoint_sig, verify_tree_head_sig};
 use crate::merkle;
 use crate::record::{GENESIS, RecordIn, chain_hash};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as B64;
+use crate::verify::check_signer;
 use decern_crypto::VerifyingKey;
 use serde::{Deserialize, Serialize};
 
@@ -54,20 +53,6 @@ struct SpanIn {
     from: u64,
 }
 
-/// Does any key in `keys` verify `sig_b64` over `msg`? (Keyring-aware: a rotated log's
-/// records are signed by different keys; a verifier holds the current + retired public
-/// keys.) Fail-closed on a malformed signature.
-fn any_key_verifies(msg: &[u8], sig_b64: &str, keys: &[VerifyingKey]) -> bool {
-    let Ok(bytes) = B64.decode(sig_b64) else {
-        return false;
-    };
-    let Ok(arr): Result<[u8; 64], _> = bytes.try_into() else {
-        return false;
-    };
-    let sig = decern_crypto::Signature::from_bytes(&arr);
-    keys.iter().any(|k| k.verify_strict(msg, &sig).is_ok())
-}
-
 /// Verify an exported `decern-evidence-bundle` OFFLINE against a PINNED keyring — the standalone
 /// third-party check with no call back to the server. `bundle_json` is the RAW bundle file
 /// text (NOT a re-serialized `Value`): each record's `entry` is captured as verbatim bytes,
@@ -77,7 +62,8 @@ fn any_key_verifies(msg: &[u8], sig_b64: &str, keys: &[VerifyingKey]) -> bool {
 /// not rewrite or drop anything below that earlier size (equivocation/truncation).
 ///
 /// Checks (all fail-closed): every record hash re-derives from its verbatim bytes; the chain
-/// links (genesis when `from == 0`); every record signature; the checkpoint signature; the
+/// links (genesis when `from == 0`); every record signature, under the key its `kid` names, with
+/// a key refused once another has signed after it within the span; the checkpoint signature; the
 /// tree-head signature; the anchor (last hash == checkpoint root, positions match count ==
 /// tree_size); and — for a full tail — the recomputed Merkle root equals the signed tree
 /// head, plus any requested consistency proof against the anchored earlier head.
@@ -148,18 +134,19 @@ pub fn verify_evidence_bundle(
         }
     }
 
-    // 3) Every record signature against the pinned keyring.
+    // 3) Every record signature against the pinned keyring, as a ledger read checks it.
     let mut record_sigs_ok = true;
+    let mut signers = Vec::new();
     for (i, r) in b.records.iter().enumerate() {
         let Ok(msg) = hex::decode(&r.hash) else {
             record_sigs_ok = false;
             continue;
         };
-        if !any_key_verifies(&msg, &r.sig_b64, keys) {
+        let seq = from.saturating_add(i as u64);
+        if let Err(why) = check_signer(&mut signers, keys, seq, &msg, &r.sig_b64, r.kid.as_deref())
+        {
             record_sigs_ok = false;
-            errors.push(format!(
-                "record {i}: signature not verified by any pinned key"
-            ));
+            errors.push(format!("record {i}: {why}"));
         }
     }
 

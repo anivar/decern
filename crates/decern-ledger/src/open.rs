@@ -4,11 +4,10 @@
 //! and the append handle.
 
 use crate::anchor::{ledger_extends_checkpoint_at, load_anchor};
-use crate::checkpoint::verify_checkpoint_sig;
+use crate::checkpoint::{key_fingerprint, verify_checkpoint_sig};
 use crate::error::{LedgerError, io_err};
-use crate::record::GENESIS;
 use crate::segment;
-use crate::verify::verify_inner;
+use crate::verify::{VerifyReport, verify_prefix};
 use decern_crypto::VerifyingKey;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -137,8 +136,10 @@ fn scan_torn_tail(path: &Path) -> Result<Option<TornFragment>, LedgerError> {
     }))
 }
 
-/// Resolve the head `(last_hash, next_seq)` an open should start appending from,
-/// healing a crash-torn tail iff it does not erase acked history.
+/// Verify the log an open will extend and return its report, whose `root` and `entries`
+/// are the head to append from, healing a crash-torn tail iff it does not erase acked
+/// history. A `signer` that another key has followed in the log is refused before
+/// anything is written: its next record would not verify.
 ///
 /// This is the code that implements the task's core distinction: the anchor is
 /// the line between "a crash dropped an un-acked tail" (heal) and "someone
@@ -151,56 +152,60 @@ fn scan_torn_tail(path: &Path) -> Result<Option<TornFragment>, LedgerError> {
 pub(crate) fn resolve_open_head(
     location: &Location,
     verifiers: &[VerifyingKey],
+    signer: &VerifyingKey,
     anchor: Option<&Path>,
-) -> Result<(String, u64), LedgerError> {
-    match verify_inner(location, verifiers, None) {
-        Ok(report) => Ok((
-            report.root.unwrap_or_else(|| GENESIS.to_owned()),
-            report.entries,
-        )),
-        Err(LedgerError::TornTail {
-            healed_entries,
-            healed_root,
-            torn_path,
-            torn_from_offset,
-        }) => {
-            // Consult the anchor BEFORE any mutation.
-            if let Some(anchor_path) = anchor
-                && let Some(cp) = load_anchor(anchor_path)?
-            {
-                if !verifiers.iter().any(|k| verify_checkpoint_sig(&cp, k)) {
-                    return Err(LedgerError::Tamper {
-                        seq: cp.count,
-                        why: "anchor signature is not from a trusted ledger key \
-                                  (forged or wrong-key anchor)"
-                            .into(),
-                    });
-                }
-                // `ledger_extends_checkpoint_at` re-derives the head over the
-                // PREFIX only (torn fragment excluded), so a prefix shorter
-                // than the committed height reports `false` here.
-                if !ledger_extends_checkpoint_at(location, &cp)? {
-                    return Err(LedgerError::Tamper {
-                        seq: cp.count,
-                        why: format!(
-                            "ledger no longer extends its anchor at count {} — the trailing \
-                                 record is unterminated AND the verified prefix is below the last \
-                                 committed height (acked history truncated, not a crash tail)",
-                            cp.count
-                        ),
-                    });
-                }
-            }
-            // Prefix covers the anchor (or there is none): the torn fragment was
-            // never acked. Discard it durably, then adopt the healed head.
-            heal_torn_tail(Path::new(&torn_path), torn_from_offset)?;
-            Ok((
-                healed_root.unwrap_or_else(|| GENESIS.to_owned()),
-                healed_entries,
-            ))
+) -> Result<VerifyReport, LedgerError> {
+    let (report, torn) = verify_prefix(location, verifiers, None)?;
+    // Consult the anchor BEFORE any mutation, and before the signing key is judged: a
+    // truncation is tamper whichever key opens the log.
+    if let Some(anchor_path) = anchor
+        && let Some(cp) = load_anchor(anchor_path)?
+    {
+        if !verifiers.iter().any(|k| verify_checkpoint_sig(&cp, k)) {
+            return Err(LedgerError::Tamper {
+                seq: cp.count,
+                why: "anchor signature is not from a trusted ledger key \
+                          (forged or wrong-key anchor)"
+                    .into(),
+            });
         }
-        Err(e) => Err(e),
+        // `ledger_extends_checkpoint_at` re-derives the head over the
+        // PREFIX only (torn fragment excluded), so a prefix shorter
+        // than the committed height reports `false` here.
+        if !ledger_extends_checkpoint_at(location, &cp)? {
+            let why = if torn.is_some() {
+                format!(
+                    "ledger no longer extends its anchor at count {} — the trailing \
+                     record is unterminated AND the verified prefix is below the last \
+                     committed height (acked history truncated, not a crash tail)",
+                    cp.count
+                )
+            } else {
+                format!(
+                    "ledger no longer extends its anchor at count {} — truncated or rewritten \
+                     below the last committed height",
+                    cp.count
+                )
+            };
+            return Err(LedgerError::Tamper { seq: cp.count, why });
+        }
     }
+    let kid = key_fingerprint(signer);
+    if let Some(next) = report.superseded_by(&kid) {
+        return Err(LedgerError::KeySuperseded {
+            kid,
+            why: format!(
+                "key {} signed after it, from seq {}; open the log with that key or a later one",
+                next.kid, next.first_seq
+            ),
+        });
+    }
+    // Prefix covers the anchor (or there is none): the torn fragment was
+    // never acked. Discard it durably, then adopt the healed head.
+    if let Some(torn) = torn {
+        heal_torn_tail(&torn.path, torn.offset)?;
+    }
+    Ok(report)
 }
 
 /// Physically discard a crash-torn trailing fragment by truncating `path` to

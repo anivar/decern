@@ -8,7 +8,7 @@ use crate::Ledger;
 use crate::checkpoint::{InclusionProof, key_fingerprint};
 use crate::error::LedgerError;
 use crate::merkle;
-use crate::open::Location;
+use crate::open::{Location, TornFragment};
 use crate::record::{Entry, GENESIS, RecordIn, chain_hash};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
@@ -20,6 +20,31 @@ pub struct VerifyReport {
     pub entries: u64,
     pub root: Option<String>,
     pub signatures_checked: bool,
+    /// Each key whose signature verified records, in the order it took over, with the first
+    /// record it signed. The last is the key signing now. Empty when signatures were not
+    /// checked.
+    pub signers: Vec<SignerSpan>,
+}
+
+/// A run of records signed by one key: the fingerprint of the key whose signature verified
+/// them, and the first record of the run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignerSpan {
+    pub kid: String,
+    pub first_seq: u64,
+}
+
+impl VerifyReport {
+    /// The key that followed `kid`, when `kid` signed and another key signed after it.
+    /// Verification refuses a record under `kid` from then on.
+    pub fn superseded_by(&self, kid: &str) -> Option<&SignerSpan> {
+        successor(&self.signers, kid)
+    }
+}
+
+pub(crate) fn successor<'a>(signers: &'a [SignerSpan], kid: &str) -> Option<&'a SignerSpan> {
+    let at = signers.iter().position(|s| s.kid == kid)?;
+    signers.get(at + 1)
 }
 
 /// Verify a ledger file: the hash chain always; every entry signature when a key is
@@ -70,13 +95,45 @@ pub(crate) struct ReadWindow {
 
 /// Verify a ledger file against a KEYRING — the rotation-aware form. Each record is
 /// checked against the key its `kid` names; a legacy record with no `kid` (written
-/// before rotation support) is accepted against any key in the ring. A record whose
-/// `kid` names a key NOT in the ring is tamper (fail-closed: an unknown signer is
-/// never trusted). An empty ring means "signatures not checked" (chain only), same
-/// as [`verify`] with `None`.
+/// before rotation support) is accepted against whichever key in the ring verifies it.
+/// A record whose `kid` names a key NOT in the ring is tamper (fail-closed: an unknown
+/// signer is never trusted), and so is a record whose verifying key had already been
+/// followed by another key in this log, whatever its `kid` says. An empty ring means
+/// "signatures not checked" (chain only), same as [`verify`] with `None`.
 #[must_use = "ledger verification failure must be checked"]
 pub fn verify_with_keys(path: &Path, keys: &[VerifyingKey]) -> Result<VerifyReport, LedgerError> {
     verify_inner(&Location::detect(path), keys, None)
+}
+
+/// [`read_verified`] for a keyring: the whole chain is checked, each record against the key
+/// its `kid` names, and the records in `[offset, offset+limit)` are returned.
+pub fn read_verified_with_keys(
+    path: &Path,
+    keys: &[VerifyingKey],
+    offset: usize,
+    limit: usize,
+) -> Result<(VerifyReport, Vec<serde_json::Value>), LedgerError> {
+    let mut window = ReadWindow {
+        offset,
+        end: offset.saturating_add(limit),
+        records: Vec::new(),
+    };
+    let report = verify_inner(&Location::detect(path), keys, Some(&mut window))?;
+    Ok((report, window.records))
+}
+
+/// Verify the records before any torn fragment, and return the fragment beside the report
+/// rather than as an error: the open path decides whether to heal it.
+pub(crate) fn verify_prefix(
+    location: &Location,
+    keys: &[VerifyingKey],
+    sink: Option<&mut ReadWindow>,
+) -> Result<(VerifyReport, Option<TornFragment>), LedgerError> {
+    let (lines, torn) = location.prefix_lines()?;
+    // Verify the PREFIX (torn fragment already excluded). A failure here is a
+    // fault in fully-terminated, acked history → genuine Tamper, propagated
+    // as-is whether or not a torn fragment also exists.
+    Ok((verify_lines(lines, keys, sink)?, torn))
 }
 
 pub(crate) fn verify_inner(
@@ -84,11 +141,7 @@ pub(crate) fn verify_inner(
     keys: &[VerifyingKey],
     sink: Option<&mut ReadWindow>,
 ) -> Result<VerifyReport, LedgerError> {
-    let (lines, torn) = location.prefix_lines()?;
-    // Verify the PREFIX (torn fragment already excluded). A failure here is a
-    // fault in fully-terminated, acked history → genuine Tamper, propagated
-    // as-is whether or not a torn fragment also exists.
-    let report = verify_lines(lines, keys, sink)?;
+    let (report, torn) = verify_prefix(location, keys, sink)?;
     match torn {
         None => Ok(report),
         // Prefix is clean AND a torn fragment trails it → report it distinctly so
@@ -118,6 +171,7 @@ fn verify_lines(
 
     let mut prev = GENESIS.to_owned();
     let mut count: u64 = 0;
+    let mut signers: Vec<SignerSpan> = Vec::new();
 
     for (i, line) in lines.enumerate() {
         let line = line?;
@@ -159,42 +213,15 @@ fn verify_lines(
         }
 
         if check_sigs {
-            let sig_bytes: [u8; 64] = B64
-                .decode(&record.sig_b64)
-                .map_err(|_| LedgerError::Tamper {
-                    seq: count,
-                    why: "unparseable signature".into(),
-                })?
-                .try_into()
-                .map_err(|_| LedgerError::Tamper {
-                    seq: count,
-                    why: "signature length".into(),
-                })?;
-            let sig = decern_crypto::Signature::from_bytes(&sig_bytes);
-
-            // Pick the verifying key: the one this record's `kid` names, or — for a
-            // legacy record with no `kid` — any key in the ring (a pre-rotation log
-            // was signed by a single key that is in the ring).
-            let verified = match &record.kid {
-                Some(kid) => match keys.iter().find(|k| key_fingerprint(k) == *kid) {
-                    Some(k) => k.verify_strict(&hash, &sig).is_ok(),
-                    None => {
-                        return Err(LedgerError::Tamper {
-                            seq: count,
-                            why: format!(
-                                "record signed by key {kid}, which is not in the trusted keyring"
-                            ),
-                        });
-                    }
-                },
-                None => keys.iter().any(|k| k.verify_strict(&hash, &sig).is_ok()),
-            };
-            if !verified {
-                return Err(LedgerError::Tamper {
-                    seq: count,
-                    why: "signature invalid (chain rewritten with a different key?)".into(),
-                });
-            }
+            check_signer(
+                &mut signers,
+                keys,
+                count,
+                &hash,
+                &record.sig_b64,
+                record.kid.as_deref(),
+            )
+            .map_err(|why| LedgerError::Tamper { seq: count, why })?;
         }
 
         // Materialize into the read window only when in range — the whole chain is still
@@ -219,7 +246,66 @@ fn verify_lines(
         entries: count,
         root: if count > 0 { Some(prev) } else { None },
         signatures_checked: check_sigs,
+        signers,
     })
+}
+
+/// One record's signature, checked the way every record verifier checks it: under the key its
+/// `kid` names, or under whichever key in `keys` verifies a record without one, and then the
+/// succession rule for that key. `signers` holds the keys seen so far in order, and gains one
+/// when a new key takes over.
+pub(crate) fn check_signer(
+    signers: &mut Vec<SignerSpan>,
+    keys: &[VerifyingKey],
+    seq: u64,
+    hash: &[u8],
+    sig_b64: &str,
+    kid: Option<&str>,
+) -> Result<(), String> {
+    let sig_bytes: [u8; 64] = B64
+        .decode(sig_b64)
+        .map_err(|_| "unparseable signature".to_owned())?
+        .try_into()
+        .map_err(|_| "signature length".to_owned())?;
+    let sig = decern_crypto::Signature::from_bytes(&sig_bytes);
+
+    // The signer is the key whose signature verifies: the one this record's `kid` names,
+    // or, for a legacy record with no `kid`, whichever key in the ring verifies it. The
+    // `kid` is outside the signed bytes, so succession runs on that key, never on the label.
+    let invalid = || "signature invalid (chain rewritten with a different key?)".to_owned();
+    let signer = match kid {
+        Some(kid) => match keys.iter().find(|k| key_fingerprint(k) == kid) {
+            Some(k) if k.verify_strict(hash, &sig).is_ok() => kid.to_owned(),
+            Some(_) => return Err(invalid()),
+            None => {
+                return Err(format!(
+                    "record signed by key {kid}, which is not in the trusted keyring"
+                ));
+            }
+        },
+        None => match keys.iter().find(|k| k.verify_strict(hash, &sig).is_ok()) {
+            Some(k) => key_fingerprint(k),
+            None => return Err(invalid()),
+        },
+    };
+
+    // A retired key stays trusted for what it signed before its successor took over,
+    // and for nothing after: otherwise rotating away from a leaked key would leave it
+    // able to extend the log.
+    if signers.last().is_some_and(|s| s.kid == signer) {
+        return Ok(());
+    }
+    if let Some(next) = successor(signers, &signer) {
+        return Err(format!(
+            "record signed by key {signer}, which key {} succeeded at seq {}",
+            next.kid, next.first_seq
+        ));
+    }
+    signers.push(SignerSpan {
+        kid: signer,
+        first_seq: seq,
+    });
+    Ok(())
 }
 
 /// Verify one [`sharded::ShardedLedger`] shard's stored records — the hash-chain +
@@ -326,5 +412,14 @@ pub fn merkle_leaves_at(
     pubkey: Option<&VerifyingKey>,
 ) -> Result<Vec<Vec<u8>>, LedgerError> {
     let (_report, records) = read_verified(path, pubkey, 0, usize::MAX)?;
+    leaves_from_records(&records)
+}
+
+/// [`merkle_leaves_at`] for a keyring, for a log signed by more than one key.
+pub fn merkle_leaves_with_keys(
+    path: &Path,
+    keys: &[VerifyingKey],
+) -> Result<Vec<Vec<u8>>, LedgerError> {
+    let (_report, records) = read_verified_with_keys(path, keys, 0, usize::MAX)?;
     leaves_from_records(&records)
 }

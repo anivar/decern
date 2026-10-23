@@ -621,7 +621,7 @@ fn rotation_keeps_the_whole_chain_verifiable() {
     let mut l = Ledger::open(&path, old.clone()).unwrap();
     l.append(entry("Read", true)).unwrap(); // signed by old
     l.append(entry("Write", true)).unwrap(); // signed by old
-    l.rotate(new.clone());
+    l.rotate(new.clone()).unwrap();
     l.append(entry("MoveMoney", false)).unwrap(); // signed by new
     drop(l);
 
@@ -651,7 +651,7 @@ fn rotated_ledger_reopens_with_retired_verifiers() {
 
     let mut l = Ledger::open(&path, old.clone()).unwrap();
     l.append(entry("Read", true)).unwrap();
-    l.rotate(new.clone());
+    l.rotate(new.clone()).unwrap();
     l.append(entry("Write", true)).unwrap();
     drop(l);
 
@@ -693,6 +693,279 @@ fn a_record_signed_by_an_untrusted_key_is_tamper() {
     );
     // The honest ring verifies fine.
     assert!(verify_with_keys(&path, &[honest.verifying_key()]).is_ok());
+}
+
+/// Append a record signed by `key` without going through [`Ledger`], which refuses a key it
+/// may not sign with: what someone holding a retired key and the file could write.
+fn append_signed_by(path: &Path, key: &SigningKey, kid: Option<&str>) {
+    let text = std::fs::read_to_string(path).unwrap();
+    let last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    let prev = last["hash"].as_str().unwrap();
+    let mut e = entry("MoveMoney", true);
+    e.seq = text.lines().count() as u64;
+    let entry_json = serde_json::to_string(&e).unwrap();
+    let hash = chain_hash(entry_json.as_bytes(), prev);
+    let sig = B64.encode(key.sign(&hash).to_bytes());
+    let kid = kid.map(|k| format!(r#","kid":"{k}""#)).unwrap_or_default();
+    let line = format!(
+        r#"{{"entry":{entry_json},"prev":"{prev}","hash":"{}","sig_b64":"{sig}"{kid}}}"#,
+        hex::encode(hash)
+    );
+    std::fs::write(path, text + &line + "\n").unwrap();
+}
+
+/// A log signed by `old` for two records, then by `new` for one.
+fn rotated_log(name: &str) -> (PathBuf, SigningKey, SigningKey) {
+    let path = tmp(name);
+    std::fs::remove_file(&path).ok();
+    let old = decern_crypto::generate().unwrap();
+    let new = decern_crypto::generate().unwrap();
+    let mut l = Ledger::open(&path, old.clone()).unwrap();
+    l.append(entry("Read", true)).unwrap();
+    l.append(entry("Write", true)).unwrap();
+    l.rotate(new.clone()).unwrap();
+    l.append(entry("Read", true)).unwrap();
+    (path, old, new)
+}
+
+#[test]
+fn the_report_names_each_signer_from_its_first_record() {
+    let (path, old, new) = rotated_log("signers.ledger");
+    let (old_kid, new_kid) = (
+        key_fingerprint(&old.verifying_key()),
+        key_fingerprint(&new.verifying_key()),
+    );
+    let report = verify_with_keys(&path, &[old.verifying_key(), new.verifying_key()]).unwrap();
+    assert_eq!(
+        report.signers,
+        vec![
+            SignerSpan {
+                kid: old_kid.clone(),
+                first_seq: 0
+            },
+            SignerSpan {
+                kid: new_kid.clone(),
+                first_seq: 2
+            },
+        ]
+    );
+    assert_eq!(report.superseded_by(&old_kid).map(|s| s.first_seq), Some(2));
+    assert!(report.superseded_by(&new_kid).is_none());
+    // A kid is only a claim until its signature is checked.
+    assert!(verify(&path, None).unwrap().signers.is_empty());
+}
+
+#[test]
+fn a_retired_key_may_not_sign_after_its_successor() {
+    let (path, old, new) = rotated_log("retired-signs-again.ledger");
+    let (old_kid, new_kid) = (
+        key_fingerprint(&old.verifying_key()),
+        key_fingerprint(&new.verifying_key()),
+    );
+    append_signed_by(&path, &old, Some(&old_kid));
+    let ring = [old.verifying_key(), new.verifying_key()];
+    match verify_with_keys(&path, &ring).unwrap_err() {
+        LedgerError::Tamper { seq: 3, why } => {
+            assert!(why.contains(&new_kid) && why.contains("seq 2"), "{why}");
+        }
+        e => panic!("a retired key signing after its successor must be tamper: {e}"),
+    }
+    assert!(Ledger::open_with_verifiers(&path, new, vec![old.verifying_key()]).is_err());
+}
+
+#[test]
+fn an_evidence_bundle_applies_key_succession() {
+    let (path, old, new) = rotated_log("bundle-succession.ledger");
+    append_signed_by(&path, &old, Some(&key_fingerprint(&old.verifying_key())));
+    let text = std::fs::read_to_string(&path).unwrap();
+    let records = text.lines().collect::<Vec<_>>().join(",");
+    let bundle = format!(
+        r#"{{"format":"decern-evidence-bundle/1","span":{{"from":0}},"checkpoint":{{"root":"","count":4,"ts_ms":0,"pubkey_hex":"","sig_b64":""}},"records":[{records}]}}"#
+    );
+    let v = verify_evidence_bundle(&bundle, &[old.verifying_key(), new.verifying_key()], None);
+    assert!(v.chain_ok && !v.record_sigs_ok, "{:?}", v.errors);
+    let record_errors: Vec<_> = v
+        .errors
+        .iter()
+        .filter(|e| e.starts_with("record "))
+        .collect();
+    assert_eq!(record_errors.len(), 1, "{record_errors:?}");
+    assert!(
+        record_errors[0].starts_with("record 3:") && record_errors[0].contains("succeeded"),
+        "{record_errors:?}"
+    );
+}
+
+#[test]
+fn a_record_without_a_kid_is_attributed_to_the_key_that_signed_it() {
+    let (path, old, new) = rotated_log("kidless-after-kid.ledger");
+    append_signed_by(&path, &old, None);
+    match verify_with_keys(&path, &[old.verifying_key(), new.verifying_key()]).unwrap_err() {
+        LedgerError::Tamper { seq: 3, why } => assert!(why.contains("succeeded"), "{why}"),
+        e => panic!("a retired key's record without a kid must be tamper: {e}"),
+    }
+}
+
+/// Remove every `kid` the given key's records carry, as someone with the file could: the label
+/// is outside the signed bytes.
+fn strip_kid(path: &Path, key: &SigningKey) {
+    let kid = key_fingerprint(&key.verifying_key());
+    let text = std::fs::read_to_string(path).unwrap();
+    std::fs::write(path, text.replace(&format!(r#","kid":"{kid}""#), "")).unwrap();
+}
+
+#[test]
+fn removing_kids_does_not_let_a_retired_key_sign_again() {
+    // The old key's records lose their label, then it signs again with one.
+    let (path, old, new) = rotated_log("strip-old-kids.ledger");
+    strip_kid(&path, &old);
+    append_signed_by(&path, &old, Some(&key_fingerprint(&old.verifying_key())));
+    let ring = [old.verifying_key(), new.verifying_key()];
+    match verify_with_keys(&path, &ring).unwrap_err() {
+        LedgerError::Tamper { seq: 3, why } => assert!(why.contains("succeeded"), "{why}"),
+        e => panic!("expected tamper at seq 3: {e}"),
+    }
+
+    // Every label gone, and the old key signs again without one.
+    let (path, old, new) = rotated_log("strip-all-kids.ledger");
+    strip_kid(&path, &old);
+    strip_kid(&path, &new);
+    let ring = [old.verifying_key(), new.verifying_key()];
+    let report = verify_with_keys(&path, &ring).unwrap();
+    assert_eq!(
+        report
+            .superseded_by(&key_fingerprint(&old.verifying_key()))
+            .map(|s| s.first_seq),
+        Some(2)
+    );
+    // Opening with the old key is refused on the signatures, not the labels.
+    assert!(matches!(
+        Ledger::open_with_verifiers(&path, old.clone(), vec![new.verifying_key()]),
+        Err(LedgerError::KeySuperseded { .. })
+    ));
+    append_signed_by(&path, &old, None);
+    assert!(matches!(
+        verify_with_keys(&path, &ring),
+        Err(LedgerError::Tamper { seq: 3, .. })
+    ));
+}
+
+#[test]
+fn a_legacy_prefix_does_not_let_rotate_go_back() {
+    let path = tmp("legacy-rotate-back.ledger");
+    std::fs::remove_file(&path).ok();
+    let old = decern_crypto::generate().unwrap();
+    let new = decern_crypto::generate().unwrap();
+    let mut l = Ledger::open(&path, old.clone()).unwrap();
+    l.append(entry("Read", true)).unwrap();
+    drop(l);
+    strip_kid(&path, &old);
+    let mut l = Ledger::open(&path, old.clone()).unwrap();
+    l.rotate(new).unwrap();
+    l.append(entry("Write", true)).unwrap();
+    assert!(matches!(
+        l.rotate(old),
+        Err(LedgerError::KeySuperseded { .. })
+    ));
+}
+
+#[test]
+fn opening_with_a_superseded_key_is_refused_before_anything_is_written() {
+    let (path, old, new) = rotated_log("superseded-open.ledger");
+    // A torn tail the open would otherwise heal by truncating the file.
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.extend_from_slice(br#"{"entry":"#);
+    std::fs::write(&path, &bytes).unwrap();
+
+    let err = match Ledger::open_with_verifiers(&path, old.clone(), vec![new.verifying_key()]) {
+        Ok(_) => panic!("a key its successor has followed must not open the log"),
+        Err(e) => e,
+    };
+    match err {
+        LedgerError::KeySuperseded { kid, why } => {
+            assert_eq!(kid, key_fingerprint(&old.verifying_key()));
+            assert!(
+                why.contains(&key_fingerprint(&new.verifying_key())),
+                "{why}"
+            );
+        }
+        e => panic!("expected KeySuperseded: {e}"),
+    }
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        bytes,
+        "the refused open wrote nothing"
+    );
+    // The current key with the retired one opens it, healing the tail.
+    assert_eq!(
+        Ledger::open_with_verifiers(&path, new, vec![old.verifying_key()])
+            .unwrap()
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn a_truncation_is_tamper_whichever_key_opens_the_log() {
+    let (path, old, new) = rotated_log("superseded-anchor.ledger");
+    let anchor = tmp("superseded-anchor.anchor");
+    std::fs::remove_file(&anchor).ok();
+    let mut l = Ledger::open_with_verifiers(&path, new.clone(), vec![old.verifying_key()]).unwrap();
+    l.append(entry("Write", true)).unwrap();
+    l.seal_anchor(&anchor, 1).unwrap(); // committed height = 4
+    drop(l);
+    // The last record dropped at a line boundary: no torn tail, three records left.
+    let text = std::fs::read_to_string(&path).unwrap();
+    let kept: Vec<&str> = text.lines().take(3).collect();
+    std::fs::write(&path, kept.join("\n") + "\n").unwrap();
+
+    match Ledger::open_anchored(&path, old, vec![new.verifying_key()], &anchor) {
+        Err(LedgerError::Tamper { .. }) => {}
+        Err(e) => panic!("a truncation must be tamper, not a key refusal: {e}"),
+        Ok(_) => panic!("a truncated log must not open"),
+    }
+}
+
+#[test]
+fn rotating_back_to_a_superseded_key_is_refused() {
+    let path = tmp("rotate-back.ledger");
+    std::fs::remove_file(&path).ok();
+    let old = decern_crypto::generate().unwrap();
+    let new = decern_crypto::generate().unwrap();
+    let mut l = Ledger::open(&path, old.clone()).unwrap();
+    l.append(entry("Read", true)).unwrap();
+    // Back before the new key has signed anything: nothing has followed the old key.
+    l.rotate(new.clone()).unwrap();
+    l.rotate(old.clone()).unwrap();
+    l.append(entry("Read", true)).unwrap();
+    l.rotate(new.clone()).unwrap();
+    l.append(entry("Write", true)).unwrap();
+    assert!(matches!(
+        l.rotate(old.clone()),
+        Err(LedgerError::KeySuperseded { .. })
+    ));
+    // The refusal left the new key signing.
+    l.append(entry("Read", true)).unwrap();
+    assert!(l.self_verify().is_ok());
+}
+
+#[test]
+fn a_legacy_prefix_without_kids_is_extended_with_them() {
+    let path = tmp("legacy-prefix.ledger");
+    std::fs::remove_file(&path).ok();
+    let key = decern_crypto::generate().unwrap();
+    let mut l = Ledger::open(&path, key.clone()).unwrap();
+    l.append(entry("Read", true)).unwrap();
+    drop(l);
+    let kid = key_fingerprint(&key.verifying_key());
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, text.replace(&format!(r#","kid":"{kid}""#), "")).unwrap();
+
+    let mut l = Ledger::open(&path, key.clone()).unwrap();
+    l.append(entry("Write", true)).unwrap();
+    let report = l.self_verify().unwrap();
+    assert_eq!(report.entries, 2);
+    assert_eq!(report.signers, vec![SignerSpan { kid, first_seq: 0 }]);
 }
 
 // ------------------------------ persisted anchor ------------------------------

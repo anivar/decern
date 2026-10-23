@@ -9,7 +9,7 @@ use crate::error::{LedgerError, io_err};
 use crate::open::{Location, open_append_owner_only, resolve_open_head};
 use crate::record::{Entry, GENESIS, Record, RecordOut, chain_hash};
 use crate::segment::{self, RolloverPolicy};
-use crate::verify::{VerifyReport, verify_inner};
+use crate::verify::{SignerSpan, VerifyReport, verify_inner};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use decern_crypto::{Signer, SigningKey, VerifyingKey};
@@ -41,6 +41,9 @@ pub struct Ledger {
     /// record against the key its `kid` names, drawn from this ring — so rotation
     /// never bricks a long-lived log.
     verifiers: Vec<VerifyingKey>,
+    /// Each key that has signed this log, in the order it took over. A key that another
+    /// has followed may not sign again, so [`rotate`](Ledger::rotate) refuses it.
+    signers: Vec<SignerSpan>,
     /// When true, every append `sync_data()`s to disk before returning — crash-DURABLE
     /// (a "complete" log cannot lose its tail on power loss), at a per-append fsync cost.
     /// Off by default (crash-consistent, fast); opt in via [`Ledger::set_sync`] for a
@@ -75,7 +78,8 @@ impl Ledger {
     /// existing chain is verified against the whole keyring (each record by the key
     /// its `kid` names; legacy kid-less records against any trusted key), so a
     /// rotated log reopens cleanly. Fail-closed: a record signed by a key NOT in the
-    /// ring is tamper.
+    /// ring is tamper, and a `key` that another key has followed in the log is refused
+    /// with [`LedgerError::KeySuperseded`] before anything is written.
     pub fn open_with_verifiers(
         path: &Path,
         key: SigningKey,
@@ -109,10 +113,15 @@ impl Ledger {
             verifiers.push(current);
         }
         let location = Location::Single(path.to_owned());
-        let (last_hash, next_seq) = if path.exists() {
-            resolve_open_head(&location, &verifiers, anchor)?
+        let (last_hash, next_seq, signers) = if path.exists() {
+            let report = resolve_open_head(&location, &verifiers, &current, anchor)?;
+            (
+                report.root.unwrap_or_else(|| GENESIS.to_owned()),
+                report.entries,
+                report.signers,
+            )
         } else {
-            (GENESIS.to_owned(), 0)
+            (GENESIS.to_owned(), 0, Vec::new())
         };
         let file = open_append_owner_only(path)?;
         Ok(Ledger {
@@ -123,6 +132,7 @@ impl Ledger {
             last_hash,
             next_seq,
             verifiers,
+            signers,
             sync: false,
             rollover: None,
             failed: false,
@@ -142,13 +152,9 @@ impl Ledger {
         retired: Vec<VerifyingKey>,
         anchor_path: &Path,
     ) -> Result<Self, LedgerError> {
-        // Pass the anchor INTO the open so a torn tail is classified against the
-        // committed height before any heal; the post-open check then also covers
-        // the non-torn truncation (records dropped at a clean line boundary, file
-        // still newline-terminated, so no torn tail was raised).
-        let ledger = Self::open_single_inner(path, key, retired, Some(anchor_path))?;
-        ledger.verify_against_anchor(anchor_path)?;
-        Ok(ledger)
+        // The open consults the anchor before it heals a torn tail or judges the key, so a
+        // truncation refuses it as tamper whether or not it left a torn tail.
+        Self::open_single_inner(path, key, retired, Some(anchor_path))
     }
 
     /// Open (or create) a SEGMENTED ledger at `dir` — the opt-in alternative
@@ -221,7 +227,7 @@ impl Ledger {
         let active_path = dir.join(&active.file);
         segment::unseal_file_permissions(&active_path);
 
-        let (last_hash, next_seq) = resolve_open_head(&location, &verifiers, anchor)?;
+        let report = resolve_open_head(&location, &verifiers, &current, anchor)?;
 
         let file = open_append_owner_only(&active_path)?;
         Ok(Ledger {
@@ -229,9 +235,10 @@ impl Ledger {
             active_path,
             key,
             file,
-            last_hash,
-            next_seq,
+            last_hash: report.root.unwrap_or_else(|| GENESIS.to_owned()),
+            next_seq: report.entries,
             verifiers,
+            signers: report.signers,
             sync: false,
             rollover: Some(RolloverState { policy, manifest }),
             failed: false,
@@ -250,9 +257,7 @@ impl Ledger {
         policy: RolloverPolicy,
         anchor_path: &Path,
     ) -> Result<Self, LedgerError> {
-        let ledger = Self::open_segmented_inner(dir, key, retired, policy, Some(anchor_path))?;
-        ledger.verify_against_anchor(anchor_path)?;
-        Ok(ledger)
+        Self::open_segmented_inner(dir, key, retired, policy, Some(anchor_path))
     }
 
     /// Rotate the signing key. Entries already written stay verifiable under the
@@ -261,8 +266,22 @@ impl Ledger {
     /// the past, and no republish. On the next restart, pass the retired public key
     /// to [`open_with_verifiers`](Ledger::open_with_verifiers) so the whole log still
     /// verifies.
-    pub fn rotate(&mut self, new_key: SigningKey) {
+    ///
+    /// Once the new key has signed, the retired one may not sign this log again:
+    /// verification refuses a record under it. Rotating back to a key another key has
+    /// already followed is refused here with [`LedgerError::KeySuperseded`].
+    pub fn rotate(&mut self, new_key: SigningKey) -> Result<(), LedgerError> {
         let current = new_key.verifying_key();
+        let kid = key_fingerprint(&current);
+        if let Some(next) = crate::verify::successor(&self.signers, &kid) {
+            return Err(LedgerError::KeySuperseded {
+                why: format!(
+                    "key {} signed after it, from seq {}",
+                    next.kid, next.first_seq
+                ),
+                kid,
+            });
+        }
         if !self
             .verifiers
             .iter()
@@ -271,6 +290,7 @@ impl Ledger {
             self.verifiers.push(current);
         }
         self.key = new_key;
+        Ok(())
     }
 
     /// The public keys of every key trusted to have signed this log (retired +
@@ -375,6 +395,12 @@ impl Ledger {
         line.push('\n');
         self.write_line(&line)?;
 
+        if self.signers.last().is_none_or(|s| s.kid != kid) {
+            self.signers.push(SignerSpan {
+                kid: kid.clone(),
+                first_seq: self.next_seq,
+            });
+        }
         let record = Record {
             entry,
             prev: std::mem::replace(&mut self.last_hash, hash_hex.clone()),

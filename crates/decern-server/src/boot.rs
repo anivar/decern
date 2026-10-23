@@ -110,6 +110,14 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
     for hex_key in &args.standing_issuer_keys {
         standing_issuers.push(parse_issuer_key(hex_key, "--standing-issuer-key")?);
     }
+    let mut retired: Vec<ed25519_dalek::VerifyingKey> = Vec::new();
+    for hex_key in &args.retired_keys {
+        let k = parse_issuer_key(hex_key, "--retired-key")?;
+        if retired.contains(&k) {
+            anyhow::bail!("--retired-key {hex_key} is given twice");
+        }
+        retired.push(k);
+    }
     let type_aliases = deployment::parse_type_aliases(&args.authzen_type_alias)?;
     deployment::check_type_aliases(&kernel, &type_aliases)?;
     let public_url = args
@@ -161,6 +169,22 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
         }
         _ => None,
     };
+    // clap's `requires` establishes this; the check stays so a later edit to the attribute
+    // degrades to this error, not an ephemeral key booting beside retired ones.
+    if !args.retired_keys.is_empty() && args.key.is_none() {
+        anyhow::bail!("--retired-key requires --key");
+    }
+    // A rotation names a key made beforehand. Creating one here would give this process a key
+    // no other replica holds, which a mistyped path would do without a word.
+    if !args.retired_keys.is_empty()
+        && let Some(p) = &args.key
+        && !p.exists()
+    {
+        anyhow::bail!(
+            "--key {} does not exist; with --retired-key, --key names a key file made beforehand",
+            p.display()
+        );
+    }
     if let Some(what) = &existing {
         match &args.key {
             None => anyhow::bail!(
@@ -168,8 +192,9 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
                  --key at the key it was signed with, or move it aside to start a new ledger"
             ),
             Some(p) if !p.exists() => anyhow::bail!(
-                "{what} exists and --key {} does not; point --key at the key it was signed with, \
-                 or move the ledger aside to start a new one",
+                "{what} exists and --key {} does not; point --key at the key that signs it now, \
+                 or at a new key file made beforehand with that key given as --retired-key, or \
+                 move the ledger aside to start a new one",
                 p.display()
             ),
             _ => {}
@@ -218,6 +243,16 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
     let key = load_signing_key(args.key.as_ref())?;
     let pubkey = key.verifying_key();
     let kid = hex::encode(pubkey.to_bytes());
+    // With --retired-key the key file already existed, so this refusal writes nothing.
+    if retired.contains(&pubkey) {
+        anyhow::bail!(
+            "--retired-key {kid} is the public key of --key; a key signs or is retired, not both"
+        );
+    }
+    let retired_desc: String = retired
+        .iter()
+        .map(|k| format!(", retired {}", hex::encode(k.to_bytes())))
+        .collect();
     let (backend, backend_desc) = match sharded {
         Some(target) => {
             let desc = target.describe();
@@ -229,30 +264,44 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
                     })?)
                 }
             };
-            let sharded = ShardedLedger::new(store, key, vec![]);
+            let sharded = ShardedLedger::new(store, key, retired.clone());
             // Opening a shard verifies nothing, unlike a single-file ledger, so each shard is
-            // verified here under this key: the chain, and every record's signature. A record
-            // that names another key, or one with no key id that this key does not verify,
-            // refuses the boot. Every record is read, as a single-file open reads its whole
+            // verified here under this key and the retired ones: the chain, and every record's
+            // signature. A record that names a key in neither, one with no key id that none of
+            // them verifies, or a retired key signing after its successor refuses the boot, and
+            // so does a --key that another key has followed in any shard: its next record there
+            // would not verify. Every record is read, as a single-file open reads its whole
             // file; a boot pays that once.
             for shard in sharded.list_shards()? {
-                sharded.self_verify(&shard).with_context(|| {
+                let report = sharded.self_verify(&shard).with_context(|| {
                     format!(
-                        "shard {shard} does not verify under --key {kid}; a sharded ledger is \
-                         signed by one key across restarts and replicas, so point --key at the \
-                         key that signed it, or move the store aside to start a new ledger"
+                        "shard {shard} does not verify under --key {kid}{retired_desc}; point \
+                         --key at the key that signs it now and --retired-key at each key that \
+                         signed it before, or move the store aside to start a new ledger"
                     )
                 })?;
+                if let Some(next) = report.superseded_by(&kid) {
+                    anyhow::bail!(
+                        "--key {kid} may not sign shard {shard}: key {} signed it after this \
+                         one, from seq {}; point --key at that key or a later one",
+                        next.kid,
+                        next.first_seq
+                    );
+                }
             }
             (LedgerBackend::Sharded(sharded), desc)
         }
         None => {
-            // Opening verifies the whole chain under this key; a record signed by another is
-            // refused, and the context names the key this boot holds beside the one that
-            // signed the record.
-            let mut ledger = Ledger::open(&ledger_path, key).with_context(|| {
-                format!("opening ledger {} with key {kid}", ledger_path.display())
-            })?;
+            // Opening verifies the whole chain under this key and the retired ones; a record
+            // signed by any other key is refused, and so is a --key another key has followed.
+            // The context names the keys this boot holds beside the one the error names.
+            let mut ledger = Ledger::open_with_verifiers(&ledger_path, key, retired.clone())
+                .with_context(|| {
+                    format!(
+                        "opening ledger {} with key {kid}{retired_desc}",
+                        ledger_path.display()
+                    )
+                })?;
             // Durable by default in the server: an append the PEP acks (and acts
             // on) must survive a crash — `sync_data` before `append` returns.
             ledger.set_sync(true);
@@ -273,18 +322,20 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
         public_url,
         missions,
         pubkey,
+        retired_keys: Arc::new(retired),
         require_mission: args.require_mission,
         standing_issuers: Arc::new(standing_issuers),
         authority_digest,
         caller_disclosure: Arc::new(caller_disclosure(&caller)),
     };
     let line = format!(
-        "decern-serve on {} — {}, missions {}, {}, kid {}{}",
+        "decern-serve on {} — {}, missions {}, {}, kid {}{}{}",
         bound,
         backend_desc,
         missions_path.display(),
         caller_desc,
         kid,
+        retired_desc,
         if args.key.is_none() {
             " (ephemeral)"
         } else {
@@ -478,9 +529,20 @@ mod tests {
     async fn a_refused_boot_leaves_nothing_behind() {
         let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let taken = taken.local_addr().unwrap().to_string();
-        let cases: [(&str, Vec<&str>); 5] = [
+        let retired = hex::encode(
+            decern_crypto::generate()
+                .unwrap()
+                .verifying_key()
+                .to_bytes(),
+        );
+        let cases: [(&str, Vec<&str>); 7] = [
             ("public url", vec!["--public-url", "ftp://bad.example"]),
             ("standing key", vec!["--standing-issuer-key", "zz"]),
+            ("retired key", vec!["--retired-key", "zz"]),
+            (
+                "retired key without a key file",
+                vec!["--retired-key", &retired],
+            ),
             (
                 "type alias",
                 vec!["--authzen-type-alias", "user=NoSuchType"],
@@ -517,7 +579,14 @@ mod tests {
                 argv.extend(["--addr", "127.0.0.1:0"]);
             }
             argv.extend(extra.iter().copied());
-            let result = serve_with(Args::try_parse_from(&argv).unwrap()).await;
+            // A boot that is not refused serves until stopped; the bound turns that into a
+            // failure instead of a test that never ends.
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                serve_with(Args::try_parse_from(&argv).unwrap()),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("{name}: the boot was not refused"));
             assert!(result.is_err(), "{name}: the boot was not refused");
             let left: Vec<_> = std::fs::read_dir(&dir)
                 .unwrap()
@@ -691,6 +760,153 @@ mod tests {
             .err()
             .expect("a relabelled key id is not a pass");
         assert!(format!("{e:#}").contains("does not verify under"), "{e:#}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A rotation of a single-file ledger: restarted on a new key with the old one retired, it
+    /// keeps every record verifiable, publishes both keys, and refuses the old key as `--key`
+    /// once the new one has signed.
+    #[tokio::test]
+    async fn a_ledger_rotates_to_a_new_key_with_the_old_one_retired() {
+        let dir = fresh_dir("ledger-rotate");
+        let (k1, k2) = (dir.join("k1"), dir.join("k2"));
+        decern_crypto::save_signing_key(&decern_crypto::generate().unwrap(), &k2).unwrap();
+        let ledger = dir.join("l.jsonl");
+        let missions = dir.join("m.json");
+        let argv = |key: &std::path::Path, retired: &[&str]| {
+            let mut v: Vec<String> = ["decern-serve", "--trust-proxy", "--addr", "127.0.0.1:0"]
+                .map(String::from)
+                .to_vec();
+            v.extend(["--ledger".into(), ledger.display().to_string()]);
+            v.extend(["--missions".into(), missions.display().to_string()]);
+            v.extend(["--key".into(), key.display().to_string()]);
+            for r in retired {
+                v.extend(["--retired-key".into(), (*r).to_owned()]);
+            }
+            Args::parse_from(v)
+        };
+        let append = |boot: &Boot| {
+            let LedgerBackend::Single(l) = &*boot.state.backend else {
+                panic!("single-file backend expected");
+            };
+            l.lock().unwrap().append(entry()).unwrap();
+        };
+
+        let boot = prepare(argv(&k1, &[])).await.unwrap();
+        append(&boot);
+        drop(boot);
+        let (kid1, kid2) = (kid_of(&k1), kid_of(&k2));
+
+        let e = prepare(argv(&k2, &[&kid2]))
+            .await
+            .err()
+            .expect("a key that is both current and retired must be refused");
+        assert!(e.to_string().contains("is the public key of --key"), "{e}");
+        let e = prepare(argv(&k2, &[&kid1, &kid1]))
+            .await
+            .err()
+            .expect("a retired key given twice must be refused");
+        assert!(e.to_string().contains("given twice"), "{e}");
+
+        let boot = prepare(argv(&k2, &[&kid1])).await.unwrap();
+        assert!(
+            boot.line.contains(&format!("kid {kid2}, retired {kid1}")),
+            "{}",
+            boot.line
+        );
+        let axum::Json(published) =
+            crate::audit::pubkey(axum::extract::State(boot.state.clone())).await;
+        assert_eq!(
+            published,
+            serde_json::json!({ "kid": kid2, "keys": [kid1, kid2] })
+        );
+        append(&boot);
+        drop(boot);
+
+        let pk = |k: &std::path::Path| decern_crypto::load_signing_key(k).unwrap().verifying_key();
+        let report = decern_ledger::verify_with_keys(&ledger, &[pk(&k1), pk(&k2)]).unwrap();
+        assert_eq!(report.entries, 2);
+        assert_eq!(report.superseded_by(&kid1).map(|s| s.first_seq), Some(1));
+        let e = decern_ledger::verify_with_keys(&ledger, &[pk(&k2)]).unwrap_err();
+        assert!(e.to_string().contains(&kid1), "{e}");
+
+        // Back to the old key once the new one has signed: refused, naming the successor.
+        let e = prepare(argv(&k1, &[&kid2]))
+            .await
+            .err()
+            .expect("a key another has followed must not sign again");
+        let msg = format!("{e:#}");
+        assert!(
+            msg.contains(&kid1) && msg.contains(&kid2) && msg.contains("seq 1"),
+            "{msg}"
+        );
+        // Without the retired key, the old records are another key's.
+        let e = prepare(argv(&k2, &[]))
+            .await
+            .err()
+            .expect("the old records need the retired key");
+        assert!(format!("{e:#}").contains(&kid1), "{e:#}");
+
+        prepare(argv(&k2, &[&kid1])).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A rotation of a sharded store. A replica still on the old key refuses to extend a shard
+    /// the new key has signed, rather than writing a record that would stop the shard
+    /// verifying; a boot on the old key is refused once the new key has signed any shard.
+    #[tokio::test]
+    async fn a_sharded_ledger_rotates_with_every_replica_on_the_new_key() {
+        let dir = fresh_dir("sharded-rotate");
+        let (k1, k2) = (dir.join("k1"), dir.join("k2"));
+        decern_crypto::save_signing_key(&decern_crypto::generate().unwrap(), &k2).unwrap();
+        let heads = dir.join("heads");
+        let missions = dir.join("m.json");
+        let argv = |key: &std::path::Path, retired: &[&str]| {
+            let mut v: Vec<String> = ["decern-serve", "--trust-proxy", "--addr", "127.0.0.1:0"]
+                .map(String::from)
+                .to_vec();
+            v.extend(["--sharded".into(), heads.display().to_string()]);
+            v.extend(["--missions".into(), missions.display().to_string()]);
+            v.extend(["--key".into(), key.display().to_string()]);
+            for r in retired {
+                v.extend(["--retired-key".into(), (*r).to_owned()]);
+            }
+            Args::parse_from(v)
+        };
+        fn sharded(boot: &Boot) -> &ShardedLedger {
+            let LedgerBackend::Sharded(s) = &*boot.state.backend else {
+                panic!("sharded backend expected");
+            };
+            s
+        }
+
+        let old = prepare(argv(&k1, &[])).await.unwrap();
+        sharded(&old).append("t", entry()).unwrap();
+        let (kid1, kid2) = (kid_of(&k1), kid_of(&k2));
+
+        let new = prepare(argv(&k2, &[&kid1])).await.unwrap();
+        sharded(&new).append("t", entry()).unwrap();
+        let e = sharded(&old).append("t", entry()).unwrap_err();
+        assert!(
+            matches!(e, decern_ledger::LedgerError::KeySuperseded { .. }),
+            "{e}"
+        );
+        // A shard the new key has not signed still takes the old key's records.
+        sharded(&old).append("u", entry()).unwrap();
+        drop((old, new));
+
+        let e = prepare(argv(&k1, &[&kid2]))
+            .await
+            .err()
+            .expect("a key another has followed must not sign again");
+        let msg = format!("{e:#}");
+        assert!(msg.contains("shard t") && msg.contains(&kid2), "{msg}");
+
+        let boot = prepare(argv(&k2, &[&kid1])).await.unwrap();
+        sharded(&boot).append("u", entry()).unwrap();
+        for shard in ["t", "u"] {
+            sharded(&boot).self_verify(shard).unwrap();
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

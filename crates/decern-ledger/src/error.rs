@@ -36,6 +36,12 @@ pub enum LedgerError {
         torn_path: String,
         torn_from_offset: u64,
     },
+    /// The signing key may not extend this log: another key has signed after it, or, in a
+    /// sharded store several processes write, the shard's latest record is signed by a key
+    /// this process does not hold. This key may be the one out of date; the refusal comes
+    /// before anything is written.
+    #[error("signing key {kid} may not extend this log: {why}")]
+    KeySuperseded { kid: String, why: String },
 }
 
 pub(crate) fn io_err(path: &Path, e: impl std::fmt::Display) -> LedgerError {

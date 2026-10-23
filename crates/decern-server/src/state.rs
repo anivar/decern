@@ -42,6 +42,8 @@ pub(crate) struct AppState {
     /// outlives any single in-memory handle and is seen across processes.
     pub(crate) missions: Arc<FileMissionRegistry>,
     pub(crate) pubkey: VerifyingKey,
+    /// Ledger keys this deployment rotated away from (`--retired-key`), in the order given.
+    pub(crate) retired_keys: Arc<Vec<VerifyingKey>>,
     /// When true, every decide must name a live `context.mission`.
     pub(crate) require_mission: bool,
     /// Issuer keys a standing token may be signed by. Empty means this deployment

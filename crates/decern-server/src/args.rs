@@ -48,6 +48,12 @@ pub(crate) struct Args {
     /// an ephemeral key, which a ledger that already exists refuses.
     #[arg(long, value_name = "PATH")]
     pub(crate) key: Option<PathBuf>,
+    /// Hex Ed25519 public key of a ledger signing key this deployment rotated away from.
+    /// Repeatable, one per earlier key. Records it signed before its successor's first record
+    /// in the same log still verify; the server only verifies with it, so it is given as a
+    /// public key, never a key file. `--key` must then name a key file that already exists.
+    #[arg(long = "retired-key", value_name = "HEX", requires = "key")]
+    pub(crate) retired_keys: Vec<String>,
     /// Mission registry file — the durable record of approved Missions the mint path
     /// checks (`decern-identity`). Default: `decern-missions.json` alongside the ledger.
     #[arg(long, value_name = "PATH")]
@@ -745,6 +751,18 @@ mod tests {
                 Err(e) => assert!(e.to_string().contains("--pep"), "{argv:?}: {e}"),
             }
         }
+    }
+
+    /// `requires = "key"` on the clap arg makes this a parse-time failure: a retired key
+    /// beside an ephemeral one would verify records nothing else can extend.
+    #[test]
+    fn retired_key_without_key_is_a_startup_failure() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let hex_key = hex::encode(key.verifying_key().to_bytes());
+        assert!(
+            Args::try_parse_from(["decern-serve", "--trust-proxy", "--retired-key", &hex_key])
+                .is_err()
+        );
     }
 
     /// `requires = "signed_audience"` on the clap arg makes this a parse-time failure,

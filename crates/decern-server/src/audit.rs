@@ -276,8 +276,17 @@ pub(crate) async fn subject_side_disclosure(State(st): State<AppState>) -> Json<
     }))
 }
 
+/// `GET /pubkey` — `kid`, the key signing records now, and `keys`, every key a record of this
+/// ledger may be verified under: the retired keys in the order configured, then `kid`.
 pub(crate) async fn pubkey(State(st): State<AppState>) -> Json<Value> {
-    Json(json!({ "kid": hex::encode(st.pubkey.to_bytes()) }))
+    let kid = hex::encode(st.pubkey.to_bytes());
+    let mut keys: Vec<String> = st
+        .retired_keys
+        .iter()
+        .map(|k| hex::encode(k.to_bytes()))
+        .collect();
+    keys.push(kid.clone());
+    Json(json!({ "kid": kid, "keys": keys }))
 }
 
 /// `GET /directory/v1/principals/{id}/descendants` — the blast radius of revoking
