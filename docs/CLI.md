@@ -81,13 +81,16 @@ decern verify --ledger /tmp/decern.jsonl --pubkey <kid> --anchor anchor.json
 
 # every shard of a hosted deployment
 decern verify --sharded /var/lib/decern --pubkey <kid>
+
+# a ledger whose key was rotated: --pubkey once per key, as GET /pubkey lists them under keys
+decern verify --ledger /tmp/decern.jsonl --pubkey <retired-kid> --pubkey <kid>
 ```
 
 | Option | Meaning |
 |---|---|
 | `--ledger <PATH>` | A single file or a segmented directory. Required unless `--sharded`. |
 | `--sharded <DIR>` | A `flock` head-store directory: every shard is verified, and any failing shard fails the run. |
-| `--pubkey <HEX>` | Ed25519 public key. Without it, signatures are **not** checked. |
+| `--pubkey <HEX>` | Ed25519 public key. Repeatable, once per key that signed the log. A record naming a `kid` is checked against that key and one without against each key given, and a record is refused when its key had already been followed by another key in the same file, segmented ledger or shard. With `--ledger` the output lists each key with the record it started at. Without one, signatures are **not** checked. |
 | `--anchor <FILE>` | A tree head published earlier. Also proves nothing at or below the anchored size was rewritten, reordered or dropped. Not for `--sharded`. |
 
 **Why `--anchor` is the one that matters.** A hash chain proves a log holds together, which whoever
@@ -97,7 +100,7 @@ record detectable. Get one from `GET /anchor/v1/tree-head` and keep it somewhere
 
 Failures name what happened: `TRUNCATED` when the log is shorter than the anchor commits to,
 `DIVERGED` when history at or below that point was rewritten, `ANCHOR SIGNATURE INVALID` when the
-anchor is not signed by the key you supplied.
+anchor is not signed by any key you supplied.
 
 Exit 0 on a clean verify, non-zero on any failure.
 
@@ -116,7 +119,7 @@ decern explain --ledger /tmp/decern.jsonl --seq 0 --json
 |---|---|
 | `--ledger <PATH>` | Single file or segmented directory. Required. |
 | `--seq <N>` | Which record, 0-based. Required. |
-| `--pubkey <HEX>` | Check the signature too. Without it the line says `not checked`. |
+| `--pubkey <HEX>` | Check the signature too. Repeatable, as for `decern verify`. Without it the line says `not checked`. |
 | `--json` | Machine-readable instead of prose. |
 
 A denial, read back (from a live run; `asserted_by:` appears under any credential posture —

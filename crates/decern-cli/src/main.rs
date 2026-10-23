@@ -63,9 +63,10 @@ enum Cmd {
         /// Sequence number of the record to explain (0-based).
         #[arg(long)]
         seq: u64,
-        /// Hex Ed25519 public key to verify the record's signature.
+        /// Hex Ed25519 public key to verify the record's signature. Repeatable, once per key
+        /// that signed the ledger: the whole chain is checked on the way to the record.
         #[arg(long)]
-        pubkey: Option<String>,
+        pubkey: Vec<String>,
         /// Output as JSON (machine-readable) instead of human-readable text.
         #[arg(long)]
         json: bool,
@@ -80,9 +81,10 @@ enum Cmd {
         /// A flock `--sharded <dir>` head-store directory: verify every shard.
         #[arg(long)]
         sharded: Option<PathBuf>,
-        /// Hex Ed25519 public key to check every record's signature.
+        /// Hex Ed25519 public key to check every record's signature. Repeatable, once per key
+        /// that signed the ledger; each record is checked against the key it names.
         #[arg(long)]
-        pubkey: Option<String>,
+        pubkey: Vec<String>,
         /// A previously published tree head (JSON). Also prove the log still extends it:
         /// nothing at or below the anchored size was rewritten, reordered, or dropped.
         #[arg(long, conflicts_with = "sharded")]
@@ -98,31 +100,34 @@ enum Cmd {
 /// consistency proof against a commitment published earlier, somewhere the operator does not
 /// control, proves they did not quietly drop a record that used to be there.
 ///
-/// With `--pubkey` the anchor's own signature is checked first. Without one, the anchor is
-/// taken at face value, which is worth saying out loud: an unsigned anchor an attacker could
-/// have written proves nothing about the log.
+/// With `--pubkey` the anchor's own signature is checked first, against each key given. Without
+/// one, the anchor is taken at face value, which is worth saying out loud: an unsigned anchor
+/// an attacker could have written proves nothing about the log.
 fn verify_against_anchor(
     ledger: &Path,
     anchor_path: &Path,
-    key: Option<&ed25519_dalek::VerifyingKey>,
+    keys: &[ed25519_dalek::VerifyingKey],
 ) -> Result<()> {
     let raw = std::fs::read_to_string(anchor_path)
         .with_context(|| format!("reading anchor {}", anchor_path.display()))?;
     let anchor: decern_ledger::TreeHead =
         serde_json::from_str(&raw).context("parsing anchor as a tree head")?;
 
-    match key {
-        Some(k) if !decern_ledger::verify_tree_head_sig(&anchor, k) => {
-            anyhow::bail!(
-                "ANCHOR SIGNATURE INVALID: {} is not signed by the given key",
-                anchor_path.display()
-            )
-        }
-        Some(_) => println!("    anchor:     signature verified"),
-        None => println!("    anchor:     signature NOT checked (no --pubkey given)"),
+    if keys.is_empty() {
+        println!("    anchor:     signature NOT checked (no --pubkey given)");
+    } else if keys
+        .iter()
+        .any(|k| decern_ledger::verify_tree_head_sig(&anchor, k))
+    {
+        println!("    anchor:     signature verified");
+    } else {
+        anyhow::bail!(
+            "ANCHOR SIGNATURE INVALID: {} is not signed by any key given",
+            anchor_path.display()
+        )
     }
 
-    let leaves = decern_ledger::merkle_leaves_at(ledger, key)?;
+    let leaves = decern_ledger::merkle_leaves_with_keys(ledger, keys)?;
     let now_size = leaves.len() as u64;
     if anchor.tree_size > now_size {
         anyhow::bail!(
@@ -166,6 +171,21 @@ fn hash32(hex_str: &str) -> Result<[u8; 32]> {
         .map_err(|_| anyhow::anyhow!("expected 32 bytes"))
 }
 
+/// Every `--pubkey` given, decoded. Given none, signatures are not checked.
+fn parse_pubkeys(hexes: &[String]) -> Result<Vec<ed25519_dalek::VerifyingKey>> {
+    hexes
+        .iter()
+        .map(|h| {
+            let bytes: [u8; 32] = hex::decode(h.trim())
+                .with_context(|| format!("decoding --pubkey {h}"))?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("--pubkey {h} must be 32 bytes"))?;
+            ed25519_dalek::VerifyingKey::from_bytes(&bytes)
+                .with_context(|| format!("--pubkey {h} is not an Ed25519 key"))
+        })
+        .collect()
+}
+
 fn load_model(dir: Option<PathBuf>) -> Result<Model> {
     match dir {
         Some(d) => {
@@ -191,22 +211,14 @@ fn parse_ref(s: &str) -> Result<EntityRef> {
 fn explain(
     ledger_path: &std::path::Path,
     seq: u64,
-    pubkey_hex: Option<&str>,
+    pubkey_hex: &[String],
     json: bool,
 ) -> Result<ExitCode> {
-    let key = pubkey_hex
-        .map(|h| -> Result<_> {
-            let bytes: [u8; 32] = hex::decode(h.trim())
-                .context("decoding --pubkey hex")?
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("--pubkey must be 32 bytes"))?;
-            ed25519_dalek::VerifyingKey::from_bytes(&bytes).context("invalid Ed25519 key")
-        })
-        .transpose()?;
+    let keys = parse_pubkeys(pubkey_hex)?;
 
     // Verify the whole chain: the offset includes seq, limit is 1 to materialize only that record.
     let (report, records) =
-        decern_ledger::read_verified(ledger_path, key.as_ref(), seq as usize, 1)
+        decern_ledger::read_verified_with_keys(ledger_path, &keys, seq as usize, 1)
             .context("reading ledger")?;
 
     if records.is_empty() {
@@ -254,7 +266,7 @@ fn explain(
         // saying otherwise would be the explanation claiming more than it did.
         println!(
             "  signature:  {}",
-            if key.is_some() {
+            if report.signatures_checked {
                 "yes (verified)"
             } else {
                 "not checked — pass --pubkey to verify it"
@@ -326,7 +338,7 @@ fn explain(
         println!("      It is NOT a re-derivation of policy, and NOT a claim about the present.");
         println!(
             "      The chain is verified intact; the signature is {}.",
-            if key.is_some() {
+            if report.signatures_checked {
                 "verified"
             } else {
                 "not checked"
@@ -365,7 +377,7 @@ async fn run() -> Result<ExitCode> {
             seq,
             pubkey,
             json,
-        } => explain(&ledger, seq, pubkey.as_deref(), json),
+        } => explain(&ledger, seq, &pubkey, json),
         Cmd::Prove {
             model,
             cvc5,
@@ -420,18 +432,10 @@ async fn run() -> Result<ExitCode> {
             pubkey,
             anchor,
         } => {
-            let key = pubkey
-                .map(|h| -> Result<_> {
-                    let bytes: [u8; 32] = hex::decode(h.trim())
-                        .context("decoding --pubkey hex")?
-                        .try_into()
-                        .map_err(|_| anyhow::anyhow!("--pubkey must be 32 bytes"))?;
-                    ed25519_dalek::VerifyingKey::from_bytes(&bytes).context("invalid Ed25519 key")
-                })
-                .transpose()?;
+            let keys = parse_pubkeys(&pubkey)?;
 
             if let Some(dir) = sharded {
-                return verify_sharded(&dir, key.as_ref());
+                return verify_sharded(&dir, &keys);
             }
 
             // clap requires exactly one of --ledger / --sharded, so --ledger is set here.
@@ -447,7 +451,7 @@ async fn run() -> Result<ExitCode> {
                     ledger.display()
                 );
             }
-            let report = decern_ledger::verify(&ledger, key.as_ref())?;
+            let report = decern_ledger::verify_with_keys(&ledger, &keys)?;
             if !report.signatures_checked {
                 // Prominent, at the TOP: a chain-only pass is NOT a full verify — it does
                 // not catch a record signed by nobody, so it is not "verify without trusting
@@ -466,8 +470,13 @@ async fn run() -> Result<ExitCode> {
                     "not checked (no key given)"
                 }
             );
+            // Each key and the record it started signing at, so a rotation shows in the
+            // output rather than only in the keys an auditor happened to pass.
+            for s in &report.signers {
+                println!("    signer:     {} from seq {}", s.kid, s.first_seq);
+            }
             if let Some(anchor_path) = anchor {
-                verify_against_anchor(&ledger, &anchor_path, key.as_ref())?;
+                verify_against_anchor(&ledger, &anchor_path, &keys)?;
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -489,11 +498,8 @@ fn looks_like_sharded_dir(dir: &std::path::Path) -> bool {
 /// Verify every shard of a `--sharded <dir>` flock deployment: PASS/TAMPER per shard,
 /// with a non-zero exit if any shard failed. Signatures are checked when a key is given
 /// (same as single-file verify); the hash chain always is.
-fn verify_sharded(
-    dir: &std::path::Path,
-    key: Option<&ed25519_dalek::VerifyingKey>,
-) -> Result<ExitCode> {
-    let results = decern_ledger::verify_sharded_dir(dir, key)?;
+fn verify_sharded(dir: &std::path::Path, keys: &[ed25519_dalek::VerifyingKey]) -> Result<ExitCode> {
+    let results = decern_ledger::verify_sharded_dir_with_keys(dir, keys)?;
     if results.is_empty() {
         println!("no shards found to verify in {}", dir.display());
         return Ok(ExitCode::SUCCESS);
@@ -501,7 +507,7 @@ fn verify_sharded(
     // Describe the mode BEFORE the per-shard results — it is what will be checked,
     // not a verdict. A failing shard aborts its own signature check, so printing
     // "verified" as a trailer after a TAMPER line would misread as a pass.
-    if key.is_some() {
+    if !keys.is_empty() {
         println!("signatures: checked against --pubkey");
     } else {
         // Prominent, at the TOP: a chain-only pass is NOT a full verify.
@@ -637,7 +643,7 @@ mod tests {
         let mut writer = decern_ledger::Ledger::open(&ledger_path, key).unwrap();
         writer.append(entry).unwrap();
 
-        assert!(explain(&ledger_path, 0, None, false).is_ok());
+        assert!(explain(&ledger_path, 0, &[], false).is_ok());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -182,6 +182,11 @@ impl ShardedLedger {
                 let Some(mut entry) = maybe_entry else {
                     return Ok(None); // f decided nothing appends (e.g. a deny).
                 };
+                let kid = key_fingerprint(&self.key.verifying_key());
+                if let Err(e) = may_extend(&parsed, &kid, &self.verifiers, shard) {
+                    inner_err = Some(e);
+                    return Ok(None);
+                }
 
                 let next_seq = cursor.map(|c| c.next_seq).unwrap_or(0);
                 let prev_hash = cursor
@@ -200,7 +205,6 @@ impl ShardedLedger {
                 let sig = self.key.sign(&hash);
                 let hash_hex = hex::encode(hash);
                 let sig_b64 = B64.encode(sig.to_bytes());
-                let kid = key_fingerprint(&self.key.verifying_key());
 
                 let raw_entry = match serde_json::value::RawValue::from_string(entry_json) {
                     Ok(r) => r,
@@ -474,6 +478,79 @@ impl ShardedLedger {
 /// with either its [`crate::VerifyReport`] or the tamper/read error it failed with.
 pub type ShardVerification = (String, Result<crate::VerifyReport, LedgerError>);
 
+/// Refuse to extend a shard under `kid` when the shard's latest signer is another key that
+/// `kid` may not follow. Several processes append to one shard, so one still running under
+/// the old key after another rotated would put old-key records after new-key ones, and the
+/// shard would stop verifying. The latest signer must be `kid`, or a key this process holds
+/// that `kid` has not signed before.
+fn may_extend(
+    existing: &[serde_json::Value],
+    kid: &str,
+    verifiers: &[VerifyingKey],
+    shard: &str,
+) -> Result<(), LedgerError> {
+    let Some(tail) = existing.last() else {
+        return Ok(());
+    };
+    let refuse = |why: String| {
+        Err(LedgerError::KeySuperseded {
+            kid: kid.to_owned(),
+            why,
+        })
+    };
+    let Some(last) = signer_of(tail, verifiers) else {
+        return refuse(format!(
+            "shard {shard}'s last record is signed by no key this process holds; another \
+             process may have rotated to one"
+        ));
+    };
+    if last == kid {
+        return Ok(());
+    }
+    let signers: Vec<Option<String>> = existing.iter().map(|r| signer_of(r, verifiers)).collect();
+    if let Some(mine) = signers.iter().rposition(|s| s.as_deref() == Some(kid)) {
+        let (seq, next) = signers
+            .iter()
+            .enumerate()
+            .skip(mine + 1)
+            .find_map(|(i, s)| {
+                s.as_deref()
+                    .filter(|k| *k != kid)
+                    .map(|k| (i, k.to_owned()))
+            })
+            .unwrap_or((existing.len(), last));
+        return refuse(format!(
+            "key {next} signed shard {shard} after it, from seq {seq}"
+        ));
+    }
+    if !verifiers.iter().any(|v| key_fingerprint(v) == last) {
+        return refuse(format!(
+            "shard {shard} was last signed by key {last}, which this process does not hold; \
+             another process may have rotated to it"
+        ));
+    }
+    Ok(())
+}
+
+/// The key a stored record is attributed to: the one its `kid` names, or for a record without
+/// one, whichever of `verifiers` its signature verifies under, as verification attributes it. `None` when no key is named and none verifies.
+fn signer_of(record: &serde_json::Value, verifiers: &[VerifyingKey]) -> Option<String> {
+    if let Some(kid) = record.get("kid").and_then(serde_json::Value::as_str) {
+        return Some(kid.to_owned());
+    }
+    let hash = hex::decode(record.get("hash")?.as_str()?).ok()?;
+    let sig: [u8; 64] = B64
+        .decode(record.get("sig_b64")?.as_str()?)
+        .ok()?
+        .try_into()
+        .ok()?;
+    let sig = decern_crypto::Signature::from_bytes(&sig);
+    verifiers
+        .iter()
+        .find(|k| k.verify_strict(&hash, &sig).is_ok())
+        .map(key_fingerprint)
+}
+
 /// Audit every shard of a flock (`FileLedgerHeadStore`) sharded ledger rooted at
 /// `dir` — the operator-facing verification of a `decern-serve --sharded <dir>`
 /// deployment, the sharded counterpart of the single-file [`crate::verify`]. Opens
@@ -496,6 +573,17 @@ pub fn verify_sharded_dir(
     dir: &std::path::Path,
     pubkey: Option<&VerifyingKey>,
 ) -> Result<Vec<ShardVerification>, LedgerError> {
+    let keys: Vec<VerifyingKey> = pubkey.into_iter().copied().collect();
+    verify_sharded_dir_with_keys(dir, &keys)
+}
+
+/// [`verify_sharded_dir`] for a keyring: each record is checked against the key its `kid`
+/// names, as [`crate::verify_with_keys`] does for one file. An empty ring checks the hash
+/// chains only.
+pub fn verify_sharded_dir_with_keys(
+    dir: &std::path::Path,
+    keys: &[VerifyingKey],
+) -> Result<Vec<ShardVerification>, LedgerError> {
     if !dir.is_dir() {
         return Err(LedgerError::Io {
             path: dir.display().to_string(),
@@ -506,13 +594,10 @@ pub fn verify_sharded_dir(
         path: dir.display().to_string(),
         err: e.to_string(),
     })?;
-    // Empty keyring => chain-only (signatures not checked), same as `verify(_, None)`.
-    let keys: Vec<VerifyingKey> = pubkey.into_iter().copied().collect();
-
     let shards = store.list_shards().map_err(store_to_ledger_err)?;
     let mut out = Vec::with_capacity(shards.len());
     for shard in shards {
-        out.push((shard.clone(), verify_one_shard(&store, &shard, &keys)));
+        out.push((shard.clone(), verify_one_shard(&store, &shard, keys)));
     }
     Ok(out)
 }
@@ -560,6 +645,121 @@ mod tests {
     fn ledger() -> ShardedLedger {
         let key = decern_crypto::generate().unwrap();
         ShardedLedger::new(Arc::new(MemoryLedgerHeadStore::new()), key, Vec::new())
+    }
+
+    /// Append a record signed by `key` straight into the store, past the append guard: what
+    /// someone holding that key and the store could write.
+    fn append_crafted(store: &dyn LedgerHeadStore, shard: &str, key: &SigningKey, kid: bool) {
+        store
+            .with_shard(shard, &mut |cursor, _existing| {
+                let (next_seq, prev) = cursor
+                    .map(|c| (c.next_seq, c.last_hash.clone()))
+                    .unwrap_or((0, GENESIS.to_owned()));
+                let mut e = entry("Read", "crafted");
+                e.seq = next_seq;
+                let entry_json = serde_json::to_string(&e).unwrap();
+                let hash = chain_hash(entry_json.as_bytes(), &prev);
+                let sig = B64.encode(key.sign(&hash).to_bytes());
+                let kid = if kid {
+                    format!(r#","kid":"{}""#, key_fingerprint(&key.verifying_key()))
+                } else {
+                    String::new()
+                };
+                let line = format!(
+                    r#"{{"entry":{entry_json},"prev":"{prev}","hash":"{}","sig_b64":"{sig}"{kid}}}"#,
+                    hex::encode(hash)
+                );
+                Ok(Some((
+                    HeadCursor {
+                        next_seq: next_seq + 1,
+                        last_hash: hex::encode(hash),
+                    },
+                    line,
+                )))
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_shard_with_a_retired_key_after_its_successor_does_not_verify() {
+        let store: Arc<dyn LedgerHeadStore> = Arc::new(MemoryLedgerHeadStore::new());
+        let old = decern_crypto::generate().unwrap();
+        let new = decern_crypto::generate().unwrap();
+        ShardedLedger::new(store.clone(), old.clone(), Vec::new())
+            .append("acme", entry("Read", "r1"))
+            .unwrap();
+        let rotated = ShardedLedger::new(store.clone(), new, vec![old.verifying_key()]);
+        rotated.append("acme", entry("Read", "r2")).unwrap();
+        // Without a kid the record is still the old key's: its signature says so.
+        append_crafted(&*store, "acme", &old, false);
+        match rotated.self_verify("acme").unwrap_err() {
+            LedgerError::Tamper { seq: 2, why } => assert!(why.contains("succeeded"), "{why}"),
+            e => panic!("expected tamper at seq 2: {e}"),
+        }
+    }
+
+    #[test]
+    fn the_append_guard_attributes_a_record_without_a_kid_by_its_signature() {
+        let store: Arc<dyn LedgerHeadStore> = Arc::new(MemoryLedgerHeadStore::new());
+        let old = decern_crypto::generate().unwrap();
+        let new = decern_crypto::generate().unwrap();
+        append_crafted(&*store, "acme", &new, false);
+        let behind = ShardedLedger::new(store.clone(), old, Vec::new());
+        match behind.append("acme", entry("Read", "r1")).unwrap_err() {
+            LedgerError::KeySuperseded { why, .. } => assert!(why.contains("no key"), "{why}"),
+            e => panic!("expected KeySuperseded: {e}"),
+        }
+        let rotated = ShardedLedger::new(store, new.clone(), Vec::new());
+        rotated.append("acme", entry("Read", "r2")).unwrap();
+    }
+
+    #[test]
+    fn a_process_whose_key_was_superseded_in_a_shard_may_not_extend_it() {
+        // Two processes on one store; one restarts on the new key while the other still
+        // runs on the old.
+        let store: Arc<dyn LedgerHeadStore> = Arc::new(MemoryLedgerHeadStore::new());
+        let old = decern_crypto::generate().unwrap();
+        let new = decern_crypto::generate().unwrap();
+        let behind = ShardedLedger::new(store.clone(), old.clone(), Vec::new());
+        let rotated = ShardedLedger::new(store, new.clone(), vec![old.verifying_key()]);
+        behind.append("acme", entry("Read", "r1")).unwrap();
+        rotated.append("acme", entry("Read", "r2")).unwrap();
+
+        match behind.append("acme", entry("Read", "r3")).unwrap_err() {
+            LedgerError::KeySuperseded { kid, why } => {
+                assert_eq!(kid, key_fingerprint(&old.verifying_key()));
+                assert!(
+                    why.contains(&key_fingerprint(&new.verifying_key())),
+                    "{why}"
+                );
+                assert!(why.contains("seq 1"), "{why}");
+            }
+            e => panic!("expected KeySuperseded: {e}"),
+        }
+        // A shard the new key has not signed yet still takes the old key's records.
+        behind.append("globex", entry("Read", "r4")).unwrap();
+        assert_eq!(rotated.self_verify("acme").unwrap().entries, 2);
+    }
+
+    #[test]
+    fn a_process_may_not_extend_a_shard_last_signed_by_a_key_it_does_not_hold() {
+        let store: Arc<dyn LedgerHeadStore> = Arc::new(MemoryLedgerHeadStore::new());
+        let old = decern_crypto::generate().unwrap();
+        let new = decern_crypto::generate().unwrap();
+        let behind = ShardedLedger::new(store.clone(), old.clone(), Vec::new());
+        let rotated = ShardedLedger::new(store, new.clone(), vec![old.verifying_key()]);
+        rotated.append("acme", entry("Read", "r1")).unwrap();
+
+        // The old key never signed this shard, so nothing has followed it here; it is still
+        // behind, and appending would make the new key the superseded one.
+        match behind.append("acme", entry("Read", "r2")).unwrap_err() {
+            LedgerError::KeySuperseded { why, .. } => {
+                assert!(why.contains("does not hold"), "{why}");
+            }
+            e => panic!("expected KeySuperseded: {e}"),
+        }
+        rotated.append("acme", entry("Read", "r3")).unwrap();
+        assert_eq!(rotated.self_verify("acme").unwrap().entries, 2);
     }
 
     #[test]

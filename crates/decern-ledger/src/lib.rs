@@ -25,7 +25,10 @@ mod segment;
 pub mod sharded;
 pub use jcs::{canonicalize, digest};
 pub use segment::RolloverPolicy;
-pub use sharded::{ShardVerification, ShardedLedger, UNATTRIBUTED_SHARD, verify_sharded_dir};
+pub use sharded::{
+    ShardVerification, ShardedLedger, UNATTRIBUTED_SHARD, verify_sharded_dir,
+    verify_sharded_dir_with_keys,
+};
 
 mod anchor;
 mod bundle;
@@ -49,8 +52,8 @@ pub use record::{
     Entry, GENESIS, MissionRef, Party, Record, SponsorSource,
 };
 pub use verify::{
-    VerifyReport, inclusion_proofs_over, leaves_from_lines, merkle_leaves_at, read_verified,
-    verify, verify_with_keys,
+    SignerSpan, VerifyReport, inclusion_proofs_over, leaves_from_lines, merkle_leaves_at,
+    merkle_leaves_with_keys, read_verified, read_verified_with_keys, verify, verify_with_keys,
 };
 
 pub(crate) use checkpoint::{checkpoint_bytes, key_fingerprint, tree_head_bytes};
