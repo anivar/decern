@@ -413,7 +413,6 @@ impl Kernel {
 ///   * `revoked` — effective revocation: the principal's own `revoked` flag OR
 ///     that of any ancestor, so revoking upstream kills the whole subtree.
 fn inject_derived(entities: &Value, dir: &Directory) -> Value {
-    let revoked_of = |id: &str| dir.principals.get(id).map(|p| p.revoked).unwrap_or(false);
     let mut list = entities.as_array().cloned().unwrap_or_default();
     for e in list.iter_mut() {
         let is_principal = e
@@ -430,8 +429,8 @@ fn inject_derived(entities: &Value, dir: &Directory) -> Value {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
+        let effective_revoked = dir.revoked(&id);
         let ancestors = dir.ancestors_of(&id);
-        let effective_revoked = revoked_of(&id) || ancestors.iter().any(|a| revoked_of(a));
         let refs: Vec<Value> = ancestors
             .into_iter()
             .map(|a| json!({ "__entity": { "type": "Principal", "id": a } }))

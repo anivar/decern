@@ -19,7 +19,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
 use decern_crypto::SigningKey;
-use decern_kernel::Model;
+use decern_kernel::{Directory, Model};
 use decern_store::{MissionEntry, MissionRegistry};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -114,7 +114,9 @@ impl ApprovedMission {
 
 /// Approve a Mission against the graph. Fail-closed: every approved tool must be
 /// one the approver actually holds, and the mission cannot outlive the approver's
-/// authority. The returned Mission is therefore provably bounded.
+/// authority. The returned Mission is therefore provably bounded. An approver that is
+/// revoked, directly or through an ancestor, approves nothing, and no principal
+/// approves a Mission for itself.
 ///
 /// When a [`MissionRegistry`] is supplied the approval is RECORDED (active, keyed by
 /// its `s256`) so that a later mint can verify the mission reference names a real,
@@ -135,6 +137,25 @@ pub fn approve(
                 mission.approver
             ))
         })?;
+
+    // An approval is one principal vouching for another. With the same principal on both
+    // sides it vouches for nothing a decision about that principal did not already have.
+    if mission.approver == mission.agent {
+        return Err(IdentityError::SubjectInvalid(format!(
+            "approver {} cannot approve a mission for itself",
+            mission.approver
+        )));
+    }
+    // Revocation withdraws the authority to vouch as well as to act, and it reaches down
+    // from a revoked ancestor exactly as the policy's `revoked` attribute does.
+    let directory = Directory::parse(&model.entities)
+        .map_err(|violations| IdentityError::Model(violations.join("; ")))?;
+    if directory.revoked(&mission.approver) {
+        return Err(IdentityError::SubjectInvalid(format!(
+            "approver {} is revoked",
+            mission.approver
+        )));
+    }
 
     // Attenuation, fail-closed — the approver cannot approve authority they lack.
     for t in &mission.approved_tools {
@@ -379,6 +400,60 @@ mod tests {
             ..mission(&["move_money"], corp_expiry())
         };
         approve(&Model::builtin(), m, 100, None).unwrap();
+    }
+
+    #[test]
+    fn approve_refuses_a_principal_approving_for_itself() {
+        let m = Mission {
+            agent: "corp".into(),
+            ..mission(&["move_money"], corp_expiry())
+        };
+        let err = approve(&Model::builtin(), m, 100, None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("approver corp cannot approve a mission for itself"),
+            "{err}"
+        );
+    }
+
+    /// A revoked approver approves nothing, revoked directly or through a delegator, as the
+    /// policy's `revoked` attribute reads it. `agent1` delegates from `corp`, so revoking
+    /// `corp` revokes `agent1` too; `now` is inside `agent1`'s expiry of 200.
+    #[test]
+    fn approve_refuses_a_revoked_approver_directly_or_through_its_delegator() {
+        let revoking = |id: &str| {
+            let mut model = Model::builtin();
+            for e in model.entities.as_array_mut().unwrap() {
+                if e["uid"]["id"] == id {
+                    e["attrs"]["revoked"] = serde_json::json!(true);
+                }
+            }
+            model
+        };
+        let by_agent1 = || Mission {
+            approver: "agent1".into(),
+            agent: "agent2".into(),
+            ..mission(&["read"], 150)
+        };
+        approve(&Model::builtin(), by_agent1(), 100, None).expect("agent1 stands");
+        for revoked in ["agent1", "corp"] {
+            let err = approve(&revoking(revoked), by_agent1(), 100, None).unwrap_err();
+            assert!(
+                err.to_string().contains("approver agent1 is revoked"),
+                "{revoked} revoked: {err}"
+            );
+        }
+        let err = approve(
+            &revoking("corp"),
+            mission(&["read"], corp_expiry()),
+            100,
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("approver corp is revoked"),
+            "{err}"
+        );
     }
 
     #[test]

@@ -752,9 +752,9 @@ fn scope_for_action(action: &str) -> Option<&'static str> {
 fn apply_mission_context(ctx: &mut Value, action: &str) {
     strip_client_approval_flags(ctx);
     // A verified Mission that covers MoveMoney is what F-money's `human_approved`
-    // stands for. `approve` does not check that the approver is human or distinct
-    // from the agent, so the flag means a covering Mission was granted, not that
-    // someone else approved. It is not a data subject's
+    // stands for. `approve` refuses an approver that is the agent, but does not check
+    // that the approver is human, so the flag means another principal granted a covering
+    // Mission, not that a person approved. It is not a data subject's
     // consent: F-consent is a different claim, about the resource owner, and an
     // approver granting `pii:read` never made it. AccessPII and Read therefore leave
     // `consent` unset — the same as they already did for Read.
@@ -839,37 +839,56 @@ fn bound_mission(
             entry.agent
         ));
     }
-    match scope_for_action(action) {
-        Some(scope) if !entry.approved_tools.iter().any(|t| t == scope) => {
-            return Err(format!(
-                "mission {s256} does not approve tool/scope `{scope}` for action {action}"
-            ));
-        }
-        // An action with no scope mapping cannot be shown to be covered by this
-        // grant, so it is refused. Silently skipping the check would let any new
-        // action ride on every Mission until someone remembered to map it.
-        None => {
-            return Err(format!(
-                "action {action} has no scope mapping, so mission {s256} cannot be shown to approve it"
-            ));
-        }
-        _ => {}
+    // `approve` refuses a principal approving for itself; this also refuses such a grant a
+    // registry already holds from a release that did not.
+    if entry.approver == entry.agent {
+        return Err(format!(
+            "mission {s256} was approved by its own agent, which approves nothing"
+        ));
+    }
+    // An action with no scope mapping cannot be shown to be covered by this grant, so it
+    // is refused. Silently skipping the check would let any new action ride on every
+    // Mission until someone remembered to map it.
+    let Some(scope) = scope_for_action(action) else {
+        return Err(format!(
+            "action {action} has no scope mapping, so mission {s256} cannot be shown to approve it"
+        ));
+    };
+    if !entry.approved_tools.iter().any(|t| t == scope) {
+        return Err(format!(
+            "mission {s256} does not approve tool/scope `{scope}` for action {action}"
+        ));
     }
     // A Mission backs a decision only about a subject the model names, approved by a
     // principal the model names, in the same tenant. `approve` refuses a cross-tenant
     // grant; this also refuses one a registry already holds from a release that did not,
     // and an approval this model cannot place in any tenant. It is one refusal for every
     // way this fails, so it does not say whether the approver exists in another tenant.
-    let same_tenant = match (
+    let approver_rec = match (
         dir.principals.get(&entry.approver),
         dir.principals.get(subject_id),
     ) {
-        (Some(approver_rec), Some(subject_rec)) => approver_rec.tenant == subject_rec.tenant,
-        _ => false,
+        (Some(approver_rec), Some(subject_rec)) if approver_rec.tenant == subject_rec.tenant => {
+            approver_rec
+        }
+        _ => {
+            return Err(format!(
+                "mission {s256} was not approved by a principal of subject {subject_id}'s tenant"
+            ));
+        }
     };
-    if !same_tenant {
+    // The approver's standing is read from this model at every decision, not only once at
+    // approval: a Mission backs a decision while its approver is unrevoked, unexpired and
+    // still holds the scope it approved, each as the policy would judge the approver
+    // acting itself. A model loaded after the approval can withdraw any of the three.
+    let stands = !dir.revoked(&entry.approver)
+        && i64::try_from(now).is_ok_and(|now| now <= approver_rec.expiry)
+        && approver_rec.scopes.contains(scope);
+    if !stands {
         return Err(format!(
-            "mission {s256} was not approved by a principal of subject {subject_id}'s tenant"
+            "mission {s256}'s approver {} no longer holds what it approved: it is revoked, \
+             expired, or without `{scope}`",
+            entry.approver
         ));
     }
 
@@ -917,6 +936,106 @@ mod tests {
             now,
         );
         assert!(matches!(bound, MissionBind::Ok(_)));
+    }
+
+    /// A Mission binds only while its approver stands in the model the decision is taken
+    /// against: unrevoked, directly or through a delegator, unexpired, and holding the
+    /// scope. Each is withdrawn here by a model loaded after the approval, with the
+    /// registry entry unchanged. A grant whose approver is its own agent never binds.
+    #[test]
+    fn a_mission_stops_binding_once_its_approver_no_longer_holds_what_it_approved() {
+        fn graph(edit: impl Fn(&mut Value)) -> Directory {
+            let principal = |id: &str, delegator: Option<&str>| {
+                let mut attrs = json!({
+                    "kind": "Human", "tenant": "A", "expiry": 32_503_680_000_i64,
+                    "scopes": ["read", "move_money"],
+                });
+                if let Some(d) = delegator {
+                    attrs["delegator"] = json!({"__entity": {"type": "Principal", "id": d}});
+                }
+                json!({"uid": {"type": "Principal", "id": id}, "attrs": attrs, "parents": []})
+            };
+            let mut ents = json!([
+                principal("boss", None),
+                principal("deputy", Some("boss")),
+                principal("teller", Some("boss")),
+            ]);
+            edit(&mut ents);
+            let dir = Directory::parse(&ents).unwrap();
+            assert!(dir.validate().is_empty(), "{:?}", dir.validate());
+            dir
+        }
+        fn set(id: &'static str, key: &'static str, value: Value) -> impl Fn(&mut Value) {
+            move |ents| {
+                for e in ents.as_array_mut().unwrap() {
+                    if e["uid"]["id"] == id {
+                        e["attrs"][key] = value.clone();
+                    }
+                }
+            }
+        }
+        let registry = crate::testutil::test_missions();
+        let now = crate::now_secs();
+        for (s256, approver) in [("by-deputy", "deputy"), ("by-teller", "teller")] {
+            let entry = decern_store::MissionEntry {
+                approver: approver.into(),
+                expiry: now + 3600,
+                terminated: false,
+                agent: "teller".into(),
+                approved_tools: vec!["move_money".into()],
+            };
+            registry.register(s256, entry, now).unwrap();
+        }
+        let bind = |dir: &Directory, s256: &str, approver: &str| {
+            let ctx = json!({"mission": {"approver": approver, "s256": s256}});
+            bind_mission(
+                registry.as_ref(),
+                dir,
+                false,
+                "teller",
+                "MoveMoney",
+                &ctx,
+                now,
+            )
+        };
+        let refusal = |bound: MissionBind| match bound {
+            MissionBind::Deny(reasons) => reasons.join("; "),
+            MissionBind::Ok(_) => "bound".to_owned(),
+            MissionBind::None => "no mission".to_owned(),
+        };
+
+        assert!(matches!(
+            bind(&graph(|_| {}), "by-deputy", "deputy"),
+            MissionBind::Ok(_)
+        ));
+        // F-decay forbids only past the expiry, so at it the approver still stands.
+        let at_expiry = set("deputy", "expiry", json!(now));
+        assert!(matches!(
+            bind(&graph(at_expiry), "by-deputy", "deputy"),
+            MissionBind::Ok(_)
+        ));
+        type Edit = Box<dyn Fn(&mut Value)>;
+        let withdrawn: [(&str, Edit); 4] = [
+            ("revoked", Box::new(set("deputy", "revoked", json!(true)))),
+            (
+                "revoked through its delegator",
+                Box::new(set("boss", "revoked", json!(true))),
+            ),
+            ("expired", Box::new(set("deputy", "expiry", json!(1000)))),
+            (
+                "without the scope",
+                Box::new(set("deputy", "scopes", json!(["read"]))),
+            ),
+        ];
+        for (case, edit) in withdrawn {
+            let why = refusal(bind(&graph(edit), "by-deputy", "deputy"));
+            assert!(
+                why.contains("approver deputy no longer holds what it approved"),
+                "{case}: {why}"
+            );
+        }
+        let why = refusal(bind(&graph(|_| {}), "by-teller", "teller"));
+        assert!(why.contains("approved by its own agent"), "{why}");
     }
 
     #[test]

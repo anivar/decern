@@ -355,6 +355,16 @@ impl Directory {
         out
     }
 
+    /// Whether `id` is revoked, directly or through any authority ancestor: revoking a
+    /// principal withdraws everything delegated from it. The policy sees this answer as the
+    /// derived `revoked` attribute, and a Mission's approver is held to the same one. An id
+    /// this directory does not name is not revoked; a caller that needs it to exist checks
+    /// that separately.
+    pub fn revoked(&self, id: &str) -> bool {
+        let authored = |p: &str| self.principals.get(p).is_some_and(|r| r.revoked);
+        authored(id) || self.ancestors_of(id).iter().any(|a| authored(a))
+    }
+
     /// The transitive delegates of a principal — every principal delegating FROM it,
     /// nearest first. This is the blast radius: revoke `id` and exactly these lose
     /// authority with it, so an operator can see the cost of a revocation before

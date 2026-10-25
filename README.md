@@ -165,13 +165,15 @@ read from its running configuration so the claim cannot drift from the binary.
 
 `decern-serve` also serves a **Mission lifecycle**: an approver grants an agent a scoped,
 fail-closed-attenuated authorization context — "these scopes, until this time." A Mission
-exceeding what its approver holds is refused, as is one for an agent that is not a principal in
-the approver's tenant, and a Mission backs a decision only in its approver's tenant; every
-accepted transition is recorded before it is reported; a terminated Mission never revives on the
-host that terminated it. The registry is a durable local file, consulted in-perimeter with no
-phone-home, so under `--sharded postgres://…` each replica has its own. A Mission binds only the
-built-in actions `Read`, `MoveMoney` and `AccessPII`; under a Mission any other action is
-denied. The approver is not checked to differ from the agent.
+exceeding what its approver holds is refused, as is one from a revoked approver, one an approver
+grants itself, and one for an agent that is not a principal in the approver's tenant. A Mission
+backs a decision only in its approver's tenant, and only while the approver, in the model the
+server runs, is unrevoked, unexpired and holds the scope the decision needs; that model is fixed
+at boot, so a revocation reaches existing Missions at the next restart. Every accepted transition
+is recorded before it is reported; a terminated Mission never revives on the host that
+terminated it. The registry is a durable local file, consulted in-perimeter with no phone-home,
+so under `--sharded postgres://…` each replica has its own. A Mission binds only the built-in
+actions `Read`, `MoveMoney` and `AccessPII`; under a Mission any other action is denied.
 
 decern records an approval it is given and holds decisions to it; it does not render one. The
 approval screen, the consent record and the tokens belong outside decern, and the enforcement
