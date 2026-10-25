@@ -201,8 +201,20 @@ pub(crate) fn resolve_open_head(
         });
     }
     // Prefix covers the anchor (or there is none): the torn fragment was
-    // never acked. Discard it durably, then adopt the healed head.
+    // never acked. Discard it durably, then adopt the healed head — but only a fragment a
+    // crash mid-append could leave, which begins a record. Anything else means this is not a
+    // ledger's tail, and truncating it would destroy a file that was never ours.
     if let Some(torn) = torn {
+        if !begins_a_record(&torn.path, torn.offset)? {
+            return Err(LedgerError::Tamper {
+                seq: report.entries,
+                why: format!(
+                    "the unterminated last line of {} does not begin a ledger record; refusing \
+                     to truncate a file that may not be a ledger",
+                    torn.path.display()
+                ),
+            });
+        }
         heal_torn_tail(&torn.path, torn.offset)?;
     }
     Ok(report)
@@ -213,6 +225,16 @@ pub(crate) fn resolve_open_head(
 /// recovery is itself durable — a second crash cannot resurrect the fragment.
 /// Called only after [`resolve_open_head`] has proven the prefix still covers
 /// any anchor, so this never deletes acked history.
+fn begins_a_record(path: &Path, offset: u64) -> Result<bool, LedgerError> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = File::open(path).map_err(|e| io_err(path, e))?;
+    f.seek(SeekFrom::Start(offset))
+        .map_err(|e| io_err(path, e))?;
+    let mut first = [0u8; 1];
+    let n = f.read(&mut first).map_err(|e| io_err(path, e))?;
+    Ok(n == 1 && first[0] == b'{')
+}
+
 fn heal_torn_tail(path: &Path, offset: u64) -> Result<(), LedgerError> {
     let f = OpenOptions::new()
         .write(true)

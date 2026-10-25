@@ -926,6 +926,33 @@ fn a_truncation_is_tamper_whichever_key_opens_the_log() {
     }
 }
 
+/// A crash mid-append leaves an unterminated fragment that begins a record. An unterminated
+/// file that does not, such as a key file opened as a ledger by mistake, is refused and left as
+/// it is rather than truncated.
+#[test]
+fn an_unterminated_tail_that_is_not_a_record_is_refused_and_kept() {
+    let path = tmp("not-a-ledger.jsonl");
+    std::fs::write(&path, "a0".repeat(32)).unwrap();
+    let key = decern_crypto::generate().unwrap();
+    match Ledger::open(&path, key.clone()) {
+        Err(LedgerError::Tamper { why, .. }) => assert!(why.contains("does not begin"), "{why}"),
+        Err(e) => panic!("expected tamper: {e}"),
+        Ok(_) => panic!("a file that is not a ledger must not open"),
+    }
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "a0".repeat(32));
+
+    // A real torn record after a good one still heals.
+    let path = tmp("torn-record.jsonl");
+    std::fs::remove_file(&path).ok();
+    let mut l = Ledger::open(&path, key.clone()).unwrap();
+    l.append(entry("Read", true)).unwrap();
+    drop(l);
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.extend_from_slice(br#"{"entry":{"seq":1"#);
+    std::fs::write(&path, &bytes).unwrap();
+    assert_eq!(Ledger::open(&path, key).unwrap().count(), 1);
+}
+
 #[test]
 fn rotating_back_to_a_superseded_key_is_refused() {
     let path = tmp("rotate-back.ledger");

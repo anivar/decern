@@ -214,13 +214,13 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
     // and the ledger exist.
     registry_path(&missions_path)?;
     match &sharded {
-        Some(ShardedTarget::Dir(dir)) if missions_path == *dir => {
+        Some(ShardedTarget::Dir(dir)) if same_path(&missions_path, dir) => {
             anyhow::bail!(
                 "--missions {} is the shard directory",
                 missions_path.display()
             )
         }
-        None if missions_path == ledger_path => {
+        None if same_path(&missions_path, &ledger_path) => {
             anyhow::bail!("--missions {} is the ledger", missions_path.display())
         }
         None => writable_path("--ledger", &ledger_path)?,
@@ -228,6 +228,14 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
     }
     if let Some(k) = &args.key {
         writable_path("--key", k)?;
+        // The ledger opens its file for append and trims an unterminated last line, and a key
+        // file has no newline: pointed at the key, the open would truncate it.
+        if sharded.is_none() && same_path(k, &ledger_path) {
+            anyhow::bail!("--ledger {} is the key file", ledger_path.display());
+        }
+        if same_path(k, &missions_path) {
+            anyhow::bail!("--missions {} is the key file", missions_path.display());
+        }
     }
     if missions_path.is_file() {
         let bytes = std::fs::read(&missions_path)
@@ -352,6 +360,24 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
         caller,
         line,
     })
+}
+
+/// Whether two flags name one file: by device and inode when both exist, otherwise by their
+/// absolute forms, so `./l` and `l`, or a link and what it points at, are not taken for two.
+fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    if let (Ok(ma), Ok(mb)) = (std::fs::metadata(a), std::fs::metadata(b)) {
+        use std::os::unix::fs::MetadataExt;
+        return ma.dev() == mb.dev() && ma.ino() == mb.ino();
+    }
+    #[cfg(not(unix))]
+    if let (Ok(ca), Ok(cb)) = (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        return ca == cb;
+    }
+    match (std::path::absolute(a), std::path::absolute(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
 }
 
 /// The registry path: not a directory, and not under a path that is a file. A parent that does
@@ -764,6 +790,69 @@ mod tests {
             .err()
             .expect("a relabelled key id is not a pass");
         assert!(format!("{e:#}").contains("does not verify under"), "{e:#}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The ledger and the registry are files this boot writes, and the key file is the one it
+    /// must never touch: naming the key as either is refused before anything is written, the
+    /// same file reached by another spelling of its path included.
+    #[tokio::test]
+    async fn a_ledger_or_registry_that_is_the_key_file_is_refused() {
+        let dir = fresh_dir("ledger-is-key");
+        let key = dir.join("k");
+        decern_crypto::save_signing_key(&decern_crypto::generate().unwrap(), &key).unwrap();
+        let before = std::fs::read(&key).unwrap();
+        let spelled = dir.join(".").join("k");
+
+        let argv = |ledger: &std::path::Path, missions: &std::path::Path, key: &std::path::Path| {
+            Args::parse_from([
+                "decern-serve",
+                "--trust-proxy",
+                "--addr",
+                "127.0.0.1:0",
+                "--ledger",
+                ledger.to_str().unwrap(),
+                "--missions",
+                missions.to_str().unwrap(),
+                "--key",
+                key.to_str().unwrap(),
+            ])
+        };
+        let m = dir.join("m.json");
+        let l = dir.join("l.jsonl");
+        let mut cases = vec![
+            (key.as_path(), m.as_path(), "is the key file"),
+            (spelled.as_path(), m.as_path(), "is the key file"),
+            (l.as_path(), key.as_path(), "is the key file"),
+        ];
+        #[cfg(unix)]
+        let link = {
+            let link = dir.join("link");
+            std::os::unix::fs::symlink(&key, &link).unwrap();
+            link
+        };
+        #[cfg(unix)]
+        cases.push((link.as_path(), m.as_path(), "is the key file"));
+        for (ledger, missions, needle) in cases {
+            let e = prepare(argv(ledger, missions, &key))
+                .await
+                .err()
+                .expect("the boot should have been refused");
+            assert!(e.to_string().contains(needle), "{e}");
+            assert_eq!(std::fs::read(&key).unwrap(), before, "the key file changed");
+        }
+        // Neither exists yet: refused on the absolute paths, and nothing is created.
+        let fresh = dir.join("new");
+        let e = prepare(argv(&fresh, &m, &fresh))
+            .await
+            .err()
+            .expect("the boot should have been refused");
+        assert!(e.to_string().contains("is the key file"), "{e}");
+        assert!(
+            !fresh.exists(),
+            "a refused boot created {}",
+            fresh.display()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
