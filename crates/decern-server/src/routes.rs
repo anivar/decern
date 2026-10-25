@@ -148,6 +148,8 @@ mod tests {
             missions: test_missions(),
             pubkey,
             retired_keys: Arc::new(Vec::new()),
+            tree_head: Arc::default(),
+            projection: Arc::default(),
             require_mission: false,
             standing_issuers: Arc::new(Vec::new()),
             authority_digest: Arc::from("test-authority"),

@@ -250,6 +250,18 @@ pub(crate) async fn evaluations(
         Ok(req) => req,
         Err(rejection) => return invalid_request(rejection.body_text()),
     };
+    crate::record::off_the_executor("decision_unavailable", move || {
+        evaluate_all(&st, &caller, top)
+    })
+    .await
+}
+
+/// Every item of one exchange, admitted, decided and recorded, on a blocking thread.
+fn evaluate_all(
+    st: &AppState,
+    caller: &Option<axum::Extension<crate::caller::Authenticated>>,
+    top: BatchReq,
+) -> Response {
     let semantic = match Semantic::parse(
         top.options
             .as_ref()
@@ -262,7 +274,7 @@ pub(crate) async fn evaluations(
     if items.is_empty() {
         // Backwards-compatible with the single evaluation, in request and in answer.
         return match merged(&top, None, &json!({})) {
-            Ok(req) => decide_one(&st, &caller, req),
+            Ok(req) => decide_one(st, caller, req),
             Err(detail) => invalid_request(detail),
         };
     }
@@ -278,7 +290,7 @@ pub(crate) async fn evaluations(
     // costs no copies, and comes before a single record has landed.
     for item in items {
         let (subject_id, describes, decision_subject) = facts(&top, item);
-        if let Some(refusal) = admit_named(&caller, subject_id, describes, decision_subject) {
+        if let Some(refusal) = admit_named(caller, subject_id, describes, decision_subject) {
             return refusal;
         }
     }
@@ -301,7 +313,7 @@ pub(crate) async fn evaluations(
             KEYS.iter().zip(oversize_default).any(|(key, oversize)| {
                 oversize && !item.as_object().is_some_and(|o| o.contains_key(*key))
             });
-        let a = answer(&st, &caller, &top, i, item, inherits_an_oversize_default);
+        let a = answer(st, caller, &top, i, item, inherits_an_oversize_default);
         decided.extend(a.record);
         results.push(a.body);
         match semantic {

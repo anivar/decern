@@ -44,6 +44,12 @@ pub(crate) struct AppState {
     pub(crate) pubkey: VerifyingKey,
     /// Ledger keys this deployment rotated away from (`--retired-key`), in the order given.
     pub(crate) retired_keys: Arc<Vec<VerifyingKey>>,
+    /// The last tree head served and when it was computed (`audit::tree_head`).
+    pub(crate) tree_head:
+        Arc<tokio::sync::Mutex<Option<(std::time::Instant, decern_ledger::TreeHead)>>>,
+    /// Held while a subject projection reads the log, so one runs at a time
+    /// (`audit::subject_audit`).
+    pub(crate) projection: Arc<tokio::sync::Mutex<()>>,
     /// When true, every decide must name a live `context.mission`.
     pub(crate) require_mission: bool,
     /// Issuer keys a standing token may be signed by. Empty means this deployment

@@ -953,6 +953,41 @@ fn an_unterminated_tail_that_is_not_a_record_is_refused_and_kept() {
     assert_eq!(Ledger::open(&path, key).unwrap().count(), 1);
 }
 
+/// A prefix taken under the lock reads exactly the records written by then, however many are
+/// appended after it, and never part of a line being written.
+#[test]
+fn a_prefix_reads_what_was_written_when_it_was_taken() {
+    let path = tmp("prefix.jsonl");
+    std::fs::remove_file(&path).ok();
+    let mut l = Ledger::open(&path, decern_crypto::generate().unwrap()).unwrap();
+    for _ in 0..3 {
+        l.append(entry("Read", true)).unwrap();
+    }
+    let prefix = l.prefix();
+    l.append(entry("Write", true)).unwrap();
+    // A half-written line after the prefix, as an append in progress leaves it.
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.extend_from_slice(br#"{"entry":{"seq":4"#);
+    std::fs::write(&path, &bytes).unwrap();
+    let lines = prefix.lines().unwrap();
+    assert_eq!(prefix.count(), 3);
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines, l.raw_records().unwrap()[..3].to_vec());
+
+    // Fewer records on disk than the prefix counts — the file cut behind the ledger's back —
+    // is refused, never read as a shorter log.
+    let kept: Vec<&str> = std::str::from_utf8(&bytes)
+        .unwrap()
+        .lines()
+        .take(2)
+        .collect();
+    std::fs::write(&path, kept.join("\n") + "\n").unwrap();
+    assert!(matches!(
+        prefix.lines(),
+        Err(LedgerError::Tamper { seq: 2, .. })
+    ));
+}
+
 #[test]
 fn rotating_back_to_a_superseded_key_is_refused() {
     let path = tmp("rotate-back.ledger");

@@ -61,6 +61,48 @@ pub struct Ledger {
     failed: bool,
 }
 
+/// The first [`count`](Prefix::count) records of a ledger, readable without holding it.
+/// See [`Ledger::prefix`].
+pub struct Prefix {
+    location: Location,
+    count: u64,
+}
+
+impl Prefix {
+    /// How many records the prefix holds.
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// The prefix's records exactly as stored, one string per line. Lines past the prefix,
+    /// including one being appended now, are not read.
+    pub fn lines(&self) -> Result<Vec<String>, LedgerError> {
+        let (lines, _torn) = self.location.prefix_lines()?;
+        let mut out = Vec::new();
+        for line in lines {
+            if out.len() as u64 == self.count {
+                break;
+            }
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            out.push(line);
+        }
+        if (out.len() as u64) < self.count {
+            return Err(LedgerError::Tamper {
+                seq: out.len() as u64,
+                why: format!(
+                    "{} records on disk where {} were written",
+                    out.len(),
+                    self.count
+                ),
+            });
+        }
+        Ok(out)
+    }
+}
+
 struct RolloverState {
     policy: RolloverPolicy,
     manifest: segment::Manifest,
@@ -586,6 +628,16 @@ impl Ledger {
             out.push(line);
         }
         Ok(out)
+    }
+
+    /// The records written so far, as a handle that reads them without this ledger: records
+    /// already written are never rewritten, so a caller can take this under a lock, release
+    /// it, and read the prefix while later appends land after it.
+    pub fn prefix(&self) -> Prefix {
+        Prefix {
+            location: self.location.clone(),
+            count: self.next_seq,
+        }
     }
 
     /// A window of records for the admin ledger browser: skip `offset`, take up
