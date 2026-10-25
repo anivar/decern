@@ -281,6 +281,10 @@ struct AgentCnf {
 }
 
 impl CallerAuth for AauthConfig {
+    fn reads_body(&self) -> bool {
+        true
+    }
+
     fn authenticate(
         &self,
         req: &axum::extract::Request,

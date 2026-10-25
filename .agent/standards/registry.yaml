@@ -22,11 +22,12 @@ non_surface:
   - crates/decern-server/src/record.rs
   - crates/decern-server/src/audit.rs
   - crates/decern-server/src/testutil.rs
+  - crates/decern-server/src/serve.rs
 
 standards:
   - name: AuthZEN Authorization API 1.0
     url: https://openid.net/specs/authorization-api-1_0.html
-    verified: 2026-10-09
+    verified: 2026-10-25
     surface:
       - crates/decern-server/src/decide.rs
       - crates/decern-server/src/routes.rs
@@ -65,7 +66,7 @@ standards:
       and Discovery run as tests against examples/authzen-certification/model. Reasons
       carry named policy ids on the builtin model, and
       the endpoint sits behind whichever caller posture the deployment names, which AuthZEN
-      leaves to the deployment. Verified against the spec 2026-10-09.
+      leaves to the deployment. Verified against the spec 2026-10-09. §11.7 asks for protection against attacks tied to payload size: the body is bounded at 2 MiB, a context at 64 KiB, an entity type, id or action name at 1 KiB, and what one batch may record at 16 MiB, each answered `413`, which §10.1.2's open set of 4XX codes allows. §10.1.2 and §11.7 read again 2026-10-25.
 
   - name: OAuth 2.0 Token Exchange (RFC 8693)
     url: https://www.rfc-editor.org/rfc/rfc8693
@@ -318,7 +319,7 @@ standards:
 
   - name: HTTP Message Signatures (RFC 9421)
     url: https://www.rfc-editor.org/rfc/rfc9421
-    verified: 2026-10-19
+    verified: 2026-10-25
     surface:
       - crates/decern-server/src/httpsig.rs
       - crates/decern-server/src/sig.rs
@@ -352,7 +353,7 @@ standards:
       enforcement to the application; there is no nonce cache, so a verbatim replay verifies
       again inside the window. A label repeated in either field is refused (§4). The RFC's Ed25519 vectors (Appendix B.2.6, B.4) are tests. Errata 8102 and
       8103 (verified) rename `@signature-input` to `@signature-params` in two passages and
-      change nothing implemented. Read in full 2026-10-19.
+      change nothing implemented. Read in full 2026-10-19; §4, §4.1 and §4.2 (labels unique across field values) read again 2026-10-25 for the repeated-label check.
 
   - name: Structured Field Values for HTTP (RFC 9651)
     url: https://www.rfc-editor.org/rfc/rfc9651

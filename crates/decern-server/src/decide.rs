@@ -200,6 +200,11 @@ impl Refusal {
         Refusal::new(StatusCode::BAD_REQUEST, "invalid_request", detail)
     }
 
+    /// A request larger than this server will evaluate or record, other than its context.
+    pub(crate) fn payload_too_large(error: impl Into<String>, detail: impl Into<String>) -> Self {
+        Refusal::new(StatusCode::PAYLOAD_TOO_LARGE, error, detail)
+    }
+
     /// A context larger than this server will evaluate or record.
     pub(crate) fn context_too_large() -> Self {
         Refusal::new(
@@ -217,6 +222,22 @@ impl Refusal {
 pub(crate) const MAX_CONTEXT_BYTES: usize = 64 * 1024;
 pub(crate) const CONTEXT_TOO_LARGE: &str = "context exceeds 64 KiB, properties included";
 
+/// The longest entity type, entity id or action name one evaluation may carry. Each is
+/// recorded with the decision, and a batch repeats its defaults in every item.
+pub(crate) const MAX_NAME_BYTES: usize = 1024;
+
+/// A refusal for the first of `names` longer than [`MAX_NAME_BYTES`].
+pub(crate) fn name_too_large<'a>(
+    names: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Option<Refusal> {
+    names
+        .into_iter()
+        .find(|(_, value)| value.len() > MAX_NAME_BYTES)
+        .map(|(field, _)| {
+            Refusal::payload_too_large("name_too_large", format!("{field} exceeds 1 KiB"))
+        })
+}
+
 pub(crate) fn context_too_large(context: &Value) -> bool {
     !serde_json::to_vec(context).is_ok_and(|bytes| bytes.len() <= MAX_CONTEXT_BYTES)
 }
@@ -224,7 +245,7 @@ pub(crate) fn context_too_large(context: &Value) -> bool {
 /// `s` with control characters dropped and at most `max` characters kept, by character
 /// and never by byte: a cut inside a multi-byte character would turn a refusal into a
 /// panic on attacker-chosen text.
-fn bounded(s: &str, max: usize) -> String {
+pub(crate) fn bounded(s: &str, max: usize) -> String {
     let kept: Vec<char> = s.chars().filter(|c| !c.is_control()).collect();
     let mut out: String = kept.iter().take(max).collect();
     if kept.len() > max {
@@ -438,6 +459,15 @@ fn prepare(
     caller: &Option<axum::Extension<crate::caller::Authenticated>>,
     mut req: DecideReq,
 ) -> Result<Prepared, Refusal> {
+    if let Some(refusal) = name_too_large([
+        ("subject.type", req.subject.ty.as_str()),
+        ("subject.id", req.subject.id.as_str()),
+        ("resource.type", req.resource.ty.as_str()),
+        ("resource.id", req.resource.id.as_str()),
+        ("action.name", req.action.name.as_str()),
+    ]) {
+        return Err(refusal);
+    }
     // What the PEP says about each party, taken out before the parties are moved below.
     // An empty `properties` says nothing. `admit` has already settled whether this caller
     // may describe a party at all.

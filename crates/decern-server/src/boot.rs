@@ -57,9 +57,13 @@ pub(crate) async fn serve() -> Result<()> {
 pub(crate) async fn serve_with(args: Args) -> Result<()> {
     let boot = prepare(args).await?;
     println!("{}", boot.line);
-    axum::serve(boot.listener, app(boot.state, boot.caller))
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    crate::serve::run(
+        boot.listener,
+        app(boot.state, boot.caller),
+        crate::serve::LIMITS,
+        shutdown_signal(),
+    )
+    .await;
     Ok(())
 }
 

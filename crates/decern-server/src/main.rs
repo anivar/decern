@@ -24,6 +24,7 @@ mod mission;
 mod record;
 mod routes;
 mod search;
+mod serve;
 mod sig;
 mod spiffe;
 mod state;

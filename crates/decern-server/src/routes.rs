@@ -98,6 +98,7 @@ pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
         .merge(guarded)
         .with_state(state)
         .layer(axum::middleware::from_fn(echo_request_id))
+        .layer(axum::middleware::from_fn(crate::serve::deadline))
 }
 
 #[cfg(test)]
@@ -287,6 +288,47 @@ mod tests {
             StatusCode::UNAUTHORIZED,
             "a captured signature must not authorize a different body"
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A posture whose credential is in the headers refuses before reading the body, so a
+    /// caller with no credential cannot hold a connection on a body that never arrives.
+    #[tokio::test]
+    async fn a_header_posture_refuses_before_reading_the_body() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let cfg = bearer::Config {
+            issuer: "https://issuer.example/".into(),
+            audience: "https://pdp.example/".into(),
+            keys: vec![SigningKey::from_bytes(&[3u8; 32]).verifying_key()],
+            scopes: vec![],
+        };
+        let router = app(st, Arc::new(caller::Caller::Bearer(Box::new(cfg))));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(crate::serve::run(
+            listener,
+            router,
+            crate::serve::LIMITS,
+            std::future::pending(),
+        ));
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        // Headers promising a body that is never sent.
+        conn.write_all(
+            b"POST /access/v1/evaluation HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 1000000\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        let mut head = [0u8; 12];
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            conn.read_exact(&mut head),
+        )
+        .await
+        .expect("refused without waiting for the body")
+        .unwrap();
+        assert_eq!(&head, b"HTTP/1.1 401");
         let _ = std::fs::remove_dir_all(&base);
     }
 

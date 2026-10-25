@@ -22,6 +22,37 @@ use crate::record::{Shard, append_all_to_backend, evaluation_body, record_or_503
 /// is bounded the way a single request's body is, and says so rather than timing out.
 pub(crate) const MAX_EVALUATIONS: usize = 1000;
 
+/// The most one exchange may put on the ledger, measured as the JSON each item decides on.
+/// Every item repeats the defaults it does not override, so without this a request could
+/// record a thousand times its own size.
+pub(crate) const MAX_RECORDED_BYTES: usize = 16 * 1024 * 1024;
+
+/// The fields an item inherits from the top level when it does not name its own.
+const KEYS: [&str; 4] = ["subject", "action", "resource", "context"];
+
+fn json_len(value: &Value) -> usize {
+    serde_json::to_vec(value).map_or(usize::MAX, |bytes| bytes.len())
+}
+
+/// What `items` would put on the ledger: each item's own fields, and each default it
+/// inherits, except a default too large to evaluate, which the item is refused for.
+fn recorded_bytes(top: &BatchReq, items: &[Value], oversize_default: [bool; 4]) -> usize {
+    let defaults = KEYS.map(|key| top.default_for(key).map_or(0, json_len));
+    items
+        .iter()
+        .map(|item| {
+            KEYS.iter()
+                .enumerate()
+                .map(|(i, key)| match item.get(*key) {
+                    Some(own) => json_len(own),
+                    None if oversize_default[i] => 0,
+                    None => defaults[i],
+                })
+                .fold(0usize, usize::saturating_add)
+        })
+        .fold(0usize, usize::saturating_add)
+}
+
 /// §7.1: top-level `subject`, `action`, `resource` and `context` are defaults for every
 /// item of `evaluations`; an item's own key replaces the default whole. Each top-level
 /// field is kept as it arrived, since an item may supply its own and never use it.
@@ -255,8 +286,14 @@ pub(crate) async fn evaluations(
     // A default too large to evaluate — a context, or a party whose `properties` are —
     // is answered per item without being copied into each; an item that brings its own
     // value for that key is judged on that.
-    const KEYS: [&str; 4] = ["subject", "action", "resource", "context"];
     let oversize_default = KEYS.map(|key| top.default_for(key).is_some_and(context_too_large));
+    if recorded_bytes(&top, items, oversize_default) > MAX_RECORDED_BYTES {
+        return Refusal::payload_too_large(
+            "batch_too_large",
+            "the evaluations would record more than 16 MiB",
+        )
+        .into_response();
+    }
     let mut results = Vec::with_capacity(items.len());
     let mut decided = Vec::new();
     for (i, item) in items.iter().enumerate() {

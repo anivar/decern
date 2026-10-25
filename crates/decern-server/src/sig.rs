@@ -194,6 +194,10 @@ pub(crate) fn jwk_to_verifying_key(jwk: &JwkEd25519) -> Result<VerifyingKey, Den
 }
 
 impl CallerAuth for SigConfig {
+    fn reads_body(&self) -> bool {
+        true
+    }
+
     /// The credential is spread across the request line and the signature headers,
     /// and for POST the body via `Content-Digest`. Unlike bearer, those are covered
     /// components of the signature, not incidental context.
@@ -296,7 +300,10 @@ impl<'a> SignedRequest<'a> {
         let signature = self
             .signature_header
             .ok_or_else(|| Denied::Invalid("request carries no Signature".into()))?;
-        if key.len() > MAX_TOKEN_BYTES || input.len() > MAX_TOKEN_BYTES {
+        if key.len() > MAX_TOKEN_BYTES
+            || input.len() > MAX_TOKEN_BYTES
+            || signature.len() > MAX_TOKEN_BYTES
+        {
             return Err(Denied::Invalid(
                 "signature material exceeds the accepted size".into(),
             ));
@@ -917,6 +924,27 @@ mod tests {
         .unwrap_err();
         assert!(
             e.detail().contains("does not match the request body"),
+            "{}",
+            e.detail()
+        );
+    }
+
+    /// Every signature header is bounded before it is parsed, `Signature` with the others:
+    /// parsing a long dictionary costs work before any key is consulted.
+    #[test]
+    fn an_oversized_signature_header_is_refused_before_it_is_parsed() {
+        let k = decern_crypto::generate().unwrap();
+        let token = bound_token(&k.verifying_key(), |_| {});
+        let (key_h, input_h, _sig_h) = sign_get(&k, &token, &UNBODIED_COMPONENTS, CREATED);
+        let huge = format!("sig1=:{}:", "A".repeat(MAX_TOKEN_BYTES));
+        let e = authenticate(
+            &get_req(&key_h, &input_h, &huge),
+            &cfg(&k.verifying_key()),
+            NOW,
+        )
+        .unwrap_err();
+        assert!(
+            e.detail().contains("exceeds the accepted size"),
             "{}",
             e.detail()
         );

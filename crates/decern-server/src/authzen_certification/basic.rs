@@ -336,3 +336,33 @@ async fn the_authority_side_decides_the_archived_record_without_properties() {
         assert_eq!(resp["decision"], expect, "{subject} write record-2: {resp}");
     }
 }
+
+/// Every name an evaluation carries is recorded with its decision, so each is bounded; one
+/// past the bound is refused before anything is decided or recorded.
+#[tokio::test]
+async fn a_name_past_its_bound_is_refused_and_not_recorded() {
+    let (st, base) = fixture_state();
+    let long = "r".repeat(crate::decide::MAX_NAME_BYTES + 1);
+    let (status, body) = decision(&st, &fixture("alice", "read", &long)).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
+    assert_eq!(body["error"], "name_too_large", "{body}");
+    assert!(records_in(&base, &st).is_empty());
+}
+
+/// A kernel error can quote the request back; the answer bounds it as a refusal does.
+#[tokio::test]
+async fn an_error_quoting_the_request_is_bounded() {
+    let (st, _base) = fixture_state();
+    let action = "x".repeat(crate::decide::MAX_NAME_BYTES);
+    let (status, body) = decision(&st, &fixture("alice", &action, "record-1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let errors = body["context"]["errors"]
+        .as_array()
+        .expect("an unknown action is an error");
+    assert!(
+        errors
+            .iter()
+            .all(|e| e.as_str().is_some_and(|s| s.chars().count() <= 513)),
+        "{body}"
+    );
+}

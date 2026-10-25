@@ -402,6 +402,21 @@ fn checked(req: &SearchReq, what: For) -> Result<(), Refusal> {
             )))
         }
     };
+    if let Some(refusal) = crate::decide::name_too_large([
+        ("subject.type", req.subject.ty.as_str()),
+        ("subject.id", req.subject.id.as_deref().unwrap_or_default()),
+        ("resource.type", req.resource.ty.as_str()),
+        (
+            "resource.id",
+            req.resource.id.as_deref().unwrap_or_default(),
+        ),
+        (
+            "action.name",
+            req.action.as_ref().map_or("", |a| a.name.as_str()),
+        ),
+    ]) {
+        return Err(refusal);
+    }
     let has_id = |p: &Party| p.id.as_ref().is_some_and(|id| !id.is_empty());
     match what {
         For::Subject => {

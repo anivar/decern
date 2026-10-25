@@ -30,6 +30,10 @@ hex = { workspace = true }
 getrandom = { workspace = true }
 sha2 = { workspace = true }
 sfv = { workspace = true }
+# Already in the tree through axum; named here so the server can set the header-read
+# timeout and the connection bound `axum::serve` does not expose (`serve.rs`).
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["server", "server-graceful", "http1", "service", "tokio"] }
 # Optional: multi-host sharded head store. Off by default so `decern-serve`
 # stays pure Rust; enabling it pulls in the one documented C-FFI stack (TLS).
 decern-store-postgres = { workspace = true, optional = true }
