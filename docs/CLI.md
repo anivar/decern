@@ -186,11 +186,12 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | `--bearer-audience <URI>` | This deployment's resource identifier, which a token's `aud` must contain (RFC 8707 §2). |
 | `--bearer-issuer-key <HEX>` | An Ed25519 key access tokens may be signed by; only `EdDSA` tokens verify. Repeatable. Keys are read once at startup, so a rollover is the new key added and the server restarted before the issuer switches, then the old key removed on a later restart. |
 | `--bearer-scope <SCOPE>` | A scope every token must carry. Repeatable; all are required, and a verified token missing one is refused `403 insufficient_scope`. Omit for no scope check. |
-| `--signed-agent-key <ID=HEX>` | An agent identifier this deployment recognizes and an Ed25519 key it may sign requests with. Repeatable: one entry per agent, and a key rollover is a second entry rather than an atomic swap. Turns on RFC 9421 + RFC 7800 sender-constrained request validation for the guarded routes; requires `--signed-audience`. One posture per deployment: naming a second is a startup failure. An identifier with no entry here cannot authenticate under this mode, by design: keys are configured, never fetched. |
+| `--signed-agent-key <ID=HEX>` | An agent identifier this deployment recognizes and an Ed25519 key it may sign requests with. Repeatable: one entry per agent, and a key rollover is a second entry rather than an atomic swap. Turns on RFC 9421 + RFC 7800 sender-constrained request validation for the guarded routes; requires `--signed-audience` and `--signed-authority`. One posture per deployment: naming a second is a startup failure. An identifier with no entry here cannot authenticate under this mode, by design: keys are configured, never fetched. |
 | `--signed-audience <URI>` | This deployment's resource identifier, which a signed request's bound token's `aud` must contain. Required with `--signed-agent-key` and refused without it, same role as `--bearer-audience`. |
+| `--signed-authority <AUTHORITY>` | This deployment's authority, which a signed request's `@authority` — the target URI's, or `Host` — must equal, compared without case. A port the request carries is part of it, a default one such as `:443` included, so name the authority exactly as signers send it. Required with `--signed-agent-key` and refused without it: the audience names a resource several deployments may share, so without this a request signed for one of them would verify at another trusting the same agent key. |
 | `--pep <ID>` | A workload caller that may name principals other than itself. Repeatable. Applies to every workload posture — `--signed-agent-key`, `--spiffe-trust-domain` and `--aauth-provider`; the id must be one this deployment can already authenticate, since a PEP still has to prove who it is; under `--aauth-provider` that is an agent identifier in a configured provider's domain. Omit to bind every workload caller to itself. |
 | `--aauth-provider <ISS=PATH>` | An AAuth agent provider this deployment accepts, named as `https://` and a lowercase host alone, and the JWK Set holding the Ed25519 keys it signs agent tokens with. A usable key names `kty: OKP`, `crv: Ed25519`, `alg: Ed25519` and a `kid`, and no `use` other than `sig`; every other member of the set is skipped. An agent token's `sub` must be an agent identifier, `aauth:local@domain`, in that provider's domain. Repeatable: one entry per provider. Read once at startup and refused there if it carries no usable key, or two usable keys under one `kid`. Turns on AAuth agent-token validation; requires `--aauth-audience`. Keys are configured, never fetched: the draft's `dwk` discovery is deliberately not performed, so an agent whose provider is not named here is refused before any cryptography runs. |
-| `--aauth-audience <AUTHORITY>` | This deployment's authority, which a request's authority — the target URI's, or `Host` — must equal. Required with `--aauth-provider` and refused without it — an agent token carries no `aud`, so without it a request signed for one deployment would verify at another pinning the same provider. |
+| `--aauth-audience <AUTHORITY>` | This deployment's authority, which a request's authority — the target URI's, or `Host` — must equal. A port the request carries is part of it, a default one such as `:443` included. Required with `--aauth-provider` and refused without it — an agent token carries no `aud`, so without it a request signed for one deployment would verify at another pinning the same provider. |
 | `--spiffe-trust-domain <TRUST_DOMAIN=PATH>` | A SPIFFE trust domain this deployment accepts, and the JWK Set holding its JWT-SVID signing keys. Repeatable: one entry per federated domain. Read once at startup and refused there if it carries no `use: jwt-svid` key, an entry without a `kid`, or a key this deployment cannot verify with. Turns on JWT-SVID validation; requires `--spiffe-audience`. |
 | `--spiffe-audience <URI>` | This deployment's resource identifier, which an SVID's `aud` must contain. Required with `--spiffe-trust-domain` and refused without it, same role as `--bearer-audience`. |
 | `--trust-proxy` | Accept every caller, because something in front already authenticates them. One posture is required to start; naming two is a startup failure. |
@@ -237,7 +238,7 @@ names one posture:
   no TLS stack and no reliance on a third party being reachable. RFC 9068 §2.1 requires a
   conforming resource server to support RS256, and this verifies `EdDSA` only, so it applies
   the profile's checks without conforming to it.
-- **Sender-constrained validation** (`--signed-agent-key`, `--signed-audience`): the guarded
+- **Sender-constrained validation** (`--signed-agent-key`, `--signed-audience`, `--signed-authority`): the guarded
   routes require an RFC 9421 HTTP Message Signature over `@method`, `@authority`, `@path`, and
   `signature-key`, plus `content-digest` (RFC 9530 `sha-256`) on a POST or any request carrying
   a body, bound to an RFC 7800 `cnf.jwk` claim matching a key configured here for the claimed
@@ -254,7 +255,10 @@ names one posture:
   bound to itself may not describe a party through `properties`, nor search for subjects — a
   search names everyone — and each is `403 caller_mismatch`. Verification is against configured
   keys only, same no-fetch posture as bearer validation, and an agent identifier with no
-  configured key is refused before any cryptography runs.
+  configured key, or a request whose `@authority` is not `--signed-authority`, is refused before
+  any cryptography runs. The bound token must carry an `iss`, but no issuer key verifies the
+  token, so a record made under this posture names the agent as subject and client and no
+  issuer.
   [`examples/signed-request/`](../examples/signed-request/README.md) runs this mode end to end,
   including the beat that separates it from a bearer credential: the *same* token, refused when
   the signature comes from a different key, and the beats that refuse an authenticated agent

@@ -109,6 +109,7 @@ pub(crate) fn mission_state_with(base: &Path, model: Model) -> (AppState, Verify
         missions: Arc::new(FileMissionRegistry::open(&missions_path).unwrap()),
         pubkey,
         retired_keys: Arc::new(Vec::new()),
+        clock: crate::now_secs,
         tree_head: Arc::default(),
         projection: Arc::default(),
         require_mission: false,
@@ -190,7 +191,7 @@ pub(crate) async fn decide_under_registered_mission(
 ) -> (StatusCode, Value) {
     let approver = entry.approver.clone();
     st.missions
-        .register(s256, entry, crate::now_secs())
+        .register(s256, entry, crate::now_secs().unwrap())
         .unwrap();
     let req: crate::decide::DecideReq = serde_json::from_value(json!({
         "subject": {"type": "Principal", "id": subject},

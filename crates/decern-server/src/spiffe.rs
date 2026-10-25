@@ -558,7 +558,7 @@ mod tests {
         assert_eq!(who.subject, SUB);
         // No `iss` claim is required by the spec, so the issuer recorded is derived from
         // the trust domain in the verified `sub`.
-        assert_eq!(who.issuer, "spiffe://example.org");
+        assert_eq!(who.issuer.as_deref(), Some("spiffe://example.org"));
     }
 
     /// The reason the trust domain is matched exactly rather than by prefix: an attacker

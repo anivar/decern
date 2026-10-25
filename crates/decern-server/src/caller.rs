@@ -117,12 +117,12 @@ impl Denied {
 }
 
 /// What a verified credential says about its holder: the party, the client acting for it,
-/// and the issuer whose signature was checked.
+/// and the issuer whose signature was checked, where one was.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Authenticated {
     pub(crate) subject: String,
     pub(crate) client_id: String,
-    pub(crate) issuer: String,
+    pub(crate) issuer: Option<String>,
     /// Whether this caller may name principals other than itself. Set by the posture
     /// that established it, so a handler cannot pick the wrong default by omission.
     pub(crate) bind: Bind,
@@ -148,7 +148,18 @@ impl Authenticated {
         Self {
             subject: subject.into(),
             client_id: client_id.into(),
-            issuer: issuer.into(),
+            issuer: Some(issuer.into()),
+            bind: Bind::Any,
+        }
+    }
+
+    /// A caller whose credential no issuer signed in a way this deployment checked: a
+    /// signed request, whose token the request signature covers but no issuer key verifies.
+    pub(crate) fn without_issuer(subject: impl Into<String>, client_id: impl Into<String>) -> Self {
+        Self {
+            subject: subject.into(),
+            client_id: client_id.into(),
+            issuer: None,
             bind: Bind::Any,
         }
     }
@@ -275,7 +286,10 @@ pub(crate) fn refuse_description_unless_pep(
 /// second, weaker answer. Under every other posture nothing reaches a handler unverified,
 /// and the verified identity rides the request so the record can say who asserted it.
 pub(crate) async fn guard(
-    axum::extract::State(caller): axum::extract::State<std::sync::Arc<Caller>>,
+    axum::extract::State((caller, clock)): axum::extract::State<(
+        std::sync::Arc<Caller>,
+        crate::Clock,
+    )>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
@@ -289,8 +303,11 @@ pub(crate) async fn guard(
     let early = if reads_body {
         None
     } else {
+        let Some(now) = clock() else {
+            return crate::clock_unavailable().into_response();
+        };
         let posture = posture(&caller);
-        match posture.authenticate(&req, crate::now_secs(), &[]) {
+        match posture.authenticate(&req, now, &[]) {
             Ok(who) => Some(who),
             Err(denied) => return posture.refuse(denied),
         }
@@ -319,12 +336,15 @@ pub(crate) async fn guard(
     // posture is added.
     let established = match early {
         Some(who) => Ok(who),
-        None => {
-            let posture = posture(&caller);
-            posture
-                .authenticate(&req, crate::now_secs(), &bytes)
-                .map_err(|denied| posture.refuse(denied))
-        }
+        None => match clock() {
+            None => Err(crate::clock_unavailable().into_response()),
+            Some(now) => {
+                let posture = posture(&caller);
+                posture
+                    .authenticate(&req, now, &bytes)
+                    .map_err(|denied| posture.refuse(denied))
+            }
+        },
     };
     match established {
         Ok(who) => {

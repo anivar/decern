@@ -125,16 +125,20 @@ fn is_false(b: &bool) -> bool {
 }
 
 /// The verified caller of the request that produced a record: the token's subject, the
-/// client acting for it, and the issuer that vouched — enough for a reader to ask the
-/// right party why this request was made, and nothing a caller can write for itself.
+/// client acting for it, and the issuer that vouched, where the server checked one —
+/// enough for a reader to ask the right party why this request was made, and nothing a
+/// caller can write for itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssertedBy {
-    /// The token's `sub` — the party the issuer authenticated.
+    /// The token's `sub` — the party the server authenticated.
     pub sub: String,
     /// The token's `client_id` — the client acting for that party.
     pub client_id: String,
-    /// The issuer whose signature the server verified.
-    pub iss: String,
+    /// The issuer whose signature the server verified. Absent when no issuer's was: a
+    /// signed request's token is covered by the request signature, never verified against
+    /// an issuer key, so its `iss` is the caller's own claim and is not recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iss: Option<String>,
 }
 
 /// A challenge and its answer, on the record.

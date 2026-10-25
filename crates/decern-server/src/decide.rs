@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::record::{Shard, append_to_backend, record_and_respond, shard_for};
-use crate::{AppState, challenge, now_secs};
+use crate::{AppState, challenge};
 
 /// AuthZEN subject or resource: a `type`, an `id`, and optionally `properties` — what the
 /// PEP says about the party, carried into the context under the party's name
@@ -192,6 +192,11 @@ impl Refusal {
             // mirror for an unbounded body.
             detail: bounded(&detail.into(), 512),
         }
+    }
+
+    /// Something this server needs to answer at all is not available. 503.
+    pub(crate) fn unavailable(error: impl Into<String>, detail: impl Into<String>) -> Self {
+        Refusal::new(StatusCode::SERVICE_UNAVAILABLE, error, detail)
     }
 
     pub(crate) fn unprocessable(error: impl Into<String>, detail: impl Into<String>) -> Self {
@@ -436,6 +441,7 @@ struct MissionOutcome {
 /// the size bound — everything before the parties and the server's own keys.
 pub(crate) fn prepare_context(
     caller: &Option<axum::Extension<crate::caller::Authenticated>>,
+    clock: crate::Clock,
     context: serde_json::Map<String, Value>,
     described: [(&str, Option<serde_json::Map<String, Value>>); 3],
 ) -> Result<(Value, u64, Option<decern_ledger::AssertedBy>), Refusal> {
@@ -449,7 +455,7 @@ pub(crate) fn prepare_context(
             client_id: who.client_id.clone(),
             iss: who.issuer.clone(),
         });
-    let now_s = now_secs();
+    let now_s = clock().ok_or_else(crate::clock_unavailable)?;
     let ctx = kernel_context(context, described, now_s);
     if context_too_large(&ctx) {
         return Err(Refusal::context_too_large());
@@ -480,8 +486,12 @@ fn prepare(
         ("action", req.action.properties.take()),
     ]
     .map(|(key, p)| (key, p.filter(|m| !m.is_empty())));
-    let (mut ctx, now_s, asserted_by) =
-        prepare_context(caller, req.context.take().unwrap_or_default(), described)?;
+    let (mut ctx, now_s, asserted_by) = prepare_context(
+        caller,
+        st.clock,
+        req.context.take().unwrap_or_default(),
+        described,
+    )?;
     // A request names entity types in its own terms (`user`, `record`); the deployment
     // maps them onto the model's (`--authzen-type-alias`). The record carries the type the
     // kernel decided on, not the spelling the caller used.
@@ -903,6 +913,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::now_secs;
     use crate::testutil::{body_json, has_error, mission_base, mission_state_at, test_dir};
 
     /// A Mission one principal approves for another in its tenant binds. Without this, a
@@ -911,7 +922,7 @@ mod tests {
     fn a_same_tenant_mission_for_another_principal_binds() {
         let registry = crate::testutil::test_missions();
         let kernel = decern_kernel::Kernel::new(&decern_kernel::Model::builtin()).unwrap();
-        let now = crate::now_secs();
+        let now = crate::now_secs().unwrap();
         registry
             .register(
                 "same-tenant",
@@ -975,7 +986,7 @@ mod tests {
             }
         }
         let registry = crate::testutil::test_missions();
-        let now = crate::now_secs();
+        let now = crate::now_secs().unwrap();
         for (s256, approver) in [("by-deputy", "deputy"), ("by-teller", "teller")] {
             let entry = decern_store::MissionEntry {
                 approver: approver.into(),
@@ -1232,7 +1243,7 @@ mod tests {
             body_json(decide(State(st.clone()), None, Ok(Json(plain))).await).await;
         assert_eq!(status, StatusCode::OK, "{without}");
 
-        let token = standing_token(&issuer, "dec-1", "ppid:carol", now_secs() + 3600);
+        let token = standing_token(&issuer, "dec-1", "ppid:carol", now_secs().unwrap() + 3600);
         let challenged: DecideReq = serde_json::from_str(&format!(
             r#"{{"subject":{{"type":"Principal","id":"agent1"}},
                 "action":{{"name":"Read"}},
@@ -1291,7 +1302,7 @@ mod tests {
         let stranger = decern_crypto::generate().unwrap();
         st.standing_issuers = Arc::new(vec![issuer.verifying_key()]);
 
-        let token = standing_token(&stranger, "dec-1", "ppid:carol", now_secs() + 3600);
+        let token = standing_token(&stranger, "dec-1", "ppid:carol", now_secs().unwrap() + 3600);
         let req: DecideReq = serde_json::from_str(&format!(
             r#"{{"subject":{{"type":"Principal","id":"agent1"}},
                 "action":{{"name":"Read"}},

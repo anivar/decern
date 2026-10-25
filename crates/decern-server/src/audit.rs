@@ -14,7 +14,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::record::poisoned;
-use crate::{AppState, LedgerBackend, now_secs};
+use crate::{AppState, LedgerBackend};
 
 /// A tree head is recomputed at most this often; between, the last one is served. It commits
 /// to a prefix of the log, and a prefix a moment old is as checkable as the latest.
@@ -45,6 +45,9 @@ pub(crate) async fn tree_head(State(st): State<AppState>) -> Response {
         )
             .into_response();
     }
+    let Some(now) = (st.clock)() else {
+        return crate::clock_unavailable().into_response();
+    };
     let unavailable = |detail: String| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -58,7 +61,7 @@ pub(crate) async fn tree_head(State(st): State<AppState>) -> Response {
     let mut cached = st.tree_head.clone().lock_owned().await;
     let backend = st.backend.clone();
     let computed = tokio::task::spawn_blocking(move || {
-        let fresh = current_tree_head(&backend, cached.clone())?;
+        let fresh = current_tree_head(&backend, cached.clone(), now.saturating_mul(1000))?;
         *cached = Some(fresh.clone());
         Ok::<_, LedgerError>(fresh.1)
     });
@@ -71,11 +74,12 @@ pub(crate) async fn tree_head(State(st): State<AppState>) -> Response {
 
 /// The tree head over the log as it is, or `last` while it still covers every record or is
 /// under [`TREE_HEAD_REFRESH`] old. The lock an append holds across its fsync is taken only
-/// to count the records and to sign; the read and the hashing happen between, unlocked.
-/// Blocking, so it runs on a thread that serves no requests.
+/// to count the records and to sign; the read and the hashing happen between, unlocked. A
+/// new head is signed at `now_ms`. Blocking, so it runs on a thread that serves no requests.
 fn current_tree_head(
     backend: &LedgerBackend,
     last: Option<(Instant, TreeHead)>,
+    now_ms: u64,
 ) -> Result<(Instant, TreeHead), LedgerError> {
     let m = single(backend)?;
     let prefix = m.lock().map_err(|_| poisoned())?.prefix();
@@ -86,7 +90,6 @@ fn current_tree_head(
     }
     let leaves = decern_ledger::leaves_from_lines(&prefix.lines()?)?;
     let root = hex::encode(decern_ledger::merkle::tree_hash(&leaves));
-    let now_ms = now_secs().saturating_mul(1000);
     let head = m
         .lock()
         .map_err(|_| poisoned())?
@@ -158,6 +161,9 @@ pub(crate) async fn subject_audit(
         )
             .into_response();
     }
+    let Some(now) = (st.clock)() else {
+        return crate::clock_unavailable().into_response();
+    };
     // One projection at a time, and it keeps its turn until it finishes: each reads the
     // whole log into memory, and an open route must not let a crowd of them, or of requests
     // that gave up on them, do so at once.
@@ -165,7 +171,7 @@ pub(crate) async fn subject_audit(
     let backend = st.backend.clone();
     let projected = tokio::task::spawn_blocking(move || {
         let _turn = turn;
-        project(&backend, q.handle)
+        project(&backend, q.handle, now.saturating_mul(1000))
     });
     let Projection {
         handle,
@@ -213,7 +219,11 @@ struct Projection {
 /// its fsync is taken twice, briefly: once to count the records, once to sign. Reading,
 /// parsing, matching and proving happen between, unlocked. Blocking, so it runs on a thread
 /// that serves no requests.
-fn project(backend: &LedgerBackend, handle: String) -> Result<Projection, LedgerError> {
+fn project(
+    backend: &LedgerBackend,
+    handle: String,
+    now_ms: u64,
+) -> Result<Projection, LedgerError> {
     let m = single(backend)?;
     let prefix = m.lock().map_err(|_| poisoned())?.prefix();
     let lines = prefix.lines()?;
@@ -264,7 +274,6 @@ fn project(backend: &LedgerBackend, handle: String) -> Result<Projection, Ledger
     // two locks makes this a head over the earlier prefix — the same consistent answer
     // the caller would have gotten before the append, never a mixed one.
     let root = hex::encode(decern_ledger::merkle::tree_hash(&leaves));
-    let now_ms = now_secs().saturating_mul(1000);
     let head = m
         .lock()
         .map_err(|_| poisoned())?

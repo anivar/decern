@@ -114,7 +114,8 @@ pub(crate) struct Args {
         long = "signed-agent-key",
         value_name = "ID=HEX",
         group = "posture",
-        requires = "signed_audience"
+        requires = "signed_audience",
+        requires = "signed_authority"
     )]
     signed_agent_keys: Vec<String>,
     /// This deployment's resource identifier, which a signed request's bound token's
@@ -122,6 +123,12 @@ pub(crate) struct Args {
     /// `--bearer-audience`.
     #[arg(long, value_name = "URI", requires = "signed_agent_keys")]
     signed_audience: Option<String>,
+    /// This deployment's authority, host and optional port, which a signed request's
+    /// `@authority` must equal. Required with `--signed-agent-key`: an audience names a
+    /// resource several deployments may share, and without this a request signed for one of
+    /// them would verify at another that trusts the same agent key.
+    #[arg(long, value_name = "AUTHORITY", requires = "signed_agent_keys")]
+    signed_authority: Option<String>,
     /// An agent identifier that may name principals other than itself. Repeatable. Workload
     /// postures only (`--signed-agent-key`, `--spiffe-trust-domain`, `--aauth-provider`): a
     /// gateway that proves possession of a key on every request, or presents an SVID or an
@@ -292,6 +299,11 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
             "--signed-agent-key",
         ),
         (
+            args.signed_authority.is_some() && args.signed_agent_keys.is_empty(),
+            "--signed-authority",
+            "--signed-agent-key",
+        ),
+        (
             args.spiffe_audience.is_some() && args.spiffe_trust_domains.is_empty(),
             "--spiffe-audience",
             "--spiffe-trust-domain",
@@ -340,6 +352,9 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
         let Some(audience) = args.signed_audience.clone() else {
             anyhow::bail!("--signed-agent-key requires --signed-audience");
         };
+        let Some(authority) = args.signed_authority.clone() else {
+            anyhow::bail!("--signed-agent-key requires --signed-authority");
+        };
         let pep = pep_set(&args.pep, "agent id", |id| {
             if !agents.contains_key(id) {
                 anyhow::bail!(
@@ -348,7 +363,7 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
             }
             Ok(())
         })?;
-        let mut cfg = sig::SigConfig::new(agents, audience);
+        let mut cfg = sig::SigConfig::new(agents, audience, authority);
         cfg.pep = pep;
         return Ok(caller::Caller::Signed(Box::new(cfg)));
     }
@@ -452,8 +467,8 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
         anyhow::bail!(
             "refusing to serve the decision and mission-mutation endpoints with no way to \
              establish the caller: pass --bearer-issuer/--bearer-audience/--bearer-issuer-key \
-             to validate access tokens here, --signed-agent-key/--signed-audience for signed \
-             requests, --spiffe-trust-domain/--spiffe-audience for SPIFFE JWT-SVIDs, \
+             to validate access tokens here, --signed-agent-key/--signed-audience/--signed-authority \
+             for signed requests, --spiffe-trust-domain/--spiffe-audience for SPIFFE JWT-SVIDs, \
              --aauth-provider/--aauth-audience for AAuth agent tokens, or --trust-proxy to \
              state that something in front already authenticates them (see docs/CLI.md \"The \
              trust boundary\")"
@@ -601,6 +616,7 @@ mod tests {
         for flag in [
             "--bearer-audience",
             "--signed-audience",
+            "--signed-authority",
             "--spiffe-audience",
             "--aauth-audience",
         ] {
@@ -678,11 +694,14 @@ mod tests {
             &format!("agent-1={hex_key}"),
             "--signed-audience",
             "https://pdp.example/access/v1/evaluation",
+            "--signed-authority",
+            "pdp.example",
         ]);
         let caller::Caller::Signed(cfg) = caller_from(&args).unwrap() else {
             panic!("--signed-agent-key must configure the signed guard");
         };
         assert_eq!(cfg.audience, "https://pdp.example/access/v1/evaluation");
+        assert_eq!(cfg.authority, "pdp.example");
         assert_eq!(cfg.agents.len(), 1);
         assert!(cfg.agents.contains_key("agent-1"));
         assert!(cfg.pep.is_empty());
@@ -698,6 +717,8 @@ mod tests {
             &format!("agent-1={hex_key}"),
             "--signed-audience",
             "https://pdp.example/access/v1/evaluation",
+            "--signed-authority",
+            "pdp.example",
             "--pep",
             "corp",
         ]);
@@ -714,6 +735,8 @@ mod tests {
             &format!("agent-1={hex_key}"),
             "--signed-audience",
             "https://pdp.example/access/v1/evaluation",
+            "--signed-authority",
+            "pdp.example",
             "--pep",
             "agent-1",
         ]);
@@ -781,6 +804,24 @@ mod tests {
         );
     }
 
+    /// The signed posture without the authority its requests must name does not start: a
+    /// parse-time failure, as for the audience.
+    #[test]
+    fn signed_agent_key_without_signed_authority_is_a_startup_failure() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let hex_key = hex::encode(key.verifying_key().to_bytes());
+        assert!(
+            Args::try_parse_from([
+                "decern-serve",
+                "--signed-agent-key",
+                &format!("agent-1={hex_key}"),
+                "--signed-audience",
+                "https://pdp.example/access/v1/evaluation",
+            ])
+            .is_err()
+        );
+    }
+
     #[test]
     fn a_malformed_signed_agent_key_entry_is_a_startup_failure() {
         let args = Args::parse_from([
@@ -789,6 +830,8 @@ mod tests {
             "agent-1-with-no-equals-sign",
             "--signed-audience",
             "https://pdp.example/access/v1/evaluation",
+            "--signed-authority",
+            "pdp.example",
         ]);
         assert!(caller_from(&args).is_err());
     }
@@ -870,6 +913,8 @@ mod tests {
                 &signed,
                 "--signed-audience",
                 "https://pdp.example",
+                "--signed-authority",
+                "pdp.example",
             ],
             vec![
                 "--spiffe-trust-domain",
@@ -984,6 +1029,8 @@ mod tests {
             &both[1],
             "--signed-audience",
             "https://pdp.example",
+            "--signed-authority",
+            "pdp.example",
         ]);
         let caller::Caller::Signed(cfg) = caller_from(&args).unwrap() else {
             panic!("not the signed posture");
@@ -997,6 +1044,8 @@ mod tests {
             &both[0],
             "--signed-audience",
             "https://pdp.example",
+            "--signed-authority",
+            "pdp.example",
         ]);
         let Err(e) = caller_from(&args) else {
             panic!("the same key twice was accepted");

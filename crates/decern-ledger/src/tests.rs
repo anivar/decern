@@ -2408,3 +2408,23 @@ fn reopening_an_existing_world_readable_ledger_tightens_it() {
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600, "reopen must tighten, got {mode:o}");
 }
+
+/// A caller no issuer vouched for is recorded without `iss`, rather than with an empty or
+/// null one, and a record written with an issuer still reads.
+#[test]
+fn asserted_by_omits_an_issuer_nobody_verified() {
+    let unissued = AssertedBy {
+        sub: "agent-1".into(),
+        client_id: "agent-1".into(),
+        iss: None,
+    };
+    assert_eq!(
+        serde_json::to_value(&unissued).unwrap(),
+        json!({"sub": "agent-1", "client_id": "agent-1"})
+    );
+    let earlier: AssertedBy = serde_json::from_value(
+        json!({"sub": "s", "client_id": "c", "iss": "https://issuer.example/"}),
+    )
+    .unwrap();
+    assert_eq!(earlier.iss.as_deref(), Some("https://issuer.example/"));
+}

@@ -44,6 +44,8 @@ pub(crate) struct AppState {
     pub(crate) pubkey: VerifyingKey,
     /// Ledger keys this deployment rotated away from (`--retired-key`), in the order given.
     pub(crate) retired_keys: Arc<Vec<VerifyingKey>>,
+    /// The time authority ([`now_secs`] outside tests).
+    pub(crate) clock: Clock,
     /// The last tree head served and when it was computed (`audit::tree_head`).
     pub(crate) tree_head:
         Arc<tokio::sync::Mutex<Option<(std::time::Instant, decern_ledger::TreeHead)>>>,
@@ -89,6 +91,7 @@ pub(crate) fn caller_disclosure(caller: &caller::Caller) -> Value {
             let mut o = json!({
                 "mode": "signed",
                 "audience": c.audience,
+                "authority": c.authority,
                 "bind": "self",
             });
             if !c.pep.is_empty() {
@@ -125,12 +128,25 @@ pub(crate) fn caller_disclosure(caller: &caller::Caller) -> Value {
 }
 
 /// The server's own wall clock in epoch seconds — the single time authority for every
-/// decision. Never read from a request body (see `decide`).
-pub(crate) fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+/// decision. Never read from a request body (see `decide`). `None` while the clock reads
+/// before 1970: every expiry and freshness check compares against this, and a clock with no
+/// answer is refused rather than read as the earliest time, before anything expired.
+pub(crate) fn now_secs() -> Option<u64> {
+    epoch_secs(SystemTime::now())
+}
+
+fn epoch_secs(at: SystemTime) -> Option<u64> {
+    at.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
+}
+
+/// Where every handler and the caller guard read the time: [`now_secs`] in a running
+/// server. Held in the state rather than called directly, so a test can stand in a clock
+/// with no answer and see each of them refuse.
+pub(crate) type Clock = fn() -> Option<u64>;
+
+/// What a request is answered when the clock has no answer.
+pub(crate) fn clock_unavailable() -> crate::decide::Refusal {
+    crate::decide::Refusal::unavailable("clock_unavailable", "the server's clock reads before 1970")
 }
 
 #[cfg(test)]
@@ -140,15 +156,29 @@ mod tests {
     use crate::caller;
     use ed25519_dalek::SigningKey;
 
+    /// A clock before 1970 has no epoch time, rather than reading as the epoch itself.
+    #[test]
+    fn a_clock_before_1970_has_no_epoch_time() {
+        let second = std::time::Duration::from_secs(1);
+        assert_eq!(epoch_secs(UNIX_EPOCH - second), None);
+        assert_eq!(epoch_secs(UNIX_EPOCH), Some(0));
+        assert_eq!(epoch_secs(UNIX_EPOCH + 5 * second), Some(5));
+    }
+
     #[test]
     fn the_caller_disclosure_under_signed_request_is_self_bound() {
         let key = SigningKey::from_bytes(&[8u8; 32]);
         let mut agents = std::collections::BTreeMap::new();
         agents.insert("agent-1".into(), vec![key.verifying_key()]);
         let d = caller_disclosure(&caller::Caller::Signed(Box::new(
-            crate::sig::SigConfig::new(agents, "https://pdp.example/access/v1/evaluation"),
+            crate::sig::SigConfig::new(
+                agents,
+                "https://pdp.example/access/v1/evaluation",
+                "pdp.example",
+            ),
         )));
         assert_eq!(d["mode"], "signed");
+        assert_eq!(d["authority"], "pdp.example");
         assert_eq!(d["bind"], "self");
         assert!(d.get("pep").is_none());
     }

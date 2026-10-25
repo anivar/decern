@@ -822,7 +822,7 @@ mod tests {
         let who = authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
             .expect("should authenticate");
         assert_eq!(who.subject, AGENT);
-        assert_eq!(who.issuer, ISS);
+        assert_eq!(who.issuer.as_deref(), Some(ISS));
         assert_eq!(who.bind, Bind::SelfOnly);
     }
 
