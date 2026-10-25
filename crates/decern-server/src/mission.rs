@@ -156,13 +156,7 @@ fn approve_now(
     if let Some(refusal) = crate::caller::refuse_unless_admits(&caller, &req.approver) {
         return refusal;
     }
-    let asserted_by = caller
-        .as_ref()
-        .map(|axum::Extension(who)| decern_ledger::AssertedBy {
-            sub: who.subject.clone(),
-            client_id: who.client_id.clone(),
-            iss: who.issuer.clone(),
-        });
+    let asserted_by = crate::caller::asserted_by(&caller);
     let Some(now_s) = (st.clock)() else {
         return crate::clock_unavailable().into_response();
     };
@@ -308,13 +302,7 @@ fn terminate_now(
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
     s256: String,
 ) -> Response {
-    let asserted_by = caller
-        .as_ref()
-        .map(|axum::Extension(who)| decern_ledger::AssertedBy {
-            sub: who.subject.clone(),
-            client_id: who.client_id.clone(),
-            iss: who.issuer.clone(),
-        });
+    let asserted_by = crate::caller::asserted_by(&caller);
     let Some(now_s) = (st.clock)() else {
         return crate::clock_unavailable().into_response();
     };

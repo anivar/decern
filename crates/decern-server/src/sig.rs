@@ -296,6 +296,20 @@ pub(crate) struct SignedRequest<'a> {
 }
 
 impl<'a> SignedRequest<'a> {
+    /// Whether this request was sent to `authority`, the deployment's own. `@authority` is the
+    /// host the client sent to, so a signature over it binds the request to this deployment
+    /// only once the two are compared. Both signature postures call this before any key is
+    /// consulted; a host compares without case.
+    pub(crate) fn sent_to(&self, authority: &str) -> Result<(), Denied> {
+        if self.authority.eq_ignore_ascii_case(authority) {
+            Ok(())
+        } else {
+            Err(Denied::Invalid(
+                "request authority is not this deployment".into(),
+            ))
+        }
+    }
+
     /// `Signature-Key`, `Signature-Input` and `Signature`, each present and within the size
     /// either posture allows. No `Signature-Key` is no credential at all, which a posture
     /// answers with its own challenge; the others missing, or any oversized, is a bad one.
@@ -418,14 +432,7 @@ pub(crate) fn authenticate(
         return Err(Denied::Invalid("no agent keys are configured".into()));
     }
     let headers = req.signature_headers()?;
-    // `@authority` is the host the client sent to, so it binds the signature to this
-    // deployment only once it is compared with what this deployment is called. Checked
-    // before any cryptography, as the AAuth posture checks it.
-    if !req.authority.eq_ignore_ascii_case(&cfg.authority) {
-        return Err(Denied::Invalid(
-            "request authority is not this deployment".into(),
-        ));
-    }
+    req.sent_to(&cfg.authority)?;
     // `Signature-Key` conveys the bearer token this signature is over; this deployment
     // accepts the token itself, verbatim. No separate size check here: trimming can only
     // shrink it, and the header is already bounded above.

@@ -448,13 +448,7 @@ pub(crate) fn prepare_context(
     // Who asserted this request, when the guard verified a token. Under a trusted
     // front there is no extension and the column stays off the record: an assertion
     // this server did not verify itself does not belong on a permanent one.
-    let asserted_by = caller
-        .as_ref()
-        .map(|axum::Extension(who)| decern_ledger::AssertedBy {
-            sub: who.subject.clone(),
-            client_id: who.client_id.clone(),
-            iss: who.issuer.clone(),
-        });
+    let asserted_by = crate::caller::asserted_by(caller);
     let now_s = clock().ok_or_else(crate::clock_unavailable)?;
     let ctx = kernel_context(context, described, now_s);
     if context_too_large(&ctx) {

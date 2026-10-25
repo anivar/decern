@@ -210,6 +210,20 @@ pub(crate) fn printable(s: &str) -> String {
 }
 
 /// Refuse a principal this caller is not allowed to speak as. No extension means
+/// The caller as a record names it: what the guard verified, and nothing the request says.
+/// Under a trusted front there is no verified caller, so the record carries no column.
+pub(crate) fn asserted_by(
+    caller: &Option<axum::Extension<Authenticated>>,
+) -> Option<decern_ledger::AssertedBy> {
+    caller
+        .as_ref()
+        .map(|axum::Extension(who)| decern_ledger::AssertedBy {
+            sub: who.subject.clone(),
+            client_id: who.client_id.clone(),
+            iss: who.issuer.clone(),
+        })
+}
+
 /// `--trust-proxy`: the operator said the front is the PEP, and there is no verified
 /// identity here to compare.
 ///

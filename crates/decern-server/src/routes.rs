@@ -230,16 +230,7 @@ mod tests {
         // challenge naming that scheme. Asserted alongside the signed case on purpose:
         // the two are easy to conflate, and copying either one onto the other is wrong.
         let (st2, _pk2) = mission_state_at(&base);
-        let router = app(
-            st2,
-            Arc::new(caller::Caller::Spiffe(Box::new(
-                crate::spiffe::SpiffeConfig {
-                    trust_domains: std::collections::BTreeMap::new(),
-                    audience: "https://pdp.example/".into(),
-                    pep: std::collections::BTreeSet::new(),
-                },
-            ))),
-        );
+        let router = app(st2, no_trust_domain_spiffe());
         let resp = router
             .oneshot(
                 Request::builder()
@@ -650,16 +641,7 @@ mod tests {
             "{json}"
         );
 
-        let spiffe = app(
-            st.clone(),
-            Arc::new(caller::Caller::Spiffe(Box::new(
-                crate::spiffe::SpiffeConfig {
-                    trust_domains: std::collections::BTreeMap::new(),
-                    audience: "https://pdp.example/".into(),
-                    pep: std::collections::BTreeSet::new(),
-                },
-            ))),
-        );
+        let spiffe = app(st.clone(), no_trust_domain_spiffe());
         let signed = signed_router(st, &SigningKey::from_bytes(&[9u8; 32]), false);
         for (posture, router) in [("spiffe", spiffe), ("signed", signed)] {
             let (status, json) = send(router, "POST", "/access/v1/evaluation", decision).await;
@@ -667,6 +649,18 @@ mod tests {
             assert_eq!(json["error"], "clock_unavailable", "{posture}: {json}");
         }
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The SPIFFE posture with no trust domain, so no SVID verifies: enough for a test of
+    /// what the posture answers before or instead of a credential.
+    fn no_trust_domain_spiffe() -> Arc<caller::Caller> {
+        Arc::new(caller::Caller::Spiffe(Box::new(
+            crate::spiffe::SpiffeConfig {
+                trust_domains: std::collections::BTreeMap::new(),
+                audience: "https://pdp.example/".into(),
+                pep: std::collections::BTreeSet::new(),
+            },
+        )))
     }
 
     /// The audience every signed-request router test configures and signs for.
