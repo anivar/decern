@@ -385,11 +385,8 @@ fn dictionary(raw: &str, what: &str) -> Result<Dictionary, Denied> {
         .with_version(Version::Rfc8941)
         .parse_dictionary_with_visitor(Labels(Vec::new()))
         .map_err(malformed)?;
-    if let Some(repeat) = labels
-        .iter()
-        .enumerate()
-        .find_map(|(i, l)| labels[..i].contains(l).then_some(l))
-    {
+    let mut seen = std::collections::BTreeSet::new();
+    if let Some(repeat) = labels.iter().find(|l| !seen.insert(l.as_str())) {
         return Err(Denied::Invalid(format!(
             "{what} names the label {} more than once",
             crate::caller::printable(repeat)
@@ -488,6 +485,26 @@ pub(crate) fn sign_for_test_as(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RFC 9421 §4: a label names one signature. A repeat is refused wherever it falls,
+    /// and many distinct labels still parse.
+    #[test]
+    fn a_repeated_label_is_refused_and_distinct_ones_parse() {
+        for raw in [
+            "sig1=:AA==:, sig1=:BB==:",
+            "a=:AA==:, b=:AA==:, c=:AA==:, a=:AA==:",
+        ] {
+            match dictionary(raw, "Signature") {
+                Err(Denied::Invalid(why)) => assert!(why.contains("more than once"), "{why}"),
+                other => panic!("{raw}: expected a refusal, got {:?}", other.map(|_| ())),
+            }
+        }
+        let distinct: Vec<String> = (0..500).map(|i| format!("s{i}=:AA==:")).collect();
+        assert_eq!(
+            dictionary(&distinct.join(", "), "Signature").unwrap().len(),
+            500
+        );
+    }
     use base64::Engine as _;
     use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
     use ed25519_dalek::{Signature, VerifyingKey};

@@ -82,6 +82,12 @@ pub(crate) fn evaluation_body(decision: bool, reasons: &[String], errors: &[Stri
         ctx.insert("reasons".into(), json!(reasons));
     }
     if !errors.is_empty() {
+        // A kernel error can quote the request back, an unknown action's name among
+        // others; bounded as a refusal's detail is.
+        let errors: Vec<String> = errors
+            .iter()
+            .map(|e| crate::decide::bounded(e, 512))
+            .collect();
         ctx.insert("errors".into(), json!(errors));
     }
     if !ctx.is_empty() {

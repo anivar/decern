@@ -69,6 +69,13 @@ pub(crate) trait CallerAuth: Sync {
         body: &[u8],
     ) -> Result<Authenticated, Denied>;
 
+    /// Whether this posture's credential covers the body. One that does not is checked
+    /// from the headers before the body is read, so a caller with no credential cannot make
+    /// the server wait on a body it was never going to accept.
+    fn reads_body(&self) -> bool {
+        false
+    }
+
     /// This posture's refusal. Separate from [`Denied`] itself because the challenge a
     /// refusal should carry is a property of the scheme, not of the reason: a bearer
     /// refusal owes an RFC 6750 `WWW-Authenticate`, and a signature refusal has no
@@ -276,10 +283,23 @@ pub(crate) async fn guard(
         return next.run(req).await;
     }
 
+    // A posture whose credential is in the headers alone is checked before the body is
+    // read. The borrow of `caller` ends inside each block, before any `.await`.
+    let reads_body = posture(&caller).reads_body();
+    let early = if reads_body {
+        None
+    } else {
+        let posture = posture(&caller);
+        match posture.authenticate(&req, crate::now_secs(), &[]) {
+            Ok(who) => Some(who),
+            Err(denied) => return posture.refuse(denied),
+        }
+    };
+
     // Buffer once, restore onto the request, and hand the same bytes to authenticate.
     // A signed POST covers `content-digest` of these bytes; reading the body again
     // inside the verifier would either consume it out from under the handler or
-    // hash a different copy. Bearer ignores the slice.
+    // hash a different copy.
     let (parts, body) = req.into_parts();
     let bytes = match axum::body::to_bytes(body, MAX_BODY_BYTES).await {
         Ok(b) => b,
@@ -297,17 +317,14 @@ pub(crate) async fn guard(
     // Holding a reference across the suspension point is what previously failed axum's
     // `Service` bounds here, and scoping it is cheaper than proving it safe each time a
     // posture is added.
-    let established = {
-        let posture: &dyn CallerAuth = match caller.as_ref() {
-            Caller::TrustedProxy => unreachable!("trusted-proxy returned above"),
-            Caller::Bearer(cfg) => cfg.as_ref(),
-            Caller::Signed(cfg) => cfg.as_ref(),
-            Caller::Spiffe(cfg) => cfg.as_ref(),
-            Caller::Aauth(cfg) => cfg.as_ref(),
-        };
-        posture
-            .authenticate(&req, crate::now_secs(), &bytes)
-            .map_err(|denied| posture.refuse(denied))
+    let established = match early {
+        Some(who) => Ok(who),
+        None => {
+            let posture = posture(&caller);
+            posture
+                .authenticate(&req, crate::now_secs(), &bytes)
+                .map_err(|denied| posture.refuse(denied))
+        }
     };
     match established {
         Ok(who) => {
@@ -315,6 +332,17 @@ pub(crate) async fn guard(
             next.run(req).await
         }
         Err(refusal) => refusal,
+    }
+}
+
+/// The posture a guarded request is checked under. Trusted proxy never reaches it.
+fn posture(caller: &Caller) -> &dyn CallerAuth {
+    match caller {
+        Caller::TrustedProxy => unreachable!("trusted-proxy returns before a posture is chosen"),
+        Caller::Bearer(cfg) => cfg.as_ref(),
+        Caller::Signed(cfg) => cfg.as_ref(),
+        Caller::Spiffe(cfg) => cfg.as_ref(),
+        Caller::Aauth(cfg) => cfg.as_ref(),
     }
 }
 

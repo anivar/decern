@@ -352,6 +352,28 @@ expiry and the `description` as sent. The ledger cannot be edited, so none of th
 erased later. Use pseudonymous ids, keep personal data out of Mission descriptions, and
 declare in the schema only attributes you are prepared to keep for the ledger's lifetime.
 
+### Limits
+
+`decern-serve` bounds what one client can make it hold, and answers past a bound rather than
+waiting:
+
+| Bound | Value | Past it |
+|---|---|---|
+| A request's headers to arrive | 10 seconds, the idle wait on a kept-alive connection included | the connection is closed |
+| One request, headers to answer, while it waits on its body or on another task | 30 seconds | `503`, `request timed out`; a ledger append already under way finishes first |
+| Connections at once | 1,024; HTTP/1 serves one request at a time on each | the next waits in the listen queue |
+| Shutdown after SIGINT or SIGTERM | 30 seconds for requests in progress | the process exits |
+| Request body | 2 MiB | `413` |
+| A context, properties included | 64 KiB | `413`, `context_too_large` |
+| An entity type, entity id or action name | 1 KiB | `413`, `name_too_large` |
+| Items in one batch | 1,000 | `400` |
+| What one batch may record: each item's own fields and the defaults it inherits | 16 MiB | `413`, `batch_too_large`, nothing recorded |
+| `Signature`, `Signature-Input`, `Signature-Key` | 8 KiB each | `401` |
+
+Under bearer and SPIFFE the credential is checked before the body is read; under signed-request
+and AAuth, whose signature covers the body, the body is read first. An error quoting the request
+back, such as an unknown action's name, is cut to 512 characters in the answer.
+
 ### What a deployment supplies
 
 `decern-serve` leaves these to whatever runs it:

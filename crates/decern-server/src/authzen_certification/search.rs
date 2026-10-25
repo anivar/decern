@@ -623,3 +623,19 @@ async fn a_null_mission_is_no_mission() {
     assert_eq!(status, StatusCode::OK, "{resp}");
     assert!(has(&resp, "record-1"), "{resp}");
 }
+
+/// A search names parties as an evaluation does, and is recorded as one; the same bound on
+/// names applies before anything is searched or recorded.
+#[tokio::test]
+async fn a_search_naming_past_the_bound_is_refused_and_not_recorded() {
+    let (st, base) = fixture_state();
+    let body = json!({
+        "subject": { "type": "user", "id": "alice" },
+        "action": { "name": "read" },
+        "resource": { "type": "record", "id": "r".repeat(crate::decide::MAX_NAME_BYTES + 1) },
+    });
+    let (status, resp) = search(&st, "subject", &body).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{resp}");
+    assert_eq!(resp["error"], "name_too_large", "{resp}");
+    assert!(records_in(&base, &st).is_empty());
+}

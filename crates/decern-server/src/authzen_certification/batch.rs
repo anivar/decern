@@ -525,3 +525,23 @@ async fn an_oversize_context_is_refused_before_it_is_evaluated_or_recorded() {
         "one more decided item is recorded"
     );
 }
+
+/// A batch repeats its defaults in every item, so what one exchange may record is bounded
+/// as a whole; past the bound the exchange is refused before any item is decided.
+#[tokio::test]
+async fn a_batch_that_would_record_past_its_bound_is_refused_whole() {
+    let (st, base) = fixture_state();
+    let pad = "p".repeat(20 * 1024);
+    let items: Vec<Value> = (0..1000).map(|_| json!({})).collect();
+    let body = json!({
+        "subject": { "type": "user", "id": "alice" },
+        "action": { "name": "read" },
+        "resource": { "type": "record", "id": "record-1" },
+        "context": { "pad": pad },
+        "evaluations": items,
+    });
+    let (status, resp) = evaluations(&st, &body).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{resp}");
+    assert_eq!(resp["error"], "batch_too_large", "{resp}");
+    assert!(records_in(&base, &st).is_empty());
+}
