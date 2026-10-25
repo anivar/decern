@@ -2,7 +2,7 @@
 # Pinned toolchain — one compiler version for CI, contributors and the proofs alike.
 
 [toolchain]
-channel = "1.97"
+channel = "1.99"
 components = ["rustfmt", "clippy"]
 targets = [
     "x86_64-unknown-linux-musl",
