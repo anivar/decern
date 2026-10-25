@@ -91,6 +91,11 @@ pub(crate) fn mission_base() -> PathBuf {
 /// memory), which is exactly what the durability test needs. The signing seed is fixed
 /// so a reopened ledger's existing records still verify under the returned key.
 pub(crate) fn mission_state_at(base: &Path) -> (AppState, VerifyingKey) {
+    mission_state_with(base, Model::builtin())
+}
+
+/// [`mission_state_at`] over `model` instead of the builtin.
+pub(crate) fn mission_state_with(base: &Path, model: Model) -> (AppState, VerifyingKey) {
     let ledger_path = base.join("decern-ledger.jsonl");
     let missions_path = base.join("decern-missions.json");
     let key = SigningKey::from_bytes(&[7u8; 32]);
@@ -98,8 +103,8 @@ pub(crate) fn mission_state_at(base: &Path) -> (AppState, VerifyingKey) {
     let mut ledger = Ledger::open(&ledger_path, key).unwrap();
     ledger.set_sync(true);
     let st = AppState {
-        kernel: Arc::new(Kernel::new(&Model::builtin()).unwrap()),
-        model: Arc::new(Model::builtin()),
+        kernel: Arc::new(Kernel::new(&model).unwrap()),
+        model: Arc::new(model),
         backend: Arc::new(LedgerBackend::Single(Mutex::new(ledger))),
         missions: Arc::new(FileMissionRegistry::open(&missions_path).unwrap()),
         pubkey,
@@ -137,6 +142,20 @@ pub(crate) fn corp_expiry() -> u64 {
     decern_identity::exchange::delegator_attrs(&Model::builtin(), "corp")
         .unwrap()
         .1
+}
+
+/// The builtin model with `agent1` given `corp`'s expiry, so a decision about it is not
+/// decayed: the builtin has no other live principal in tenant A holding `move_money`
+/// besides `corp`, which may not approve a Mission for itself.
+pub(crate) fn live_agent1_model() -> Model {
+    let mut model = Model::builtin();
+    let expiry = corp_expiry();
+    for e in model.entities.as_array_mut().unwrap() {
+        if e["uid"]["id"] == "agent1" {
+            e["attrs"]["expiry"] = json!(expiry);
+        }
+    }
+    model
 }
 
 pub(crate) fn approve_req(tools: &[&str], expiry: u64) -> MissionApproveReq {

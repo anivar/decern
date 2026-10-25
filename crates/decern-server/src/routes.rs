@@ -540,7 +540,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -848,14 +848,14 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(MissionApproveReq {
+                Ok(Json(MissionApproveReq {
                     approver: "corpB".into(),
                     agent: "corp".into(),
                     description: "cross-tenant".into(),
                     approved_tools: vec!["move_money".into()],
                     capabilities: vec![],
                     expiry: corp_expiry(),
-                }),
+                })),
             )
             .await,
         )
@@ -975,20 +975,21 @@ mod tests {
     #[tokio::test]
     async fn decide_under_live_mission_allows_and_records_mission_ref() {
         let base = mission_base();
-        let (st, pubkey) = mission_state_at(&base);
-        // Approve a Mission for corp (non-expired builtin principal) with move_money.
+        let (st, pubkey) =
+            crate::testutil::mission_state_with(&base, crate::testutil::live_agent1_model());
+        // corp approves a Mission for its live delegate agent1 with move_money.
         let (status, body) = body_json(
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(MissionApproveReq {
+                Ok(Json(MissionApproveReq {
                     approver: "corp".into(),
-                    agent: "corp".into(),
+                    agent: "agent1".into(),
                     description: "under-mission decide".into(),
                     approved_tools: vec!["read".into(), "move_money".into()],
                     capabilities: vec![],
                     expiry: corp_expiry(),
-                }),
+                })),
             )
             .await,
         )
@@ -999,7 +1000,7 @@ mod tests {
         let mut st = st;
         st.require_mission = true;
         let req: DecideReq = serde_json::from_str(&format!(
-            r#"{{"subject":{{"type":"Principal","id":"corp"}},
+            r#"{{"subject":{{"type":"Principal","id":"agent1"}},
                 "action":{{"name":"MoveMoney"}},
                 "resource":{{"type":"Resource","id":"claim1"}},
                 "context":{{"mission":{{"approver":"corp","s256":"{s256}"}}}}}}"#
@@ -1022,6 +1023,65 @@ mod tests {
         assert!(
             last["entry"]["digests"]["parameters"].as_str().is_some(),
             "the parameters digest must be written: {last}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A Mission approved under one model stops backing a decision once a later model
+    /// revokes its approver, though the agent itself is untouched by the revocation: the
+    /// approver here is not in the agent's delegation chain, so only the Mission carried
+    /// `human_approved` for it.
+    #[tokio::test]
+    async fn a_revoked_approvers_mission_stops_backing_money_across_a_restart() {
+        let model = |lead_revoked: bool| {
+            let mut model = crate::testutil::live_agent1_model();
+            model.entities.as_array_mut().unwrap().push(json!({
+                "uid": {"type": "Principal", "id": "lead"},
+                "attrs": {"kind": "Human", "tenant": "A", "expiry": corp_expiry(),
+                          "scopes": ["read", "move_money"], "revoked": lead_revoked},
+                "parents": [],
+            }));
+            model
+        };
+        let base = mission_base();
+        let (st, _pk) = crate::testutil::mission_state_with(&base, model(false));
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                None,
+                Ok(Json(MissionApproveReq {
+                    approver: "lead".into(),
+                    agent: "agent1".into(),
+                    description: "pay the supplier".into(),
+                    approved_tools: vec!["move_money".into()],
+                    capabilities: vec![],
+                    expiry: corp_expiry(),
+                })),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+        let pay = |st: AppState| {
+            let req: DecideReq = serde_json::from_str(&format!(
+                r#"{{"subject":{{"type":"Principal","id":"agent1"}},
+                    "action":{{"name":"MoveMoney"}},
+                    "resource":{{"type":"Resource","id":"claim1"}},
+                    "context":{{"mission":{{"approver":"lead","s256":"{s256}"}}}}}}"#
+            ))
+            .unwrap();
+            async move { body_json(decide(State(st), None, Ok(Json(req))).await).await }
+        };
+        let (_, body) = pay(st).await;
+        assert_eq!(body["decision"], true, "while lead stands: {body}");
+
+        let (st, _pk) = crate::testutil::mission_state_with(&base, model(true));
+        let (_, body) = pay(st).await;
+        assert_eq!(body["decision"], false, "once lead is revoked: {body}");
+        assert!(
+            has_error(&body, "approver lead no longer holds what it approved"),
+            "{body}"
         );
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -1286,7 +1346,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read", "move_money"], corp_expiry())),
+                Ok(Json(approve_req(&["read", "move_money"], corp_expiry()))),
             )
             .await,
         )
@@ -1320,7 +1380,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -1354,7 +1414,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )

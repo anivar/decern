@@ -90,9 +90,11 @@ method and the standards registry. `scripts/verify.sh` is the one gate every cha
 
 The same binary also reaches `decern-identity` for the **Mission lifecycle**: `POST
 /mission/v1/approve` grants an agent a scoped, fail-closed-attenuated authorization context
-(refused, and nothing recorded, if it exceeds the approver's own authority or expiry, or names an
-agent outside the approver's tenant); `GET /mission/v1/{s256}` reports its state; and `POST
-/mission/v1/{s256}/terminate` ends it, with no revival. Each accepted transition is appended to the
+(refused, and nothing recorded, if it exceeds the approver's own authority or expiry, comes from a
+revoked approver or one approving for itself, or names an agent outside the approver's tenant, and
+backing a decision only while its approver still stands in the model loaded at boot);
+`GET /mission/v1/{s256}` reports its state; and `POST /mission/v1/{s256}/terminate` ends it, with
+no revival. Each accepted transition is appended to the
 ledger under the same fail-closed contract as a decision — a 503 rather than an unrecorded success —
 so a Mission's whole history is as externally verifiable as the decisions it authorizes. The durable
 Mission registry (`decern-store`) holds the authoritative state, so a termination outlives any

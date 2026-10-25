@@ -128,8 +128,22 @@ fn mission_reference(approver: &str, s256: &str) -> Value {
 pub(crate) async fn mission_approve(
     State(st): State<AppState>,
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
-    Json(req): Json<MissionApproveReq>,
+    req: Result<Json<MissionApproveReq>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
+    // A body that is not an approval request is refused in the shape every other approve
+    // refusal takes, keeping the extractor's status. Its text quotes the caller's input, so
+    // the detail is bounded as a decision refusal's is.
+    let Json(req) = match req {
+        Ok(req) => req,
+        Err(rejection) => {
+            let detail = crate::decide::bounded(&rejection.body_text(), 512);
+            return (
+                rejection.status(),
+                Json(json!({ "error": "mission not approved", "detail": detail })),
+            )
+                .into_response();
+        }
+    };
     crate::record::off_the_executor("approval_unavailable", move || approve_now(st, caller, req))
         .await
 }
@@ -372,7 +386,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -388,6 +402,88 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// No principal approves a Mission for itself: refused before anything is recorded or
+    /// registered, in words that say so rather than the tenant refusal's.
+    #[tokio::test]
+    async fn a_principal_approving_for_itself_is_refused_and_nothing_is_recorded() {
+        let base = mission_base();
+        let (st, pk) = mission_state_at(&base);
+        let req = MissionApproveReq {
+            agent: "corp".into(),
+            ..approve_req(&["move_money"], corp_expiry())
+        };
+        let (status, body) =
+            body_json(mission_approve(State(st.clone()), None, Ok(Json(req))).await).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("approver corp cannot approve a mission for itself")),
+            "{body}"
+        );
+        let recorded = decern_ledger::verify(&base.join("decern-ledger.jsonl"), Some(&pk))
+            .unwrap()
+            .entries;
+        assert_eq!(recorded, 0, "a refused approval writes nothing");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A body that is not an approval request is answered in JSON, in the shape of every
+    /// other approve refusal, with the extractor's own status: through the router, since
+    /// the extractor runs before the handler is called.
+    #[tokio::test]
+    async fn a_malformed_approve_body_is_refused_in_json() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let router = crate::routes::app(st, crate::testutil::open());
+        let oversized = format!(
+            "{{\"approver\":\"corp\",\"expiry\":\"{}\"}}",
+            "x".repeat(100_000)
+        );
+        for (content_type, body, status) in [
+            (
+                Some("application/json"),
+                oversized.as_str(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                Some("application/json"),
+                "{\"approver\":",
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                Some("application/json"),
+                "{\"approver\":\"corp\"}",
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (None, "{}", StatusCode::UNSUPPORTED_MEDIA_TYPE),
+        ] {
+            let mut req = Request::builder().method("POST").uri("/mission/v1/approve");
+            if let Some(ct) = content_type {
+                req = req.header("content-type", ct);
+            }
+            let resp = router
+                .clone()
+                .oneshot(req.body(Body::from(body.to_owned())).unwrap())
+                .await
+                .unwrap();
+            let (got, json) = body_json(resp).await;
+            assert_eq!(got, status, "{json}");
+            assert_eq!(json["error"], "mission not approved", "{json}");
+            let detail = json["detail"].as_str().unwrap_or_default();
+            assert!(
+                !detail.is_empty() && detail.chars().count() <= 513,
+                "a detail quoting the body is bounded: {} characters",
+                detail.chars().count()
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[tokio::test]
     async fn terminated_mission_is_never_revived_and_reads_terminated() {
         // No-revival: terminate, then a re-POST of the same grant is refused as a 409
@@ -398,7 +494,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -421,7 +517,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -489,7 +585,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -518,7 +614,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -533,7 +629,10 @@ mod tests {
             mission_approve(
                 State(st),
                 None,
-                Json(approve_req(&["read", "root_everything"], corp_expiry())),
+                Ok(Json(approve_req(
+                    &["read", "root_everything"],
+                    corp_expiry(),
+                ))),
             )
             .await,
         )
@@ -561,7 +660,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read", "move_money"], corp_expiry())),
+                Ok(Json(approve_req(&["read", "move_money"], corp_expiry()))),
             )
             .await,
         )
@@ -616,7 +715,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 Some(axum::Extension(auth)),
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -647,7 +746,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -679,7 +778,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 Some(axum::Extension(auth_approve)),
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -722,7 +821,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -789,7 +888,7 @@ mod tests {
                     "client-a",
                     "https://auth.example.com",
                 ))),
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -806,7 +905,7 @@ mod tests {
                     "client-b",
                     "https://auth.example.com",
                 ))),
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
@@ -838,7 +937,7 @@ mod tests {
             mission_approve(
                 State(st),
                 Some(axum::Extension(thief)),
-                Json(approve_req(&["move_money"], corp_expiry())),
+                Ok(Json(approve_req(&["move_money"], corp_expiry()))),
             )
             .await,
         )
@@ -856,7 +955,7 @@ mod tests {
             mission_approve(
                 State(st.clone()),
                 None,
-                Json(approve_req(&["read"], corp_expiry())),
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
             )
             .await,
         )
