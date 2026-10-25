@@ -32,6 +32,7 @@ async fn echo_request_id(
 }
 
 pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
+    let clock = state.clock;
     // Everything that decides, or that changes what a later decision will be. Split into
     // its own router so the guard covers it by construction: a route added here is
     // guarded, and a route that should be guarded cannot become open by someone
@@ -71,7 +72,10 @@ pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
             "/directory/v1/principals/{id}/descendants",
             get(descendants),
         )
-        .route_layer(axum::middleware::from_fn_with_state(caller, caller::guard));
+        .route_layer(axum::middleware::from_fn_with_state(
+            (caller, clock),
+            caller::guard,
+        ));
 
     // Open by intent, each for its own reason. `/healthz` and `/pubkey` are operational;
     // the tree head and the disclosure are what an operator publishes on purpose, so a
@@ -148,6 +152,7 @@ mod tests {
             missions: test_missions(),
             pubkey,
             retired_keys: Arc::new(Vec::new()),
+            clock: crate::now_secs,
             tree_head: Arc::default(),
             projection: Arc::default(),
             require_mission: false,
@@ -225,16 +230,7 @@ mod tests {
         // challenge naming that scheme. Asserted alongside the signed case on purpose:
         // the two are easy to conflate, and copying either one onto the other is wrong.
         let (st2, _pk2) = mission_state_at(&base);
-        let router = app(
-            st2,
-            Arc::new(caller::Caller::Spiffe(Box::new(
-                crate::spiffe::SpiffeConfig {
-                    trust_domains: std::collections::BTreeMap::new(),
-                    audience: "https://pdp.example/".into(),
-                    pep: std::collections::BTreeSet::new(),
-                },
-            ))),
-        );
+        let router = app(st2, no_trust_domain_spiffe());
         let resp = router
             .oneshot(
                 Request::builder()
@@ -290,6 +286,35 @@ mod tests {
             StatusCode::UNAUTHORIZED,
             "a captured signature must not authorize a different body"
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A signed request's record names the agent its signature proved, and no issuer: the
+    /// bound token's `iss` is the agent's own claim and never reaches the permanent record.
+    #[tokio::test]
+    async fn a_signed_decisions_record_names_no_issuer() {
+        use tower::ServiceExt;
+
+        let key = decern_crypto::generate().unwrap();
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let router = signed_router(st, &key, false);
+        let read = br#"{"subject":{"type":"Principal","id":"agent-1"},"action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"}}"#;
+        let headers = signed_headers(&key, "POST", "/access/v1/evaluation", read);
+        let resp = router
+            .oneshot(request_with(
+                "POST",
+                "/access/v1/evaluation",
+                &headers,
+                read,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let raw = std::fs::read_to_string(base.join("decern-ledger.jsonl")).unwrap();
+        let rec: Value = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
+        assert_eq!(rec["entry"]["asserted_by"]["sub"], "agent-1", "{rec}");
+        assert!(rec["entry"]["asserted_by"].get("iss").is_none(), "{rec}");
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -450,10 +475,10 @@ mod tests {
             "aud": "https://pdp.example/",
             "sub": "gateway-1",
             "client_id": "gw",
-            "iat": now_secs(),
+            "iat": now_secs().unwrap(),
             "jti": "t1",
             // Far enough out that the wall clock the guard reads cannot overtake it.
-            "exp": now_secs() + 3600,
+            "exp": now_secs().unwrap() + 3600,
         });
         let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
         let sig = issuer_key.sign(format!("{h}.{p}").as_bytes());
@@ -560,6 +585,84 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A clock with no answer is refused wherever the time is needed, never read as some
+    /// default: by every handler that reads it, through the router, and by the guard under
+    /// a posture that authenticates from the headers and one that reads the body first.
+    #[tokio::test]
+    async fn every_reader_of_a_clock_with_no_answer_refuses() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        fn no_clock() -> Option<u64> {
+            None
+        }
+        async fn send(router: Router, method: &str, uri: &str, body: &str) -> (StatusCode, Value) {
+            let req = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("host", "pdp.example")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_owned()))
+                .unwrap();
+            body_json(router.oneshot(req).await.unwrap()).await
+        }
+        let base = mission_base();
+        let (mut st, _pk) = mission_state_at(&base);
+        st.clock = no_clock;
+
+        let decision = r#"{"subject":{"type":"Principal","id":"corp"},"action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"}}"#;
+        let batch = r#"{"subject":{"type":"Principal","id":"corp"},"action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"},"evaluations":[{}]}"#;
+        let search = r#"{"subject":{"type":"Principal","id":"corp"},"action":{"name":"Read"},"resource":{"type":"Resource"}}"#;
+        let approve = serde_json::to_string(&json!({
+            "approver": "corp", "agent": "agent1", "description": "d",
+            "approved_tools": ["read"], "expiry": corp_expiry(),
+        }))
+        .unwrap();
+        let open = app(st.clone(), crate::testutil::open());
+        for (method, uri, body) in [
+            ("POST", "/access/v1/evaluation", decision),
+            ("POST", "/access/v1/search/resource", search),
+            ("POST", "/mission/v1/approve", approve.as_str()),
+            ("POST", "/mission/v1/abc/terminate", ""),
+            ("GET", "/anchor/v1/tree-head", ""),
+            ("GET", "/audit/v1/subject?handle=h", ""),
+        ] {
+            let (status, json) = send(open.clone(), method, uri, body).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {json}");
+            assert_eq!(json["error"], "clock_unavailable", "{uri}: {json}");
+        }
+        // A batch answers each item, so the refusal is the item's.
+        let (status, json) = send(open, "POST", "/access/v1/evaluations", batch).await;
+        assert_eq!(status, StatusCode::OK, "{json}");
+        assert_eq!(json["evaluations"][0]["decision"], false, "{json}");
+        assert_eq!(
+            json["evaluations"][0]["context"]["error"]["code"], "clock_unavailable",
+            "{json}"
+        );
+
+        let spiffe = app(st.clone(), no_trust_domain_spiffe());
+        let signed = signed_router(st, &SigningKey::from_bytes(&[9u8; 32]), false);
+        for (posture, router) in [("spiffe", spiffe), ("signed", signed)] {
+            let (status, json) = send(router, "POST", "/access/v1/evaluation", decision).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{posture}: {json}");
+            assert_eq!(json["error"], "clock_unavailable", "{posture}: {json}");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The SPIFFE posture with no trust domain, so no SVID verifies: enough for a test of
+    /// what the posture answers before or instead of a credential.
+    fn no_trust_domain_spiffe() -> Arc<caller::Caller> {
+        Arc::new(caller::Caller::Spiffe(Box::new(
+            crate::spiffe::SpiffeConfig {
+                trust_domains: std::collections::BTreeMap::new(),
+                audience: "https://pdp.example/".into(),
+                pep: std::collections::BTreeSet::new(),
+            },
+        )))
+    }
+
     /// The audience every signed-request router test configures and signs for.
     const SIGNED_AUD: &str = "https://pdp.example/access/v1/evaluation";
 
@@ -568,7 +671,7 @@ mod tests {
     fn signed_router(st: AppState, key: &SigningKey, pep: bool) -> axum::Router {
         let mut agents = std::collections::BTreeMap::new();
         agents.insert("agent-1".to_owned(), vec![key.verifying_key()]);
-        let mut cfg = crate::sig::SigConfig::new(agents, SIGNED_AUD);
+        let mut cfg = crate::sig::SigConfig::new(agents, SIGNED_AUD, "pdp.example");
         if pep {
             cfg.pep.insert("agent-1".into());
         }
@@ -607,7 +710,7 @@ mod tests {
             URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap()),
             URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap()),
         );
-        let created = now_secs();
+        let created = now_secs().unwrap();
         let mut headers = vec![("host", "pdp.example".to_owned())];
         // A POST also covers its body's digest; a GET has no body that is an input.
         let (components, digest_line) = if method == "POST" {

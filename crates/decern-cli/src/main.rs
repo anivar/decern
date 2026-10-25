@@ -298,10 +298,16 @@ fn explain(
 
         if let Some(a) = &record.entry.asserted_by {
             println!();
-            println!(
-                "asserted_by:  {} (client {}, issuer {})",
-                a.sub, a.client_id, a.iss
-            );
+            match &a.iss {
+                Some(iss) => println!(
+                    "asserted_by:  {} (client {}, issuer {iss})",
+                    a.sub, a.client_id
+                ),
+                None => println!(
+                    "asserted_by:  {} (client {}, no issuer verified)",
+                    a.sub, a.client_id
+                ),
+            }
             println!("  the caller the server verified when it took this request —");
             println!("  distinct from the subject asked about and the owner who answers");
         }
@@ -634,7 +640,7 @@ mod tests {
             asserted_by: Some(decern_ledger::AssertedBy {
                 sub: "operator-1".into(),
                 client_id: "admin-cli".into(),
-                iss: "https://auth.example.com".into(),
+                iss: Some("https://auth.example.com".into()),
             }),
             ..Default::default()
         };

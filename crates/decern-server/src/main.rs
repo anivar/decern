@@ -34,7 +34,9 @@ mod testutil;
 use anyhow::{Context, Result};
 use boot::serve;
 
-pub(crate) use state::{AppState, LedgerBackend, caller_disclosure, now_secs};
+pub(crate) use state::{
+    AppState, Clock, LedgerBackend, caller_disclosure, clock_unavailable, now_secs,
+};
 
 fn main() -> Result<()> {
     // On a thread with the stack Cedar needs, not the main thread: see

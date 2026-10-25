@@ -59,6 +59,7 @@ fn fixture_state() -> (AppState, TempBase) {
         missions: Arc::new(FileMissionRegistry::open(base.join("missions.json")).unwrap()),
         pubkey,
         retired_keys: Arc::new(Vec::new()),
+        clock: crate::now_secs,
         tree_head: Arc::default(),
         projection: Arc::default(),
         require_mission: false,

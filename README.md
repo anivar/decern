@@ -126,8 +126,10 @@ Beyond the decision itself, a record carries accountability columns. The
 **accountable-owner** is the root of the subject's delegation chain, resolved server-side —
 a delegate's record names the principal ultimately answerable for it, and none of these columns
 ever changes the allow/deny outcome. Under any credential posture, **asserted_by** names the
-caller the server verified when it took the request — subject, client, issuer — and is
-absent under a trusted front, where the server verified nothing itself. The
+caller the server verified when it took the request — subject, client and, where the server
+checked an issuer's signature, that issuer; a signed request's token is checked against no
+issuer, so its record names none — and is absent under a trusted front, where the server
+verified nothing itself. The
 **decision subject** is the party a decision is
 taken *upon* — a different question from who asked and who answers for it — carried as a
 pseudonymous handle per

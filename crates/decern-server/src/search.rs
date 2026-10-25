@@ -209,11 +209,15 @@ fn search(
         ),
     ]
     .map(|(key, p)| (key, p.filter(|m| !m.is_empty())));
-    let (mut ctx, now_s, asserted_by) =
-        match prepare_context(caller, req.context.take().unwrap_or_default(), described) {
-            Ok(prepared) => prepared,
-            Err(refusal) => return refusal.into_response(),
-        };
+    let (mut ctx, now_s, asserted_by) = match prepare_context(
+        caller,
+        st.clock,
+        req.context.take().unwrap_or_default(),
+        described,
+    ) {
+        Ok(prepared) => prepared,
+        Err(refusal) => return refusal.into_response(),
+    };
     if let Some(obj) = ctx.as_object_mut() {
         obj.remove("decision_subject");
     }

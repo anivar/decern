@@ -353,7 +353,7 @@ standards:
       enforcement to the application; there is no nonce cache, so a verbatim replay verifies
       again inside the window. A label repeated in either field is refused (§4). The RFC's Ed25519 vectors (Appendix B.2.6, B.4) are tests. Errata 8102 and
       8103 (verified) rename `@signature-input` to `@signature-params` in two passages and
-      change nothing implemented. Read in full 2026-10-19; §4, §4.1 and §4.2 (labels unique across field values) read again 2026-10-25 for the repeated-label check.
+      change nothing implemented. Read in full 2026-10-19; §4, §4.1 and §4.2 (labels unique across field values) read again 2026-10-25 for the repeated-label check. §2.2.3 and §7.4.3 (a verifier configured with the target as the client sees it) read again 2026-10-25: the signed-request posture compares the signed `@authority` with `--signed-authority`, as the AAuth posture compares it with `--aauth-audience`.
 
   - name: Structured Field Values for HTTP (RFC 9651)
     url: https://www.rfc-editor.org/rfc/rfc9651
@@ -426,7 +426,7 @@ standards:
 
   - name: Signature-Key HTTP header (draft-hardt-httpbis-signature-key)
     url: https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/
-    verified: 2026-10-21
+    verified: 2026-10-25
     surface:
       - crates/decern-server/src/sig.rs
       - crates/decern-server/src/aauth.rs
@@ -436,8 +436,10 @@ standards:
       one of the covered components (§7.8) — so tampering with any claim inside it
       invalidates the outer signature. That is why the signed-request posture does not
       verify the token's own JWS signature: the outer signature already covers it, and the
-      key it confirms must be the one configured for the agent. The signed-request posture
-      does not meet -09 as written: it carries the token as the whole `Signature-Key` value,
+      key it confirms must be the one configured for the agent. -09 §3.8 (read again
+      2026-10-25) has `iss` as a SHOULD checked through the issuer's key; the signed-request
+      posture verifies no issuer key, so it requires `iss` and does not record it. The
+      signed-request posture does not meet -09 as written: it carries the token as the whole `Signature-Key` value,
       not as a dictionary member under the `jwt` scheme (§3, §3.8), reads no JWK `alg`, and
       refuses a `Signature-Input` `alg` parameter that §7.4 has a verifier ignore. The AAuth
       posture parses `Signature-Key` as a Dictionary (§3 step 2) and selects the member under

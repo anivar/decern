@@ -16,9 +16,9 @@ use decern_store::{MissionRegistry, StoreError};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::AppState;
 use crate::decide::resolve_sponsor;
 use crate::record::{append_to_backend, record_or_503, shard_for};
-use crate::{AppState, now_secs};
 
 // ============================== Mission lifecycle ==============================
 //
@@ -156,14 +156,10 @@ fn approve_now(
     if let Some(refusal) = crate::caller::refuse_unless_admits(&caller, &req.approver) {
         return refusal;
     }
-    let asserted_by = caller
-        .as_ref()
-        .map(|axum::Extension(who)| decern_ledger::AssertedBy {
-            sub: who.subject.clone(),
-            client_id: who.client_id.clone(),
-            iss: who.issuer.clone(),
-        });
-    let now_s = now_secs();
+    let asserted_by = crate::caller::asserted_by(&caller);
+    let Some(now_s) = (st.clock)() else {
+        return crate::clock_unavailable().into_response();
+    };
     let mission = Mission {
         approver: req.approver,
         agent: req.agent,
@@ -306,14 +302,10 @@ fn terminate_now(
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
     s256: String,
 ) -> Response {
-    let asserted_by = caller
-        .as_ref()
-        .map(|axum::Extension(who)| decern_ledger::AssertedBy {
-            sub: who.subject.clone(),
-            client_id: who.client_id.clone(),
-            iss: who.issuer.clone(),
-        });
-    let now_s = now_secs();
+    let asserted_by = crate::caller::asserted_by(&caller);
+    let Some(now_s) = (st.clock)() else {
+        return crate::clock_unavailable().into_response();
+    };
     // Resolve the mission first: its approver is the subject/accountable-owner of the
     // termination record, and an unknown reference has nothing to terminate.
     let entry = match st.missions.status(&s256) {

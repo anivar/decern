@@ -14,7 +14,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::record::poisoned;
-use crate::{AppState, LedgerBackend, now_secs};
+use crate::{AppState, LedgerBackend};
 
 /// A tree head is recomputed at most this often; between, the last one is served. It commits
 /// to a prefix of the log, and a prefix a moment old is as checkable as the latest.
@@ -56,27 +56,30 @@ pub(crate) async fn tree_head(State(st): State<AppState>) -> Response {
     // ledger's lock, and are served what it computed. The computation keeps its turn until
     // it finishes, so a request that gives up cannot let a second read of the log start.
     let mut cached = st.tree_head.clone().lock_owned().await;
-    let backend = st.backend.clone();
+    let (backend, clock) = (st.backend.clone(), st.clock);
     let computed = tokio::task::spawn_blocking(move || {
-        let fresh = current_tree_head(&backend, cached.clone())?;
+        let fresh = current_tree_head(&backend, cached.clone(), clock)?;
         *cached = Some(fresh.clone());
-        Ok::<_, LedgerError>(fresh.1)
+        Ok::<_, HeadError>(fresh.1)
     });
     match computed.await {
         Ok(Ok(head)) => (StatusCode::OK, Json(json!(head))).into_response(),
-        Ok(Err(e)) => unavailable(e.to_string()),
+        Ok(Err(HeadError::Clock)) => crate::clock_unavailable().into_response(),
+        Ok(Err(HeadError::Ledger(e))) => unavailable(e.to_string()),
         Err(_) => unavailable("the tree head did not complete".into()),
     }
 }
 
 /// The tree head over the log as it is, or `last` while it still covers every record or is
 /// under [`TREE_HEAD_REFRESH`] old. The lock an append holds across its fsync is taken only
-/// to count the records and to sign; the read and the hashing happen between, unlocked.
-/// Blocking, so it runs on a thread that serves no requests.
+/// to count the records and to sign; the read and the hashing happen between, unlocked. A
+/// cached head needs no clock; a new one is timed by [`signing_time`]. Blocking, so it runs
+/// on a thread that serves no requests.
 fn current_tree_head(
     backend: &LedgerBackend,
     last: Option<(Instant, TreeHead)>,
-) -> Result<(Instant, TreeHead), LedgerError> {
+    clock: crate::Clock,
+) -> Result<(Instant, TreeHead), HeadError> {
     let m = single(backend)?;
     let prefix = m.lock().map_err(|_| poisoned())?.prefix();
     if let Some((at, head)) = last
@@ -86,12 +89,33 @@ fn current_tree_head(
     }
     let leaves = decern_ledger::leaves_from_lines(&prefix.lines()?)?;
     let root = hex::encode(decern_ledger::merkle::tree_hash(&leaves));
-    let now_ms = now_secs().saturating_mul(1000);
+    let now_ms = signing_time(clock)?;
     let head = m
         .lock()
         .map_err(|_| poisoned())?
         .sign_tree_head(root, leaves.len() as u64, now_ms);
     Ok((Instant::now(), head))
+}
+
+/// Why a head could not be produced: the log could not be read, or the clock has no time
+/// to sign it at.
+enum HeadError {
+    Ledger(LedgerError),
+    Clock,
+}
+
+impl From<LedgerError> for HeadError {
+    fn from(e: LedgerError) -> Self {
+        HeadError::Ledger(e)
+    }
+}
+
+/// The time a head is signed at, in milliseconds, read when it is signed: after the wait for
+/// a turn and the read of the log, so a head is never timed earlier than a record it covers.
+fn signing_time(clock: crate::Clock) -> Result<u64, HeadError> {
+    clock()
+        .map(|secs| secs.saturating_mul(1000))
+        .ok_or(HeadError::Clock)
 }
 
 /// The single-file ledger, the only one the audit surface reads. Each handler answers a
@@ -158,14 +182,18 @@ pub(crate) async fn subject_audit(
         )
             .into_response();
     }
+    // Refused before the whole log is read; the head is timed when it is signed, below.
+    if (st.clock)().is_none() {
+        return crate::clock_unavailable().into_response();
+    }
     // One projection at a time, and it keeps its turn until it finishes: each reads the
     // whole log into memory, and an open route must not let a crowd of them, or of requests
     // that gave up on them, do so at once.
     let turn = st.projection.clone().lock_owned().await;
-    let backend = st.backend.clone();
+    let (backend, clock) = (st.backend.clone(), st.clock);
     let projected = tokio::task::spawn_blocking(move || {
         let _turn = turn;
-        project(&backend, q.handle)
+        project(&backend, q.handle, clock)
     });
     let Projection {
         handle,
@@ -175,7 +203,8 @@ pub(crate) async fn subject_audit(
         truncated,
     } = match projected.await {
         Ok(Ok(p)) => p,
-        Ok(Err(e)) => return audit_unavailable(e),
+        Ok(Err(HeadError::Clock)) => return crate::clock_unavailable().into_response(),
+        Ok(Err(HeadError::Ledger(e))) => return audit_unavailable(e),
         Err(_) => return audit_unavailable("the projection did not complete"),
     };
 
@@ -213,7 +242,11 @@ struct Projection {
 /// its fsync is taken twice, briefly: once to count the records, once to sign. Reading,
 /// parsing, matching and proving happen between, unlocked. Blocking, so it runs on a thread
 /// that serves no requests.
-fn project(backend: &LedgerBackend, handle: String) -> Result<Projection, LedgerError> {
+fn project(
+    backend: &LedgerBackend,
+    handle: String,
+    clock: crate::Clock,
+) -> Result<Projection, HeadError> {
     let m = single(backend)?;
     let prefix = m.lock().map_err(|_| poisoned())?.prefix();
     let lines = prefix.lines()?;
@@ -253,7 +286,7 @@ fn project(backend: &LedgerBackend, handle: String) -> Result<Projection, Ledger
         // Only a match is parsed in full — the page is bounded, so this is too.
         match serde_json::from_str::<Value>(line) {
             Ok(rec) => matched.push((seq as u64, rec)),
-            Err(e) => return Err(LedgerError::Serde(e.to_string())),
+            Err(e) => return Err(LedgerError::Serde(e.to_string()).into()),
         }
     }
 
@@ -264,7 +297,7 @@ fn project(backend: &LedgerBackend, handle: String) -> Result<Projection, Ledger
     // two locks makes this a head over the earlier prefix — the same consistent answer
     // the caller would have gotten before the append, never a mixed one.
     let root = hex::encode(decern_ledger::merkle::tree_hash(&leaves));
-    let now_ms = now_secs().saturating_mul(1000);
+    let now_ms = signing_time(clock)?;
     let head = m
         .lock()
         .map_err(|_| poisoned())?
@@ -420,6 +453,47 @@ mod tests {
         );
         tokio::time::sleep(TREE_HEAD_REFRESH + std::time::Duration::from_millis(100)).await;
         assert_eq!(size(tree_head(State(st.clone())).await).await, 2);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A head is timed when it is signed, after the wait for its turn and the read of the log,
+    /// never when it was asked for: a record that lands during the wait is covered by a head
+    /// timed after it. The test clock steps forward while each request waits for its turn.
+    #[tokio::test]
+    async fn a_head_is_timed_when_it_is_signed_not_when_it_was_asked_for() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NOW: AtomicU64 = AtomicU64::new(0);
+        fn stepped() -> Option<u64> {
+            Some(NOW.load(Ordering::SeqCst))
+        }
+        let base = mission_base();
+        let (mut st, _pk) = mission_state_at(&base);
+        st.clock = stepped;
+        let wait = std::time::Duration::from_millis(50);
+
+        NOW.store(1_000_000, Ordering::SeqCst);
+        let turn = st.tree_head.clone().lock_owned().await;
+        let asked = tokio::spawn(tree_head(State(st.clone())));
+        tokio::time::sleep(wait).await;
+        NOW.store(2_000_000, Ordering::SeqCst);
+        drop(turn);
+        let (_, head) = body_json(asked.await.unwrap()).await;
+        assert_eq!(head["ts_ms"], 2_000_000_000_u64, "tree head: {head}");
+
+        NOW.store(1_000_000, Ordering::SeqCst);
+        let turn = st.projection.clone().lock_owned().await;
+        let asked = tokio::spawn(subject_audit(
+            State(st.clone()),
+            Query(SubjectQuery { handle: "h".into() }),
+        ));
+        tokio::time::sleep(wait).await;
+        NOW.store(2_000_000, Ordering::SeqCst);
+        drop(turn);
+        let (_, body) = body_json(asked.await.unwrap()).await;
+        assert_eq!(
+            body["tree_head"]["ts_ms"], 2_000_000_000_u64,
+            "subject audit: {body}"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

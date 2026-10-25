@@ -63,7 +63,8 @@ PUB=$(g "$GOOD" pub_hex)
 # request to establish a caller, so a decision never waits on a third party.
 cargo run -q -p decern-server -- --ledger "$LEDGER" --addr "127.0.0.1:$PORT" \
   --model "$MODEL" \
-  --signed-agent-key "agent-1=$PUB" --signed-audience "$AUD" &
+  --signed-agent-key "agent-1=$PUB" --signed-audience "$AUD" \
+  --signed-authority "127.0.0.1:$PORT" &
 SRV=$!
 trap 'kill "$SRV" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 until curl -sf "$PDP/healthz" >/dev/null 2>&1; do sleep 0.3; done

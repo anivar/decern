@@ -85,6 +85,11 @@ pub(crate) struct SigConfig {
     /// This deployment's resource identifier, which the token's `aud` must contain —
     /// same role as [`crate::bearer::Config::audience`].
     pub(crate) audience: String,
+    /// This deployment's authority, which the signed `@authority` must equal. The audience
+    /// names a resource and can be shared; the signature covers the host the request was
+    /// sent to, and only this comparison stops a request signed for one deployment from
+    /// verifying at another that trusts the same agent key and audience.
+    pub(crate) authority: String,
     /// Agent identifiers that remain PEPs under this posture: they may name principals
     /// other than themselves. Empty by default — a signed-request agent is a workload.
     pub(crate) pep: std::collections::BTreeSet<String>,
@@ -94,10 +99,12 @@ impl SigConfig {
     pub(crate) fn new(
         agents: BTreeMap<String, Vec<VerifyingKey>>,
         audience: impl Into<String>,
+        authority: impl Into<String>,
     ) -> Self {
         Self {
             agents,
             audience: audience.into(),
+            authority: authority.into(),
             pep: std::collections::BTreeSet::new(),
         }
     }
@@ -109,7 +116,6 @@ pub(crate) struct Signed {
     /// The configured agent identifier the token's `sub` named and whose key verified
     /// the signature.
     pub(crate) agent: String,
-    pub(crate) issuer: String,
 }
 
 /// Which components this request must cover.
@@ -210,8 +216,9 @@ impl CallerAuth for SigConfig {
         let fields = SignatureFields::from_request(req)?;
         let signed = authenticate(&fields.request(req, body), self, now_secs as i64)?;
         // A signed request names one agent, which is both the party and the client
-        // acting for it — there is no separate delegating client to distinguish.
-        let who = Authenticated::new(signed.agent.clone(), signed.agent.clone(), signed.issuer);
+        // acting for it — there is no separate delegating client to distinguish — and no
+        // issuer this server verified.
+        let who = Authenticated::without_issuer(signed.agent.clone(), signed.agent.clone());
         Ok(if self.pep.contains(&signed.agent) {
             who
         } else {
@@ -289,6 +296,20 @@ pub(crate) struct SignedRequest<'a> {
 }
 
 impl<'a> SignedRequest<'a> {
+    /// Whether this request was sent to `authority`, the deployment's own. `@authority` is the
+    /// host the client sent to, so a signature over it binds the request to this deployment
+    /// only once the two are compared. Both signature postures call this before any key is
+    /// consulted; a host compares without case.
+    pub(crate) fn sent_to(&self, authority: &str) -> Result<(), Denied> {
+        if self.authority.eq_ignore_ascii_case(authority) {
+            Ok(())
+        } else {
+            Err(Denied::Invalid(
+                "request authority is not this deployment".into(),
+            ))
+        }
+    }
+
     /// `Signature-Key`, `Signature-Input` and `Signature`, each present and within the size
     /// either posture allows. No `Signature-Key` is no credential at all, which a posture
     /// answers with its own challenge; the others missing, or any oversized, is a bad one.
@@ -411,6 +432,7 @@ pub(crate) fn authenticate(
         return Err(Denied::Invalid("no agent keys are configured".into()));
     }
     let headers = req.signature_headers()?;
+    req.sent_to(&cfg.authority)?;
     // `Signature-Key` conveys the bearer token this signature is over; this deployment
     // accepts the token itself, verbatim. No separate size check here: trimming can only
     // shrink it, and the header is already bounded above.
@@ -463,11 +485,12 @@ pub(crate) fn authenticate(
         .and_then(Value::as_str)
         .ok_or_else(|| Denied::Invalid("bound token carries no sub".into()))?
         .to_owned();
-    let issuer = claims
+    // Required by this profile, and still not recorded: nothing here verifies who issued the
+    // token, so its `iss` is the caller's own claim.
+    claims
         .get("iss")
         .and_then(Value::as_str)
-        .ok_or_else(|| Denied::Invalid("bound token carries no iss".into()))?
-        .to_owned();
+        .ok_or_else(|| Denied::Invalid("bound token carries no iss".into()))?;
 
     if !crate::jose::audience_contains(claims.get("aud"), &cfg.audience) {
         return Err(Denied::Invalid(
@@ -539,10 +562,7 @@ pub(crate) fn authenticate(
         ));
     }
 
-    Ok(Signed {
-        agent: subject,
-        issuer,
-    })
+    Ok(Signed { agent: subject })
 }
 
 /// The one label the signed-request posture accepts. RFC 9421 §4 has the signer choose the
@@ -595,7 +615,7 @@ mod tests {
     fn cfg(key: &VerifyingKey) -> SigConfig {
         let mut agents = BTreeMap::new();
         agents.insert(AGENT.to_owned(), vec![*key]);
-        SigConfig::new(agents, AUD)
+        SigConfig::new(agents, AUD, AUTHORITY)
     }
 
     /// Signed GET headers. GET has no body that is an input, so `content-digest` is not
@@ -711,7 +731,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(who.agent, AGENT);
-        assert_eq!(who.issuer, ISS);
+    }
+
+    /// The token's `iss` is the agent's own claim: nothing verifies it against an issuer
+    /// key. So the caller a signed request establishes, and the record of what it asked,
+    /// name no issuer.
+    #[test]
+    fn a_signed_caller_names_no_issuer() {
+        let k = decern_crypto::generate().unwrap();
+        let req = get_request(PATH, &signed_get_headers(&k, &[]));
+        let who = CallerAuth::authenticate(&cfg(&k.verifying_key()), &req, NOW as u64, b"")
+            .expect("a well-formed signed request");
+        assert_eq!(who.subject, AGENT);
+        assert_eq!(who.issuer, None);
+    }
+
+    /// A request signed for another deployment's authority is refused before any key is
+    /// consulted, though the same agent key and audience would verify it: the signature
+    /// covers where the request was sent, and that is compared with this deployment.
+    #[test]
+    fn a_request_signed_for_another_authority_is_refused() {
+        let k = decern_crypto::generate().unwrap();
+        let req = get_request(PATH, &signed_get_headers(&k, &[]));
+        let mut elsewhere = cfg(&k.verifying_key());
+        elsewhere.authority = "other.example".into();
+        let e = CallerAuth::authenticate(&elsewhere, &req, NOW as u64, b"").unwrap_err();
+        assert_eq!(e.detail(), "request authority is not this deployment");
+        let mut cased = cfg(&k.verifying_key());
+        cased.authority = AUTHORITY.to_ascii_uppercase();
+        CallerAuth::authenticate(&cased, &req, NOW as u64, b"")
+            .expect("an authority compares without case, as a host name does");
     }
 
     /// The property this module exists for: a well-formed token whose `cnf.jwk` names the
@@ -869,7 +918,7 @@ mod tests {
             AGENT.to_owned(),
             vec![old.verifying_key(), new.verifying_key()],
         );
-        let cfg = SigConfig::new(agents, AUD);
+        let cfg = SigConfig::new(agents, AUD, AUTHORITY);
         for k in [&old, &new] {
             let token = bound_token(&k.verifying_key(), |_| {});
             let (key_h, input_h, sig_h) = sign_get(k, &token, &UNBODIED_COMPONENTS, CREATED);

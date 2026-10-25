@@ -364,11 +364,7 @@ pub(crate) fn authenticate_with(
     // what stops a request signed for one deployment from verifying at another that pins the
     // same provider. `@authority` is the authority the client sent, so it is only meaningful
     // once it has been compared with what this server is actually called.
-    if !req.authority.eq_ignore_ascii_case(&cfg.authority) {
-        return Err(Denied::Invalid(
-            "request authority is not this deployment".into(),
-        ));
-    }
+    req.sent_to(&cfg.authority)?;
 
     // -11 §11.3.4 steps 2 and 3, and §11.3.4.2. The covered set must include the required
     // components, in any order and beside any others; this profile requires `content-digest`
@@ -822,7 +818,7 @@ mod tests {
         let who = authenticate(&req(&f, AUTHORITY), &cfg(&provider.verifying_key()), NOW)
             .expect("should authenticate");
         assert_eq!(who.subject, AGENT);
-        assert_eq!(who.issuer, ISS);
+        assert_eq!(who.issuer.as_deref(), Some(ISS));
         assert_eq!(who.bind, Bind::SelfOnly);
     }
 
