@@ -59,6 +59,8 @@ fn fixture_state() -> (AppState, TempBase) {
         missions: Arc::new(FileMissionRegistry::open(base.join("missions.json")).unwrap()),
         pubkey,
         retired_keys: Arc::new(Vec::new()),
+        tree_head: Arc::default(),
+        projection: Arc::default(),
         require_mission: false,
         standing_issuers: Arc::new(Vec::new()),
         authority_digest: Arc::from("certification"),

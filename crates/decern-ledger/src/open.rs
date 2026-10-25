@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 /// segmentation-transparent for external callers with zero signature changes;
 /// a `Ledger`'s own methods already know their kind from how they were
 /// opened and never need to re-detect it.
+#[derive(Clone)]
 pub(crate) enum Location {
     Single(PathBuf),
     Segmented(PathBuf),

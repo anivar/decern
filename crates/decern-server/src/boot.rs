@@ -335,6 +335,8 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
         missions,
         pubkey,
         retired_keys: Arc::new(retired),
+        tree_head: Arc::default(),
+        projection: Arc::default(),
         require_mission: args.require_mission,
         standing_issuers: Arc::new(standing_issuers),
         authority_digest,

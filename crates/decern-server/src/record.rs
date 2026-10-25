@@ -127,6 +127,25 @@ pub(crate) async fn healthz(
     }
 }
 
+/// Run a handler's work on a blocking thread and answer with what it returns. Evaluation, the
+/// append and its fsync are synchronous; on an executor worker they would hold it, and every
+/// request queued behind it, for their whole length, and the request deadline could not fire
+/// while they ran. A panic in the work is answered `503` under `error`; whatever it had already
+/// recorded stays recorded, and nothing unrecorded is served.
+pub(crate) async fn off_the_executor(
+    error: &'static str,
+    work: impl FnOnce() -> Response + Send + 'static,
+) -> Response {
+    match tokio::task::spawn_blocking(work).await {
+        Ok(response) => response,
+        Err(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": error, "detail": "the request did not complete" })),
+        )
+            .into_response(),
+    }
+}
+
 pub(crate) fn record_or_503(append: impl FnOnce() -> Result<(), LedgerError>) -> Option<Response> {
     match append() {
         Ok(()) => None,
@@ -160,6 +179,15 @@ pub(crate) fn record_and_respond(
     }
 }
 
+/// The ledger's mutex is poisoned: an append panicked mid-write, and nothing that needs the
+/// ledger is served after it.
+pub(crate) fn poisoned() -> LedgerError {
+    LedgerError::Io {
+        path: "ledger".into(),
+        err: "ledger mutex poisoned; refusing to serve".into(),
+    }
+}
+
 /// Append `entry` to whichever backend is configured, fail-closed. `shard` is the
 /// server-derived ledger shard: `Some(Ok(shard))` for the sharded backend, `None` for
 /// the single-file backend; a shard-resolver error (or the impossible `None` on the
@@ -173,10 +201,7 @@ pub(crate) fn append_to_backend(
         // A poisoned mutex (a prior append panicked mid-write) fails CLOSED as a 503.
         LedgerBackend::Single(m) => match m.lock() {
             Ok(mut g) => g.append(entry).map(|_| ()),
-            Err(_) => Err(LedgerError::Io {
-                path: "ledger".into(),
-                err: "ledger mutex poisoned; refusing to serve".into(),
-            }),
+            Err(_) => Err(poisoned()),
         },
         LedgerBackend::Sharded(s) => {
             let resolver_err = |err: String| LedgerError::Io {
@@ -207,10 +232,7 @@ pub(crate) fn append_all_to_backend(
             Ok(mut g) => g
                 .append_all(entries.into_iter().map(|(_, entry)| entry).collect())
                 .map(|_| ()),
-            Err(_) => Err(LedgerError::Io {
-                path: "ledger".into(),
-                err: "ledger mutex poisoned; refusing to serve".into(),
-            }),
+            Err(_) => Err(poisoned()),
         },
         LedgerBackend::Sharded(_) => entries
             .into_iter()
@@ -246,6 +268,13 @@ pub(crate) fn shard_for(backend: &LedgerBackend, dir: &Directory, subject_id: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Work that panics on its blocking thread is answered 503, never a dropped connection.
+    #[tokio::test]
+    async fn work_that_panics_off_the_executor_is_answered_503() {
+        let response = off_the_executor("decision_unavailable", || panic!("work failed")).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
     use decern_kernel::{Kernel, Model};
 
     use crate::testutil::test_dir;

@@ -127,14 +127,7 @@ pub(crate) async fn search_action(
 /// A search decides once per directory entry, so it runs on a blocking thread rather than
 /// holding an executor worker for the length of the directory.
 async fn off_the_executor(work: impl FnOnce() -> Response + Send + 'static) -> Response {
-    match tokio::task::spawn_blocking(work).await {
-        Ok(response) => response,
-        Err(_) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "error": "search_failed", "detail": "the search did not complete" })),
-        )
-            .into_response(),
-    }
+    crate::record::off_the_executor("search_failed", work).await
 }
 
 /// One search, start to finish: the request checked for what its kind requires, the

@@ -130,6 +130,15 @@ pub(crate) async fn mission_approve(
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
     Json(req): Json<MissionApproveReq>,
 ) -> Response {
+    crate::record::off_the_executor("approval_unavailable", move || approve_now(st, caller, req))
+        .await
+}
+
+fn approve_now(
+    st: AppState,
+    caller: Option<axum::Extension<crate::caller::Authenticated>>,
+    req: MissionApproveReq,
+) -> Response {
     if let Some(refusal) = crate::caller::refuse_unless_admits(&caller, &req.approver) {
         return refusal;
     }
@@ -271,6 +280,17 @@ pub(crate) async fn mission_terminate(
     State(st): State<AppState>,
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
     UrlPath(s256): UrlPath<String>,
+) -> Response {
+    crate::record::off_the_executor("termination_unavailable", move || {
+        terminate_now(st, caller, s256)
+    })
+    .await
+}
+
+fn terminate_now(
+    st: AppState,
+    caller: Option<axum::Extension<crate::caller::Authenticated>>,
+    s256: String,
 ) -> Response {
     let asserted_by = caller
         .as_ref()

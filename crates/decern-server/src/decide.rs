@@ -147,7 +147,10 @@ pub(crate) async fn decide(
         Ok(req) => req,
         Err(rejection) => return Refusal::invalid_request(rejection.body_text()).into_response(),
     };
-    decide_one(&st, &caller, req)
+    crate::record::off_the_executor("decision_unavailable", move || {
+        decide_one(&st, &caller, req)
+    })
+    .await
 }
 
 /// One request, start to finish: admitted, evaluated, recorded, served — in that order,

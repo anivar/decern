@@ -46,7 +46,7 @@ pub use checkpoint::{
     verify_checkpoint_sig, verify_tree_head_sig,
 };
 pub use error::LedgerError;
-pub use ledger::Ledger;
+pub use ledger::{Ledger, Prefix};
 pub use record::{
     AssertedBy, ChallengeRecord, DIGEST_AUTHORITY, DIGEST_PARAMETERS, DecisionSubject, EdgeType,
     Entry, GENESIS, MissionRef, Party, Record, SponsorSource,
