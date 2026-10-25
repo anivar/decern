@@ -97,11 +97,20 @@ pub fn save_signing_key(key: &SigningKey, path: &Path) -> Result<(), KeyError> {
                 path: path.display().to_string(),
                 err: format!("{e} (refusing to overwrite an existing key file)"),
             })?;
+        let failed = |e: std::io::Error| KeyError::Write {
+            path: path.display().to_string(),
+            err: e.to_string(),
+        };
         file.write_all(hex::encode(key.to_bytes()).as_bytes())
-            .map_err(|e| KeyError::Write {
-                path: path.display().to_string(),
-                err: e.to_string(),
-            })?;
+            .map_err(failed)?;
+        // Durable before anything is signed with it: a ledger's first record is fsync'd, and
+        // a key lost to a crash after that leaves records nothing can extend or verify.
+        file.sync_all().map_err(failed)?;
+        if let Some(dir) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::File::open(dir)
+                .and_then(|d| d.sync_all())
+                .map_err(failed)?;
+        }
         Ok(())
     }
     #[cfg(not(unix))]
