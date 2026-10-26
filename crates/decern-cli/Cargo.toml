@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
-description = "decern command-line tool: prove, decide, verify."
+description = "decern command-line tool: prove, decide, verify, explain."
 repository.workspace = true
 
 [[bin]]

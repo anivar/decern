@@ -97,9 +97,11 @@ pub struct EntityRef {
     pub id: String,
 }
 
-/// The kernel's decision. `reasons` names the determining policies on Allow;
-/// `errors` carries evaluation diagnostics (e.g. unknown principal) — which
-/// always accompany a Deny, never an Allow.
+/// The kernel's decision. `reasons` names the policies that determined it: the permits on
+/// an Allow, the forbids on a Deny a forbid made; a Deny no policy matched carries none.
+/// `errors` carries diagnostics: a request refused before evaluation (a malformed subject,
+/// action, resource or context) is a Deny with an error and no reasons, and a policy that
+/// failed to evaluate is reported here and skipped, whatever the decision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckResponse {
     pub decision: bool,

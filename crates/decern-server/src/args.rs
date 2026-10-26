@@ -106,8 +106,8 @@ pub(crate) struct Args {
     /// An agent identifier this deployment recognizes and an Ed25519 key it may
     /// sign requests with, as `ID=HEX`. Repeatable: one entry per agent, and a key
     /// rollover is a second entry for the same ID rather than an atomic swap. Turns on
-    /// RFC 9421 signed-request validation (see `docs/CLI.md` "Sender-constrained caller
-    /// authentication") for the decision and mission-mutation endpoints. An identifier
+    /// RFC 9421 signed-request validation (see `docs/CLI.md` "The trust boundary, stated
+    /// plainly") for the decision and mission-mutation endpoints. An identifier
     /// with no entry here cannot authenticate under this mode, by design: keys are
     /// configured, never fetched.
     #[arg(
@@ -142,7 +142,7 @@ pub(crate) struct Args {
     /// `use: jwt-svid` key, an entry without a `kid`, or a key this deployment cannot
     /// verify with — a bundle problem should surface on boot, not when a caller arrives.
     /// Keys are configured, never fetched. Turns on JWT-SVID validation (see `docs/CLI.md`
-    /// "SPIFFE JWT-SVID validation") for the decision and mission-mutation endpoints.
+    /// "The trust boundary, stated plainly") for the decision and mission-mutation endpoints.
     #[arg(
         long = "spiffe-trust-domain",
         value_name = "TRUST_DOMAIN=PATH",
@@ -471,7 +471,7 @@ pub(crate) fn caller_from(args: &Args) -> Result<caller::Caller> {
              for signed requests, --spiffe-trust-domain/--spiffe-audience for SPIFFE JWT-SVIDs, \
              --aauth-provider/--aauth-audience for AAuth agent tokens, or --trust-proxy to \
              state that something in front already authenticates them (see docs/CLI.md \"The \
-             trust boundary\")"
+             trust boundary, stated plainly\")"
         );
     };
     // A key that cannot be read is a startup failure, never a token that quietly fails to

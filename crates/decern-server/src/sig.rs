@@ -10,7 +10,8 @@
 //! over this exact request proves the caller holds the private key *now*. A leaked
 //! bearer token is replayable against any request until it expires. A leaked signed
 //! request cannot be replayed against a *different* request: `@method`, `@authority`
-//! and `@path` are always covered, and a POST also covers `content-digest` (RFC 9530)
+//! and `@path` are always covered, and a POST or any request with a body also covers
+//! `content-digest` (RFC 9530)
 //! of the body bytes the handler will see — so swapping the JSON at the same path
 //! is a different request, and the captured signature does not verify. Verbatim
 //! replay of the exact same captured signature (same path, same body) is not
@@ -51,7 +52,7 @@ use crate::caller::{Authenticated, CallerAuth, Denied, printable};
 /// Covered components for a request with no body that is an input (GET, HEAD).
 const UNBODIED_COMPONENTS: [&str; 4] = ["@method", "@authority", "@path", "signature-key"];
 
-/// Covered components for POST. `content-digest` sits with the request-target
+/// Covered components for a POST or any request with a body. `content-digest` sits with the request-target
 /// components, before `signature-key`, so the body is part of "this request"
 /// rather than an afterthought on the credential.
 const BODIED_COMPONENTS: [&str; 5] = [

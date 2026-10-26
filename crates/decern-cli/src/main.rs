@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
-//! decern — prove your authorization holds over every input, decide, and verify the audit trail.
+//! decern — prove your authorization model's invariants over its symbolic input space, decide,
+//! verify the audit trail, and explain a record.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -23,7 +24,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Prove every safety invariant over the entire input space (cvc5).
+    /// Prove every safety invariant over the model's symbolic input space (cvc5).
     Prove {
         /// Model directory (authority.cedar, authority.cedarschema, entities.json). Omit for the built-in model.
         #[arg(long)]
