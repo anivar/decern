@@ -401,6 +401,17 @@ back, such as an unknown action's name, is cut to 512 characters in the answer.
   `503`, and `/healthz` answers `503` so a liveness probe restarts the server. The restart trims
   an unterminated record and the ledger continues. A record written in full before its sync
   failed is kept, though its request was answered `503`.
+- **Recovery after a database restart.** A Postgres head store does not reconnect. Once the
+  database closes its connection, by restarting for example, every decision is answered `503`
+  until `decern-serve` is restarted, and `/healthz` still answers `ok`, so a liveness probe does
+  not restart it. A database that stops answering without closing the connection, behind a
+  network partition for example, holds the store until TCP gives up: each decision meanwhile is
+  answered `503` at the 30-second request deadline, and `SIGTERM` waits. decern sets no
+  connection or query timeout of its own, and the URL goes to the Postgres client as given:
+  `connect_timeout` bounds only the first connect, keepalives (`keepalives_idle`,
+  `keepalives_interval`, `keepalives_retries`; on by default, after two idle hours) find a
+  database lost while the store is idle, and only `tcp_user_timeout`, on Linux, bounds a query
+  already waiting.
 - **High availability.** The single-file ledger is one process, and a second is refused at startup. `--sharded postgres://…`
   spreads appends across hosts, every replica started with the same `--key`, but leaves each
   with its own Mission registry, and anchoring and `/audit/v1/subject` refuse a sharded ledger.

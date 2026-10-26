@@ -337,3 +337,103 @@ fn weird_shard_ids_round_trip_and_list_in_byte_order() {
         "list_shards must return byte-order, matching the Memory/File backends"
     );
 }
+
+/// Run an empty section on `shard` on its own thread, and give up after 30 seconds rather than
+/// wait with it. A section left waiting keeps its handle on the store, so the store is never
+/// dropped (and its actor never joined) while it waits.
+fn section_within(
+    store: &Arc<PostgresLedgerHeadStore>,
+    shard: &str,
+) -> Option<Result<(), StoreError>> {
+    let store = Arc::clone(store);
+    let shard = shard.to_owned();
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(store.with_shard(&shard, &mut |_, _| Ok(None)));
+    });
+    rx.recv_timeout(Duration::from_secs(30)).ok()
+}
+
+/// A shard that fails to load is answered as an error, and the store serves the next shard
+/// (DB-gated). The caller waits for the load, so a failure before it has to be answered there:
+/// answered anywhere else, the caller and the store's one connection each wait on the other,
+/// and every later call waits behind them.
+#[test]
+fn a_shard_that_fails_to_load_is_an_error_and_the_store_serves_the_next() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    let store = Arc::new(PostgresLedgerHeadStore::new(&url).unwrap());
+    // A head row the store refuses to read. The test URLs are plaintext, as in CI.
+    let broken = uniq("unloadable");
+    let mut raw = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    raw.execute(
+        "INSERT INTO decern_ledger_head (shard, next_seq, last_hash) VALUES ($1, -1, 'h')",
+        &[&broken],
+    )
+    .unwrap();
+
+    let refused = section_within(&store, &broken);
+    // Left behind, the row would make every later boot against this database refuse.
+    raw.execute(
+        "DELETE FROM decern_ledger_head WHERE shard = $1",
+        &[&broken],
+    )
+    .unwrap();
+    let refused = refused.expect("a shard that failed to load left its caller waiting");
+    assert!(
+        matches!(&refused, Err(StoreError::Invalid(m)) if m.contains("negative")),
+        "{refused:?}"
+    );
+    assert!(
+        matches!(section_within(&store, &uniq("next")), Some(Ok(()))),
+        "the store did not serve the next shard"
+    );
+}
+
+/// A store whose connection the database closed answers each section as an error rather than
+/// waiting (DB-gated). It does not reconnect, so the next section fails too.
+#[test]
+fn a_store_whose_connection_was_closed_answers_each_section_as_an_error() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    // Names the store's own connection, so only it is closed under tests running in parallel.
+    let name = uniq("closed");
+    let sep = if url.contains('?') { '&' } else { '?' };
+    let store = Arc::new(
+        PostgresLedgerHeadStore::new(&format!("{url}{sep}application_name={name}")).unwrap(),
+    );
+    assert!(matches!(
+        section_within(&store, &uniq("before")),
+        Some(Ok(()))
+    ));
+
+    let mut raw = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    raw.execute(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = $1",
+        &[&name],
+    )
+    .unwrap();
+    let gone = (0..100).any(|_| {
+        let left: i64 = raw
+            .query_one(
+                "SELECT count(*) FROM pg_stat_activity WHERE application_name = $1",
+                &[&name],
+            )
+            .unwrap()
+            .get(0);
+        left == 0 || {
+            thread::sleep(Duration::from_millis(100));
+            false
+        }
+    });
+    assert!(gone, "the store's connection was not closed");
+
+    for _ in 0..2 {
+        assert!(
+            matches!(section_within(&store, &uniq("after")), Some(Err(_))),
+            "a section on a closed connection was not answered as an error"
+        );
+    }
+}

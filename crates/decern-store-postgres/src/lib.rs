@@ -294,17 +294,18 @@ fn run_with_shard(
 ) -> Result<(), StoreError> {
     // `Transaction` rolls back on drop unless `commit()` is called, so every
     // early return below aborts cleanly with no write.
-    let mut tx = client.transaction().map_err(|e| db(&e))?;
-    // Transaction-scoped, cross-host EXCLUSIVE lock on this shard. Blocks (in the
-    // database, across connections) until any other host's section commits.
-    tx.execute("SELECT pg_advisory_xact_lock($1)", &[&advisory_key(shard)])
-        .map_err(|e| db(&e))?;
-
-    let cursor = read_head(&mut tx, shard)?;
-    let records = read_records(&mut tx, shard)?;
+    let (mut tx, state) = match load(client, shard) {
+        Ok(loaded) => loaded,
+        Err(e) => {
+            // The caller is waiting on `loaded`, not `done`: answered anywhere else, each
+            // thread waits on the other, and every later job waits behind them.
+            let _ = loaded.send(Err(e));
+            return Err(StoreError::Invalid("the shard could not be loaded".into()));
+        }
+    };
 
     // Hand the fresh state to the caller thread and wait for its decision.
-    if loaded.send(Ok((cursor, records))).is_err() {
+    if loaded.send(Ok(state)).is_err() {
         return Err(StoreError::Invalid(
             "caller disconnected before running the critical section".into(),
         ));
@@ -339,6 +340,21 @@ fn run_with_shard(
     }
     // COMMIT even on a `None` write: it releases the advisory lock cleanly.
     tx.commit().map_err(|e| db(&e))
+}
+
+/// Begin the section's transaction, take the shard's lock, and read the shard.
+fn load<'c>(
+    client: &'c mut Client,
+    shard: &str,
+) -> Result<(Transaction<'c>, ShardState), StoreError> {
+    let mut tx = client.transaction().map_err(|e| db(&e))?;
+    // Transaction-scoped, cross-host EXCLUSIVE lock on this shard. Blocks (in the
+    // database, across connections) until any other host's section commits.
+    tx.execute("SELECT pg_advisory_xact_lock($1)", &[&advisory_key(shard)])
+        .map_err(|e| db(&e))?;
+    let cursor = read_head(&mut tx, shard)?;
+    let records = read_records(&mut tx, shard)?;
+    Ok((tx, (cursor, records)))
 }
 
 fn read_head(tx: &mut Transaction<'_>, shard: &str) -> Result<Option<HeadCursor>, StoreError> {
