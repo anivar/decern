@@ -1429,6 +1429,17 @@ mod tests {
                 .is_some(),
             "an outcome that routes nowhere must be declined, not claimed: {d}"
         );
+        assert_eq!(
+            d["outcomes_supported"],
+            json!(["affirm_prior_decision", "challenge_classified"]),
+            "no outcome may name a re-evaluation that does not happen: {d}"
+        );
+        assert!(
+            d["outcomes_describe"]
+                .as_str()
+                .is_some_and(|s| s.contains("not evaluated again")),
+            "{d}"
+        );
         assert_eq!(d["notice"]["emitted_by_this_server"], false);
         assert_eq!(
             d["caller"]["mode"], "trusted-proxy",

@@ -156,7 +156,10 @@ pub struct ChallengeRecord {
     pub basis: Vec<String>,
     /// What the challenger asked for, which is not what they necessarily got.
     pub requested_effect: String,
-    /// What was done: the decision stood, or it was made again with the challenge in view.
+    /// How the challenge was answered: `affirm_prior_decision`, or `challenge_classified`
+    /// when its basis bears on the facts the decision was made from. Either way the
+    /// decision stands as recorded. Records written by earlier releases name the second
+    /// `reevaluate_with_subject_context`, for the same answer.
     pub outcome: String,
     /// Why. An answer without a reason is a dismissal.
     pub outcome_basis: String,

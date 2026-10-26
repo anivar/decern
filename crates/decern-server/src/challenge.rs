@@ -78,7 +78,10 @@ pub(crate) struct Challenge {
     pub(crate) requested_effect: String,
 }
 
-/// How the challenge was answered.
+/// How the challenge was answered. Neither outcome evaluates the decision again: the
+/// kernel ran once, without the challenge, and the decision stands as recorded. An outcome
+/// says what the challenge's basis is, so whoever acts on it knows which challenges bear on
+/// the facts the decision was made from.
 ///
 /// Two of these are produced here. Handing a challenge to a human approver is the third
 /// shape the surface can take, and it needs an approver service this server does not have;
@@ -87,11 +90,12 @@ pub(crate) struct Challenge {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Outcome {
-    /// The decision stands, and the reason it stands is stated.
+    /// No basis given bears on the facts the decision was made from, and the reason is
+    /// stated.
     AffirmPriorDecision { affirm_basis: String },
-    /// The decision was made again with the challenge in front of it, and the answer that
-    /// came back governs — whether or not it changed.
-    ReevaluateWithSubjectContext { reevaluation_basis: String },
+    /// A basis given bears on the facts the decision was made from, and it is named. The
+    /// decision is not made again here; acting on the challenge falls to whoever reads it.
+    ChallengeClassified { classified_basis: String },
 }
 
 /// Take the challenge out of the context, if one is there.
@@ -282,12 +286,11 @@ fn string_claim(claims: &BTreeMap<String, Value>, name: &str) -> Result<String, 
         .ok_or_else(|| ChallengeError::StandingNotProved(format!("standing_token has no {name}")))
 }
 
-/// Answer a challenge against the decision it names.
+/// Answer a challenge against the decision it names, by classifying its basis.
 ///
-/// A challenge that offers something the decision could be made differently on gets the
-/// decision made again; one that does not gets the prior answer and the reason it stands.
-/// Both are answers. Neither is a promise that the outcome will change, and re-evaluation
-/// governs whether or not it does.
+/// A challenge whose basis bears on the facts the decision was made from is classified as
+/// such; one whose basis does not gets the prior answer and the reason it stands. Both are
+/// answers, and neither changes the decision.
 ///
 /// `subject_matches` is whether the record's own decision subject is the party the standing
 /// names. A challenge from someone the record was not about is answered, not obeyed: it
@@ -298,9 +301,9 @@ pub(crate) fn answer(challenge: &Challenge, subject_matches: bool) -> Outcome {
             affirm_basis: "the challenged decision does not name this party as its subject".into(),
         };
     }
-    // Only a basis that puts something new in front of the decision can change it. The
-    // rest are disagreements with the outcome rather than with what it was made from.
-    let reconsiderable = [
+    // Only a basis that puts something new in front of the decision bears on it. The rest
+    // are disagreements with the outcome rather than with what it was made from.
+    let bears_on_the_facts = [
         "factual-error",
         "category-mismatch",
         "change-in-circumstances",
@@ -308,10 +311,10 @@ pub(crate) fn answer(challenge: &Challenge, subject_matches: bool) -> Outcome {
     match challenge
         .basis
         .iter()
-        .find(|b| reconsiderable.contains(&b.as_str()))
+        .find(|b| bears_on_the_facts.contains(&b.as_str()))
     {
-        Some(b) => Outcome::ReevaluateWithSubjectContext {
-            reevaluation_basis: b.clone(),
+        Some(b) => Outcome::ChallengeClassified {
+            classified_basis: b.clone(),
         },
         None => Outcome::AffirmPriorDecision {
             affirm_basis: format!(
@@ -589,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn a_basis_bearing_on_the_facts_reopens_the_decision() {
+    fn a_basis_bearing_on_the_facts_is_classified_as_such() {
         let key = generate().unwrap();
         let token = sign(claims("dec-1", 2_000), &key);
         let c = parse(
@@ -600,7 +603,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             answer(&c, true),
-            Outcome::ReevaluateWithSubjectContext { .. }
+            Outcome::ChallengeClassified { .. }
         ));
     }
 

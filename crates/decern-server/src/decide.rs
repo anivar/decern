@@ -620,8 +620,8 @@ fn answer_challenge(
         challenge::Outcome::AffirmPriorDecision { affirm_basis } => {
             ("affirm_prior_decision", affirm_basis)
         }
-        challenge::Outcome::ReevaluateWithSubjectContext { reevaluation_basis } => {
-            ("reevaluate_with_subject_context", reevaluation_basis)
+        challenge::Outcome::ChallengeClassified { classified_basis } => {
+            ("challenge_classified", classified_basis)
         }
     };
     Ok(Some(decern_ledger::ChallengeRecord {
@@ -1263,8 +1263,8 @@ mod tests {
             decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
         let last = records.last().expect("recorded");
         assert_eq!(
-            last["entry"]["challenge"]["outcome"], "reevaluate_with_subject_context",
-            "a basis bearing on the facts reopens the decision: {last}"
+            last["entry"]["challenge"]["outcome"], "challenge_classified",
+            "a basis bearing on the facts is classified as such: {last}"
         );
         assert_eq!(last["entry"]["challenge"]["decision_ref"], "dec-1");
         assert!(
