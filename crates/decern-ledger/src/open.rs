@@ -280,3 +280,116 @@ pub(crate) fn open_append_owner_only(path: &Path) -> Result<File, LedgerError> {
             .map_err(|e| io_err(path, e))
     }
 }
+
+/// Take the one writer's lock on the single-file ledger at `path`, held while the returned
+/// file stays open. Two processes appending to one ledger each extend the chain from the same
+/// head and fork it, so a second writer is refused here, before its open-time verify could
+/// trim the first writer's record in flight as a torn tail.
+///
+/// On Unix the lock is on the ledger file itself, so every path, link or mount that reaches
+/// the same file shares it; readers take no lock and are not blocked. An existing ledger is
+/// opened read-only for it and left as it is; an absent one is created, owner-only, and
+/// [`WriterLock::created`] says so. On Windows a lock on the file would block the reads every
+/// verify makes, so the lock is a sidecar `<ledger>.lock` beside the ledger's canonical path,
+/// which another spelling or a symbolic link finds and a hard link does not. The sidecar is
+/// left in place.
+pub(crate) fn lock_single_writer(path: &Path) -> Result<WriterLock, LedgerError> {
+    #[cfg(unix)]
+    let (file, created, sidecar) = {
+        use std::os::unix::fs::OpenOptionsExt;
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+        {
+            Ok(f) => (f, true, None::<PathBuf>),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match File::open(path) {
+                Ok(f) => (f, false, None),
+                // A symbolic link to a ledger not created yet: create it through the link.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    let f = OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(false)
+                        .mode(0o600)
+                        .open(path)
+                        .map_err(|e| io_err(path, e))?;
+                    (f, true, None)
+                }
+                Err(e) => return Err(io_err(path, e)),
+            },
+            Err(e) => return Err(io_err(path, e)),
+        }
+    };
+    #[cfg(not(unix))]
+    let (file, created, sidecar) = {
+        let lock_path = writer_lock_path(path)?;
+        (open_lock_file(&lock_path)?, false, Some(lock_path))
+    };
+    match file.try_lock() {
+        Ok(()) => Ok(WriterLock {
+            _file: file,
+            created,
+        }),
+        Err(fs::TryLockError::WouldBlock) => Err(LedgerError::Io {
+            path: path.display().to_string(),
+            err: format!(
+                "another process has this ledger open for writing{}; stop it, or give this \
+                 process a ledger of its own",
+                sidecar
+                    .map(|p| format!(" (it holds {})", p.display()))
+                    .unwrap_or_default()
+            ),
+        }),
+        Err(fs::TryLockError::Error(e)) => Err(io_err(path, e)),
+    }
+}
+
+/// The single-file ledger's writer lock, released when dropped.
+pub(crate) struct WriterLock {
+    _file: File,
+    /// Whether taking the lock created the ledger file, which a ledger opened afresh starts
+    /// from rather than verifying.
+    pub(crate) created: bool,
+}
+
+/// The Windows sidecar, created if absent and never truncated. Compiled everywhere, so the
+/// Unix build checks it too.
+#[cfg_attr(unix, allow(dead_code))]
+fn open_lock_file(lock_path: &Path) -> Result<File, LedgerError> {
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_path)
+        .map_err(|e| io_err(lock_path, e))
+}
+
+/// `<ledger>.lock` beside the ledger's canonical path, or, for a ledger not yet created,
+/// beside its name in its directory's canonical path. Windows only, compiled everywhere.
+#[cfg_attr(unix, allow(dead_code))]
+fn writer_lock_path(path: &Path) -> Result<PathBuf, LedgerError> {
+    let canonical = match fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(_) => {
+            let name = path.file_name().ok_or_else(|| LedgerError::Io {
+                path: path.display().to_string(),
+                err: "a ledger path must name a file".into(),
+            })?;
+            let dir = match path.parent() {
+                Some(d) if !d.as_os_str().is_empty() => d,
+                _ => Path::new("."),
+            };
+            fs::canonicalize(dir)
+                .map_err(|e| io_err(dir, e))?
+                .join(name)
+        }
+    };
+    let mut name = canonical
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(".lock");
+    Ok(canonical.with_file_name(name))
+}
