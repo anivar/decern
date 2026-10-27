@@ -2511,10 +2511,6 @@ fn a_ledger_created_through_a_link_shares_the_lock_with_its_target() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Taking the lock changes nothing an open did not change before it: a file that is not a
-/// ledger is refused and left with its own mode, and an anchored open of a ledger that is gone
-/// starts afresh, as an open with no lock did.
-#[cfg(unix)]
 /// A ledger with no file, opened beside an anchor that counts a record, is refused as a
 /// truncation, and only by an anchor a ledger key signed. On Unix the writer lock creates the
 /// file and the open verifies it; this is the check where no file is created.
@@ -2548,8 +2544,11 @@ fn an_anchor_that_counts_a_record_refuses_a_ledger_with_no_file() {
     }
 }
 
+/// Taking the lock leaves a file that is not a ledger refused and with its own mode, and an
+/// anchored open of a ledger whose file was removed is refused at its anchor's count.
+#[cfg(unix)]
 #[test]
-fn the_writer_lock_leaves_a_refused_file_and_an_absent_ledger_as_they_were() {
+fn a_refused_file_keeps_its_mode_and_a_removed_ledger_is_refused_at_its_anchor() {
     use std::os::unix::fs::PermissionsExt;
     let key = decern_crypto::generate().unwrap();
 
