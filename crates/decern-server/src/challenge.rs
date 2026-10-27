@@ -98,6 +98,31 @@ pub(crate) enum Outcome {
     ChallengeClassified { classified_basis: String },
 }
 
+impl Outcome {
+    const AFFIRM: &'static str = "affirm_prior_decision";
+    const CLASSIFIED: &'static str = "challenge_classified";
+    /// Every outcome's name as its record carries it, for the disclosure to list.
+    pub(crate) const NAMES: [&'static str; 2] = [Self::AFFIRM, Self::CLASSIFIED];
+
+    /// The outcome's name as its record carries it, and the basis it states.
+    pub(crate) fn into_record(self) -> (&'static str, String) {
+        match self {
+            Outcome::AffirmPriorDecision { affirm_basis } => (Self::AFFIRM, affirm_basis),
+            Outcome::ChallengeClassified { classified_basis } => {
+                (Self::CLASSIFIED, classified_basis)
+            }
+        }
+    }
+}
+
+/// The challenge bases that bear on the facts a decision was made from. Any other basis
+/// disagrees with the outcome rather than with what it was made from.
+pub(crate) const BASES_ON_THE_FACTS: [&str; 3] = [
+    "factual-error",
+    "category-mismatch",
+    "change-in-circumstances",
+];
+
 /// Take the challenge out of the context, if one is there.
 ///
 /// Removal is unconditional and happens before anything else looks at it, so a request
@@ -301,17 +326,10 @@ pub(crate) fn answer(challenge: &Challenge, subject_matches: bool) -> Outcome {
             affirm_basis: "the challenged decision does not name this party as its subject".into(),
         };
     }
-    // Only a basis that puts something new in front of the decision bears on it. The rest
-    // are disagreements with the outcome rather than with what it was made from.
-    let bears_on_the_facts = [
-        "factual-error",
-        "category-mismatch",
-        "change-in-circumstances",
-    ];
     match challenge
         .basis
         .iter()
-        .find(|b| bears_on_the_facts.contains(&b.as_str()))
+        .find(|b| BASES_ON_THE_FACTS.contains(&b.as_str()))
     {
         Some(b) => Outcome::ChallengeClassified {
             classified_basis: b.clone(),
@@ -591,20 +609,32 @@ mod tests {
         assert_eq!(err.kind(), "standing_not_proved");
     }
 
+    /// Each basis that bears on the facts is classified as such, under its own name; the
+    /// disclosure lists the same set.
     #[test]
     fn a_basis_bearing_on_the_facts_is_classified_as_such() {
         let key = generate().unwrap();
         let token = sign(claims("dec-1", 2_000), &key);
-        let c = parse(
-            &challenge_json(&token, "dec-1", "factual-error"),
-            &[key.verifying_key()],
-            1_000,
-        )
-        .unwrap();
-        assert!(matches!(
-            answer(&c, true),
-            Outcome::ChallengeClassified { .. }
-        ));
+        let bases = [
+            "factual-error",
+            "category-mismatch",
+            "change-in-circumstances",
+        ];
+        for basis in bases {
+            let c = parse(
+                &challenge_json(&token, "dec-1", basis),
+                &[key.verifying_key()],
+                1_000,
+            )
+            .unwrap();
+            match answer(&c, true) {
+                Outcome::ChallengeClassified { classified_basis } => {
+                    assert_eq!(classified_basis, basis);
+                }
+                other => panic!("{basis} was not classified: {}", other.into_record().0),
+            }
+        }
+        assert_eq!(BASES_ON_THE_FACTS.as_slice(), bases.as_slice());
     }
 
     #[test]

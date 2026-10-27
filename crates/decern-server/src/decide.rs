@@ -616,14 +616,7 @@ fn answer_challenge(
         .decision_subject
         .as_ref()
         .is_some_and(|ds| ds.handle == c.standing.decision_subject);
-    let (outcome, outcome_basis) = match challenge::answer(&c, subject_matches) {
-        challenge::Outcome::AffirmPriorDecision { affirm_basis } => {
-            ("affirm_prior_decision", affirm_basis)
-        }
-        challenge::Outcome::ChallengeClassified { classified_basis } => {
-            ("challenge_classified", classified_basis)
-        }
-    };
+    let (outcome, outcome_basis) = challenge::answer(&c, subject_matches).into_record();
     Ok(Some(decern_ledger::ChallengeRecord {
         decision_ref: c.decision_ref,
         decision_subject: c.standing.decision_subject,
