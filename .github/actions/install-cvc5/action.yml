@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The cvc5 static release the proofs are discharged through, for the `ci` job and the mcp
+# walkthrough. The proofs trust this solver, so the zip is checked against the SHA-256 the
+# release's asset metadata gives, and a zip that differs is refused rather than run. A new
+# tag needs its digest beside it.
+name: Install cvc5
+description: Install the pinned cvc5 release, checked against its digest.
+runs:
+  using: composite
+  steps:
+    - name: Download, check and install cvc5
+      shell: bash
+      env:
+        CVC5_TAG: cvc5-1.3.4
+        CVC5_SHA256: dcdbfada0ce493ee98259c0816e0daafc561c223aadb3af298c2968e73ea39c6
+      run: |
+        curl -sSfL -o /tmp/cvc5.zip \
+          "https://github.com/cvc5/cvc5/releases/download/${CVC5_TAG}/cvc5-Linux-x86_64-static.zip"
+        echo "${CVC5_SHA256}  /tmp/cvc5.zip" | sha256sum -c -
+        unzip -q /tmp/cvc5.zip -d /tmp/cvc5
+        sudo install -m 0755 /tmp/cvc5/cvc5-Linux-x86_64-static/bin/cvc5 /usr/local/bin/cvc5
+        cvc5 --version
