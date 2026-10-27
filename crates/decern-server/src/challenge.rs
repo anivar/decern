@@ -58,8 +58,8 @@ impl ChallengeError {
 pub(crate) struct Standing {
     /// The decision this standing is for. A token is good for one decision, not for a role.
     pub(crate) decision_ref: String,
-    /// The pseudonymous handle of the party, matched against the decision subject the request
-    /// names.
+    /// The pseudonymous handle of the party, matched against the parties the decision's record
+    /// is about.
     pub(crate) decision_subject: String,
     /// Expiry in whole epoch seconds. The check uses `exp` as sent, fraction included; what is
     /// kept is truncated, and an `exp` past `u64::MAX` is kept as `u64::MAX`.
@@ -81,7 +81,7 @@ pub(crate) struct Challenge {
 
 /// How the challenge was answered. Neither outcome evaluates the decision again: the
 /// kernel ran once, without the challenge, and the decision stands as recorded. A challenge
-/// is classified only when its standing names the decision subject the request carries and a
+/// is classified only when its standing names a party the decision's record is about and a
 /// basis it gives bears on the facts the decision was made from; any other is affirmed, with
 /// the reason. The record `decision_ref` names is not read.
 ///
@@ -91,11 +91,11 @@ pub(crate) struct Challenge {
 /// would be worse than not offering it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Outcome {
-    /// The standing does not name the decision subject the request carries, or no basis
-    /// given bears on the facts the decision was made from; which of the two is stated.
+    /// The standing names no party the decision's record is about, or no basis given bears
+    /// on the facts the decision was made from; which of the two is stated.
     AffirmPriorDecision { affirm_basis: String },
-    /// The standing names the decision subject the request carries, and a basis given bears
-    /// on the facts the decision was made from; that basis is named. The decision is not
+    /// The standing names a party the decision's record is about, and a basis given bears on
+    /// the facts the decision was made from; that basis is named. The decision is not
     /// made again here; acting on the challenge falls to whoever reads it.
     ChallengeClassified { classified_basis: String },
 }
@@ -319,15 +319,15 @@ fn string_claim(claims: &BTreeMap<String, Value>, name: &str) -> Result<String, 
 /// such; one whose basis does not gets the prior answer and the reason it stands. Both are
 /// answers, and neither changes the decision.
 ///
-/// `subject_matches` is whether the decision subject the request names is the party the
-/// standing names, whether or not the record keeps that handle. A challenge from someone the
-/// request was not about is answered, not obeyed: it affirms, because there is nothing here
-/// to reconsider on their behalf.
-pub(crate) fn answer(challenge: &Challenge, subject_matches: bool) -> Outcome {
-    if !subject_matches {
+/// `about` is the parties the decision's record is about: the third party it keeps as its
+/// decision subject, or, when it keeps none, its requester and its resource's owner. A
+/// challenge from anyone else is answered, not obeyed: it affirms, because there is nothing
+/// here to reconsider on their behalf.
+pub(crate) fn answer(challenge: &Challenge, about: &[&str]) -> Outcome {
+    if !about.contains(&challenge.standing.decision_subject.as_str()) {
         return Outcome::AffirmPriorDecision {
-            affirm_basis: "the challenge's standing does not name the decision subject this \
-                           request carries"
+            affirm_basis: "the challenge's standing names no party the decision's record is \
+                           about"
                 .into(),
         };
     }
@@ -632,7 +632,7 @@ mod tests {
                 1_000,
             )
             .unwrap();
-            match answer(&c, true) {
+            match answer(&c, &["ppid:carol"]) {
                 Outcome::ChallengeClassified { classified_basis } => {
                     assert_eq!(classified_basis, basis);
                 }
@@ -653,7 +653,7 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            answer(&c, true),
+            answer(&c, &["ppid:carol"]),
             Outcome::AffirmPriorDecision { .. }
         ));
     }
@@ -670,10 +670,10 @@ mod tests {
             1_000,
         )
         .unwrap();
-        match answer(&c, false) {
+        match answer(&c, &["agent1", "corp"]) {
             Outcome::AffirmPriorDecision { affirm_basis } => {
                 assert!(
-                    affirm_basis.contains("does not name the decision subject"),
+                    affirm_basis.contains("names no party the decision's record is about"),
                     "{affirm_basis}"
                 );
             }

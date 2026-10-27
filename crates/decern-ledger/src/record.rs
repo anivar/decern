@@ -157,8 +157,9 @@ pub struct ChallengeRecord {
     /// What the challenger asked for, which is not what they necessarily got.
     pub requested_effect: String,
     /// How the challenge was answered: `affirm_prior_decision`, or `challenge_classified`
-    /// when its standing named the decision subject the request carried and its basis bears
-    /// on the facts the decision was made from. Either way the decision stands as recorded.
+    /// when its standing named a party the record is about, the decision subject it keeps or,
+    /// when it keeps none, the requester or the resource's owner, and its basis bears on the
+    /// facts the decision was made from. Either way the decision stands as recorded.
     /// Records written by earlier releases name the second `reevaluate_with_subject_context`,
     /// for the same answer.
     pub outcome: String,
