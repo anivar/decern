@@ -219,7 +219,7 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 | `POST` | `/mission/v1/{s256}/terminate` | guarded | End it. A terminated Mission never revives. |
 | `GET` | `/.well-known/decern-subject-side-disclosure` | open | What this deployment does about challenges and callers, read from its running configuration. |
 | `GET` | `/.well-known/authzen-configuration` | open | AuthZEN 1.0 PDP metadata: the decision point and its evaluation endpoint, when `--public-url` is set; 404 otherwise. |
-| `GET` | `/healthz` | open | `ok`, or `503` once the single-file ledger has stopped after a write error; a restart recovers. |
+| `GET` | `/healthz` | open | `ok`, or `503` once the single-file ledger has stopped after a write error, or once a Postgres head store has found its connection closed or the thread that holds it has stopped; a restart recovers. |
 
 "Guarded" routes require the caller to be established; "open" routes are open by intent — they are
 operational, published on purpose, or answerable only to a party who already holds the handle they
@@ -393,7 +393,7 @@ back, such as an unknown action's name, is cut to 512 characters in the answer.
   no metrics, no tracing. A request refused before evaluation (malformed, unauthenticated, or
   naming a party its caller may not) is not recorded, and neither it nor a failed append
   (`503`) leaves a trace in the server. `/healthz` checks only that the single-file ledger
-  can still record.
+  can still record and that a Postgres head store has not found its connection closed.
 - **Ledger retention.** The single-file ledger is one file that grows without bound; nothing
   rolls it over or archives it.
 - **Recovery after a write error.** A write, flush or sync error on the single-file ledger,
@@ -403,10 +403,12 @@ back, such as an unknown action's name, is cut to 512 characters in the answer.
   failed is kept, though its request was answered `503`.
 - **Recovery after a database restart.** A Postgres head store does not reconnect. Once the
   database closes its connection, by restarting for example, every decision is answered `503`
-  until `decern-serve` is restarted, and `/healthz` still answers `ok`, so a liveness probe does
-  not restart it. A database that stops answering without closing the connection, behind a
-  network partition for example, holds the store until TCP gives up: each decision meanwhile is
-  answered `503` at the 30-second request deadline, and `SIGTERM` waits. decern sets no
+  until `decern-serve` is restarted. The first decision to find the connection closed turns
+  `/healthz` to `503`, so a liveness probe restarts the server; a replica that serves no
+  decision after the database restarts answers `ok` until one does. A database that stops
+  answering without closing the connection, behind a network partition for example, holds the
+  store until TCP gives up: each decision meanwhile is answered `503` at the 30-second request
+  deadline, `/healthz` answers `ok`, and `SIGTERM` waits. decern sets no
   connection or query timeout of its own, and the URL goes to the Postgres client as given:
   `connect_timeout` bounds only the first connect, keepalives (`keepalives_idle`,
   `keepalives_interval`, `keepalives_retries`; on by default, after two idle hours) find a

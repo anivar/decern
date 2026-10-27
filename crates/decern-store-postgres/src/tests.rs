@@ -389,6 +389,10 @@ fn a_shard_that_fails_to_load_is_an_error_and_the_store_serves_the_next() {
         matches!(section_within(&store, &uniq("next")), Some(Ok(()))),
         "the store did not serve the next shard"
     );
+    assert!(
+        !store.has_failed(),
+        "a shard that failed to load on an open connection failed the store"
+    );
 }
 
 /// A store whose connection the database closed answers each section as an error rather than
@@ -408,6 +412,7 @@ fn a_store_whose_connection_was_closed_answers_each_section_as_an_error() {
         section_within(&store, &uniq("before")),
         Some(Ok(()))
     ));
+    assert!(!store.has_failed());
 
     let mut raw = postgres::Client::connect(&url, postgres::NoTls).unwrap();
     raw.execute(
@@ -435,5 +440,41 @@ fn a_store_whose_connection_was_closed_answers_each_section_as_an_error() {
             matches!(section_within(&store, &uniq("after")), Some(Err(_))),
             "a section on a closed connection was not answered as an error"
         );
+        // Set before the refusal is answered, so a liveness check after it sees it.
+        assert!(
+            store.has_failed(),
+            "a closed connection left the store healthy"
+        );
     }
+}
+
+/// A store whose worker thread has stopped answers every section as an error, so it is failed
+/// too (DB-gated): nothing restarts the thread.
+#[test]
+fn a_store_whose_worker_has_stopped_has_failed() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    let store = Arc::new(PostgresLedgerHeadStore::new(&url).unwrap());
+    assert!(!store.has_failed());
+    store.jobs.send(super::Job::Shutdown).unwrap();
+    let stopped = (0..100).any(|_| {
+        store
+            .handle
+            .as_ref()
+            .is_some_and(thread::JoinHandle::is_finished)
+            || {
+                thread::sleep(Duration::from_millis(50));
+                false
+            }
+    });
+    assert!(stopped, "the worker did not stop");
+    assert!(
+        store.has_failed(),
+        "a stopped worker left the store healthy"
+    );
+    assert!(matches!(
+        section_within(&store, &uniq("after")),
+        Some(Err(_))
+    ));
 }

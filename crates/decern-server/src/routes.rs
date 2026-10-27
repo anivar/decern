@@ -1075,6 +1075,56 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A sharded store that can serve no section again, a Postgres store whose connection
+    /// closed, fails the health check too, under its own text.
+    #[tokio::test]
+    async fn healthz_is_503_once_the_sharded_store_has_failed() {
+        use decern_store::{
+            LedgerHeadStore, MemoryLedgerHeadStore, ShardCriticalSection, StoreError,
+        };
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Failing(MemoryLedgerHeadStore, AtomicBool);
+        impl LedgerHeadStore for Failing {
+            fn with_shard(
+                &self,
+                shard: &str,
+                f: &mut ShardCriticalSection<'_>,
+            ) -> Result<(), StoreError> {
+                self.0.with_shard(shard, f)
+            }
+            fn list_shards(&self) -> Result<Vec<String>, StoreError> {
+                self.0.list_shards()
+            }
+            fn has_failed(&self) -> bool {
+                self.1.load(Ordering::Relaxed)
+            }
+        }
+        let base = mission_base();
+        let (mut st, _pubkey) = mission_state_at(&base);
+        let store = Arc::new(Failing(
+            MemoryLedgerHeadStore::new(),
+            AtomicBool::new(false),
+        ));
+        st.backend = Arc::new(LedgerBackend::Sharded(ShardedLedger::new(
+            store.clone(),
+            decern_crypto::generate().unwrap(),
+            Vec::new(),
+        )));
+        let ok = crate::record::healthz(State(st.clone())).await.status();
+        assert_eq!(ok, StatusCode::OK);
+        store.1.store(true, Ordering::Relaxed);
+        let failed = crate::record::healthz(State(st.clone())).await;
+        assert_eq!(failed.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(failed.into_body(), 1024)
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&body).contains("ledger store can no longer record"),
+            "{body:?}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[tokio::test]
     async fn decide_under_live_mission_allows_and_records_mission_ref() {
         let base = mission_base();

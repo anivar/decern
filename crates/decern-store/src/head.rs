@@ -108,6 +108,13 @@ pub trait LedgerHeadStore: Send + Sync {
     /// live tenant list: a tenant since removed elsewhere can still have committed
     /// ledger history that must not silently drop out of a cross-tenant aggregate.
     fn list_shards(&self) -> Result<Vec<String>, StoreError>;
+
+    /// Whether the store can serve no section again until the process restarts, so a
+    /// liveness check on it restarts the process. A store that recovers in-process, or keeps
+    /// no state that can break, never says so.
+    fn has_failed(&self) -> bool {
+        false
+    }
 }
 
 /// One shard's state for [`MemoryLedgerHeadStore`].

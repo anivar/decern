@@ -99,6 +99,7 @@
 //! every server locale, matching the Memory/File backends exactly.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, channel, sync_channel};
 use std::thread::{self, JoinHandle};
 
@@ -142,6 +143,9 @@ enum Job {
 pub struct PostgresLedgerHeadStore {
     jobs: Sender<Job>,
     handle: Option<JoinHandle<()>>,
+    /// Set by the actor once its connection has closed. It never reconnects, so the store
+    /// serves no section again.
+    closed: Arc<AtomicBool>,
 }
 
 impl PostgresLedgerHeadStore {
@@ -154,9 +158,11 @@ impl PostgresLedgerHeadStore {
         let url = url.to_owned();
         let (ready_tx, ready_rx) = sync_channel::<Result<(), StoreError>>(0);
         let (job_tx, job_rx) = channel::<Job>();
+        let closed = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&closed);
         let handle = thread::Builder::new()
             .name("decern-pg-ledger-head".into())
-            .spawn(move || actor_main(&url, &ready_tx, &job_rx))
+            .spawn(move || actor_main(&url, &ready_tx, &job_rx, &seen))
             .map_err(|e| StoreError::Io {
                 path: "<pg actor thread>".into(),
                 err: e.to_string(),
@@ -165,6 +171,7 @@ impl PostgresLedgerHeadStore {
             Ok(Ok(())) => Ok(PostgresLedgerHeadStore {
                 jobs: job_tx,
                 handle: Some(handle),
+                closed,
             }),
             Ok(Err(e)) => {
                 let _ = handle.join();
@@ -234,11 +241,24 @@ impl LedgerHeadStore for PostgresLedgerHeadStore {
             .map_err(|_| actor_gone())?;
         resp_rx.recv().map_err(|_| actor_gone())?
     }
+
+    /// The connection has closed, by a database restart for example, or the thread that
+    /// holds it has stopped: the store does not reconnect or restart it, so it answers every
+    /// section with an error until the process restarts.
+    fn has_failed(&self) -> bool {
+        self.closed.load(Ordering::Relaxed)
+            || self.handle.as_ref().is_some_and(JoinHandle::is_finished)
+    }
 }
 
 // ============================ actor thread ============================
 
-fn actor_main(url: &str, ready: &SyncSender<Result<(), StoreError>>, jobs: &Receiver<Job>) {
+fn actor_main(
+    url: &str,
+    ready: &SyncSender<Result<(), StoreError>>,
+    jobs: &Receiver<Job>,
+    closed: &AtomicBool,
+) {
     let tls = match build_tls() {
         Ok(t) => t,
         Err(e) => {
@@ -272,11 +292,23 @@ fn actor_main(url: &str, ready: &SyncSender<Result<(), StoreError>>, jobs: &Rece
             } => {
                 // A single call's failure never kills the actor: the transaction
                 // rolls back via RAII and the loop continues with the next job.
-                let outcome = run_with_shard(&mut client, &shard, &loaded, &decision);
-                let _ = done.send(outcome);
+                let ended = run_with_shard(&mut client, &shard, &loaded, &decision);
+                note_closed(&client, closed);
+                match ended {
+                    // The caller is waiting on `loaded`, not `done`: answered anywhere else,
+                    // each thread waits on the other, and every later job waits behind them.
+                    Ended::Unloaded(e) => {
+                        let _ = loaded.send(Err(e));
+                    }
+                    Ended::Ran(outcome) => {
+                        let _ = done.send(outcome);
+                    }
+                }
             }
             Job::ListShards { resp } => {
-                let _ = resp.send(list_shards_impl(&mut client));
+                let shards = list_shards_impl(&mut client);
+                note_closed(&client, closed);
+                let _ = resp.send(shards);
             }
             Job::Shutdown => break,
         }
@@ -285,25 +317,37 @@ fn actor_main(url: &str, ready: &SyncSender<Result<(), StoreError>>, jobs: &Rece
     // is legal because this thread has no ambient tokio runtime.
 }
 
+/// How a section ended, for the actor to answer on the channel its caller waits on.
+enum Ended {
+    /// The shard did not load; the caller is waiting on `loaded`.
+    Unloaded(StoreError),
+    /// The caller was handed the shard; it is waiting on `done`.
+    Ran(Result<(), StoreError>),
+}
+
 /// The held-advisory-lock critical section, run entirely on the actor thread.
 fn run_with_shard(
     client: &mut Client,
     shard: &str,
     loaded: &SyncSender<Result<ShardState, StoreError>>,
     decision: &Receiver<Result<ShardWrite, StoreError>>,
-) -> Result<(), StoreError> {
-    // `Transaction` rolls back on drop unless `commit()` is called, so every
-    // early return below aborts cleanly with no write.
-    let (mut tx, state) = match load(client, shard) {
-        Ok(loaded) => loaded,
-        Err(e) => {
-            // The caller is waiting on `loaded`, not `done`: answered anywhere else, each
-            // thread waits on the other, and every later job waits behind them.
-            let _ = loaded.send(Err(e));
-            return Err(StoreError::Invalid("the shard could not be loaded".into()));
-        }
-    };
+) -> Ended {
+    match load(client, shard) {
+        Ok((tx, state)) => Ended::Ran(run_loaded(tx, shard, state, loaded, decision)),
+        Err(e) => Ended::Unloaded(e),
+    }
+}
 
+/// Hand the loaded shard to the caller, then write and commit what it decides.
+/// `Transaction` rolls back on drop unless `commit()` is called, so every early return
+/// below aborts cleanly with no write.
+fn run_loaded(
+    mut tx: Transaction<'_>,
+    shard: &str,
+    state: ShardState,
+    loaded: &SyncSender<Result<ShardState, StoreError>>,
+    decision: &Receiver<Result<ShardWrite, StoreError>>,
+) -> Result<(), StoreError> {
     // Hand the fresh state to the caller thread and wait for its decision.
     if loaded.send(Ok(state)).is_err() {
         return Err(StoreError::Invalid(
@@ -340,6 +384,14 @@ fn run_with_shard(
     }
     // COMMIT even on a `None` write: it releases the advisory lock cleanly.
     tx.commit().map_err(|e| db(&e))
+}
+
+/// Record a closed connection before the caller is answered, so a caller refused for it
+/// already sees the store as failed.
+fn note_closed(client: &Client, closed: &AtomicBool) {
+    if client.is_closed() {
+        closed.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Begin the section's transaction, take the shard's lock, and read the shard.
