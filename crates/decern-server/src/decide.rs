@@ -1303,17 +1303,24 @@ mod tests {
         st.standing_issuers = Arc::new(vec![issuer.verifying_key()]);
         let exp = now_secs().unwrap() + 3600;
 
-        for (named, standing) in [
-            (Some(json!("agent1")), "agent1"),
-            (Some(json!("corp")), "corp"),
-            (Some(json!({"handle": "ppid:carol"})), "ppid:carol"),
-            (Some(json!("ppid:carol")), "ppid:dave"),
-            (Some(json!("agent1")), "ppid:dave"),
-            (Some(json!("ppid:carol")), "agent1"),
-            (Some(json!("ppid:carol")), "corp"),
-            (None, "ppid:dave"),
-            (None, "agent1"),
-            (None, "corp"),
+        // claim1 is owned by corp; unlisted is in no directory and so has no owner.
+        for (named, standing, resource) in [
+            (Some(json!("agent1")), "agent1", "claim1"),
+            (Some(json!("corp")), "corp", "claim1"),
+            (
+                Some(json!({"handle": "ppid:carol"})),
+                "ppid:carol",
+                "claim1",
+            ),
+            (Some(json!("ppid:carol")), "ppid:dave", "claim1"),
+            (Some(json!("agent1")), "ppid:dave", "claim1"),
+            (Some(json!("ppid:carol")), "agent1", "claim1"),
+            (Some(json!("ppid:carol")), "corp", "claim1"),
+            (None, "ppid:dave", "claim1"),
+            (None, "agent1", "claim1"),
+            (None, "corp", "claim1"),
+            (None, "agent1", "unlisted"),
+            (None, "corp", "unlisted"),
         ] {
             let mut context = json!({"subject_side_challenge": {
                 "standing_token": standing_token(&issuer, "dec-1", standing, exp),
@@ -1327,7 +1334,7 @@ mod tests {
             let req: DecideReq = serde_json::from_value(json!({
                 "subject": {"type": "Principal", "id": "agent1"},
                 "action": {"name": "Read"},
-                "resource": {"type": "Resource", "id": "claim1"},
+                "resource": {"type": "Resource", "id": resource},
                 "context": context,
             }))
             .unwrap();
@@ -1356,6 +1363,8 @@ mod tests {
                 "affirm_prior_decision",
                 "challenge_classified",
                 "challenge_classified",
+                "challenge_classified",
+                "affirm_prior_decision",
             ],
             "{records:?}"
         );

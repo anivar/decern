@@ -6,10 +6,11 @@
   disclosure, which also says what an outcome describes (`outcomes_describe`) and lists those
   bases as `challenge_bases_that_bear_on_the_facts`, renamed from
   `challenge_bases_that_reopen_a_decision`. Records written by earlier releases keep the old
-  name for the same answer. A challenge is classified when its standing names a party the
-  decision's record is about: the third party it keeps as its decision subject, or, when it
-  keeps none, the requester or the resource's owner. A challenge from the requester or the
-  owner was always affirmed. Any other challenge is affirmed with the reason "the challenge's
-  standing names no party the decision's record is about", in place of a reason about the
-  challenged decision, which the server does not read.
+  name for the same answer. A challenge is classified when a basis it gives bears on those
+  facts and its standing names a party the decision's record is about: the third party it keeps
+  as its decision subject, or, when it keeps none, the requester or the resource's owner. A
+  challenge from the requester or the owner was always affirmed. A challenge whose standing
+  names no such party is affirmed with the reason "the challenge's standing names no party the
+  decision's record is about", in place of a reason about the challenged decision, which the
+  server does not read.
   Authored by @anivar.
