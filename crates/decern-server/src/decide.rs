@@ -423,6 +423,9 @@ struct Prepared {
     challenge: Option<Value>,
     /// The party the decision is about, when that is a third party.
     decision_subject: Option<DecisionSubject>,
+    /// The handle the request named as the party the decision is about, whether or not the
+    /// record keeps it: what a challenge's standing is matched against.
+    named_subject: Option<String>,
 }
 
 /// What binding `context.mission` came to.
@@ -557,6 +560,7 @@ fn prepare(
         .resources
         .get(&resource.id)
         .map(|r| r.owner.clone());
+    let named_subject = named_decision_subject(ctx.get("decision_subject")).map(str::to_owned);
     let decision_subject =
         match take_decision_subject(&mut ctx, &subject.id, resource_owner.as_deref()) {
             Ok(ds) => ds,
@@ -583,6 +587,7 @@ fn prepare(
         },
         challenge,
         decision_subject,
+        named_subject,
     })
 }
 
@@ -612,10 +617,7 @@ fn answer_challenge(
     };
     let c = challenge::parse(raw, &st.standing_issuers, p.now_s)
         .map_err(|e| Refusal::unprocessable(e.kind(), e.detail()))?;
-    let subject_matches = p
-        .decision_subject
-        .as_ref()
-        .is_some_and(|ds| ds.handle == c.standing.decision_subject);
+    let subject_matches = p.named_subject.as_deref() == Some(c.standing.decision_subject.as_str());
     let (outcome, outcome_basis) = challenge::answer(&c, subject_matches).into_record();
     Ok(Some(decern_ledger::ChallengeRecord {
         decision_ref: c.decision_ref,
@@ -649,6 +651,7 @@ fn record_of(
         mission,
         challenge: _,
         decision_subject,
+        named_subject: _,
     } = p;
     // Accountable-owner, derived server-side from the delegation chain BEFORE
     // `subject.id` is moved into the entry. Never read from the request body.
@@ -1276,6 +1279,86 @@ mod tests {
         );
         // A decision naming an affected party is one they should hear about.
         assert_eq!(last["entry"]["notice_required"], true, "{last}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A challenge is classified when its standing names the decision subject the request
+    /// carries, and that holds when the record drops the handle as the requester or the
+    /// resource's owner: dropping a redundant identifier must not cost the party the
+    /// classification. A standing that names someone else is affirmed, whether the request
+    /// names a third party, names itself, or names nobody, and a request that names nobody
+    /// carries no decision subject for a standing to name, the requester's and the owner's
+    /// included. A handle sent as an object is the same handle.
+    #[tokio::test]
+    async fn a_challenge_is_classified_only_for_the_decision_subject_the_request_names() {
+        let base = mission_base();
+        let (mut st, pubkey) = mission_state_at(&base);
+        let issuer = decern_crypto::generate().unwrap();
+        st.standing_issuers = Arc::new(vec![issuer.verifying_key()]);
+        let exp = now_secs().unwrap() + 3600;
+
+        for (named, standing) in [
+            (Some(json!("agent1")), "agent1"),
+            (Some(json!("corp")), "corp"),
+            (Some(json!({"handle": "ppid:carol"})), "ppid:carol"),
+            (Some(json!("ppid:carol")), "ppid:dave"),
+            (Some(json!("agent1")), "ppid:dave"),
+            (Some(json!("ppid:carol")), "agent1"),
+            (Some(json!("ppid:carol")), "corp"),
+            (None, "ppid:dave"),
+            (None, "agent1"),
+            (None, "corp"),
+        ] {
+            let mut context = json!({"subject_side_challenge": {
+                "standing_token": standing_token(&issuer, "dec-1", standing, exp),
+                "decision_ref": "dec-1",
+                "challenge_basis": ["factual-error"],
+                "requested_effect": "reverse",
+            }});
+            if let Some(named) = &named {
+                context["decision_subject"] = named.clone();
+            }
+            let req: DecideReq = serde_json::from_value(json!({
+                "subject": {"type": "Principal", "id": "agent1"},
+                "action": {"name": "Read"},
+                "resource": {"type": "Resource", "id": "claim1"},
+                "context": context,
+            }))
+            .unwrap();
+            let (status, body) =
+                body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
+            assert_eq!(status, StatusCode::OK, "{named:?}: {body}");
+        }
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
+        let outcomes: Vec<_> = records
+            .iter()
+            .map(|r| r["entry"]["challenge"]["outcome"].clone())
+            .collect();
+        assert_eq!(
+            outcomes,
+            [
+                "challenge_classified",
+                "challenge_classified",
+                "challenge_classified",
+                "affirm_prior_decision",
+                "affirm_prior_decision",
+                "affirm_prior_decision",
+                "affirm_prior_decision",
+                "affirm_prior_decision",
+                "affirm_prior_decision",
+                "affirm_prior_decision",
+            ],
+            "{records:?}"
+        );
+        for rec in &records[..2] {
+            assert!(
+                rec["entry"].get("decision_subject").is_none(),
+                "the handle is still dropped from the record: {rec}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 

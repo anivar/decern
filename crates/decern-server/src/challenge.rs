@@ -58,7 +58,8 @@ impl ChallengeError {
 pub(crate) struct Standing {
     /// The decision this standing is for. A token is good for one decision, not for a role.
     pub(crate) decision_ref: String,
-    /// The pseudonymous handle of the party, matched against what the record already says.
+    /// The pseudonymous handle of the party, matched against the decision subject the request
+    /// names.
     pub(crate) decision_subject: String,
     /// Expiry in whole epoch seconds. The check uses `exp` as sent, fraction included; what is
     /// kept is truncated, and an `exp` past `u64::MAX` is kept as `u64::MAX`.
@@ -318,9 +319,10 @@ fn string_claim(claims: &BTreeMap<String, Value>, name: &str) -> Result<String, 
 /// such; one whose basis does not gets the prior answer and the reason it stands. Both are
 /// answers, and neither changes the decision.
 ///
-/// `subject_matches` is whether the record's own decision subject is the party the standing
-/// names. A challenge from someone the record was not about is answered, not obeyed: it
-/// affirms, because there is nothing here to reconsider on their behalf.
+/// `subject_matches` is whether the decision subject the request names is the party the
+/// standing names, whether or not the record keeps that handle. A challenge from someone the
+/// request was not about is answered, not obeyed: it affirms, because there is nothing here
+/// to reconsider on their behalf.
 pub(crate) fn answer(challenge: &Challenge, subject_matches: bool) -> Outcome {
     if !subject_matches {
         return Outcome::AffirmPriorDecision {
