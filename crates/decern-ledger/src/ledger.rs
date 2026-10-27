@@ -6,7 +6,9 @@
 
 use crate::checkpoint::key_fingerprint;
 use crate::error::{LedgerError, io_err};
-use crate::open::{Location, lock_single_writer, open_append_owner_only, resolve_open_head};
+use crate::open::{
+    Location, lock_single_writer, open_append_owner_only, refuse_removed_history, resolve_open_head,
+};
 use crate::record::{Entry, GENESIS, Record, RecordOut, chain_hash};
 use crate::segment::{self, RolloverPolicy};
 use crate::verify::{SignerSpan, VerifyReport, verify_inner};
@@ -161,11 +163,9 @@ impl Ledger {
             verifiers.push(current);
         }
         let location = Location::Single(path.to_owned());
-        // A ledger the lock just created, still empty, is a new one, as an absent file was
-        // before the lock existed; one that was there is verified, empty or not.
-        let fresh = !path.exists()
-            || (writer_lock.created && fs::metadata(path).is_ok_and(|m| m.len() == 0));
-        let (last_hash, next_seq, signers) = if !fresh {
+        // A file is verified, an empty one too, against the anchor when there is one. On Unix
+        // the lock has just created any that was absent; a ledger with no file yet is new.
+        let (last_hash, next_seq, signers) = if path.exists() {
             let report = resolve_open_head(&location, &verifiers, &current, anchor)?;
             (
                 report.root.unwrap_or_else(|| GENESIS.to_owned()),
@@ -173,6 +173,7 @@ impl Ledger {
                 report.signers,
             )
         } else {
+            refuse_removed_history(anchor, &verifiers)?;
             (GENESIS.to_owned(), 0, Vec::new())
         };
         let file = open_append_owner_only(path)?;

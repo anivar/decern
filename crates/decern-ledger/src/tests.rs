@@ -2515,6 +2515,39 @@ fn a_ledger_created_through_a_link_shares_the_lock_with_its_target() {
 /// ledger is refused and left with its own mode, and an anchored open of a ledger that is gone
 /// starts afresh, as an open with no lock did.
 #[cfg(unix)]
+/// A ledger with no file, opened beside an anchor that counts a record, is refused as a
+/// truncation, and only by an anchor a ledger key signed. On Unix the writer lock creates the
+/// file and the open verifies it; this is the check where no file is created.
+#[test]
+fn an_anchor_that_counts_a_record_refuses_a_ledger_with_no_file() {
+    let key = decern_crypto::generate().unwrap();
+    let path = tmp("removed-history.jsonl");
+    let empty = tmp("removed-history-0.anchor");
+    let counted = tmp("removed-history-1.anchor");
+    let _ = std::fs::remove_file(&path);
+    let mut l = Ledger::open(&path, key.clone()).unwrap();
+    l.seal_anchor(&empty, 1).unwrap();
+    l.append(entry("Read", true)).unwrap();
+    l.seal_anchor(&counted, 2).unwrap();
+    drop(l);
+
+    let trusted = [key.verifying_key()];
+    assert!(crate::open::refuse_removed_history(None, &trusted).is_ok());
+    assert!(crate::open::refuse_removed_history(Some(&empty), &trusted).is_ok());
+    assert!(matches!(
+        crate::open::refuse_removed_history(Some(&counted), &trusted),
+        Err(LedgerError::Tamper { seq: 1, .. })
+    ));
+    let stranger = [decern_crypto::generate().unwrap().verifying_key()];
+    match crate::open::refuse_removed_history(Some(&empty), &stranger) {
+        Err(LedgerError::Tamper { why, .. }) => assert!(why.contains("signature"), "{why}"),
+        other => panic!("an anchor no ledger key signed was trusted: {other:?}"),
+    }
+    for f in [&path, &empty, &counted] {
+        let _ = std::fs::remove_file(f);
+    }
+}
+
 #[test]
 fn the_writer_lock_leaves_a_refused_file_and_an_absent_ledger_as_they_were() {
     use std::os::unix::fs::PermissionsExt;
@@ -2541,9 +2574,11 @@ fn the_writer_lock_leaves_a_refused_file_and_an_absent_ledger_as_they_were() {
     l.seal_anchor(&anchor, 1).unwrap();
     drop(l);
     std::fs::remove_file(&path).unwrap();
-    let reopened = Ledger::open_anchored(&path, key.clone(), Vec::new(), &anchor)
-        .expect("an anchored open of an absent ledger starts afresh, as before the lock");
-    drop(reopened);
+    match Ledger::open_anchored(&path, key.clone(), Vec::new(), &anchor) {
+        Err(LedgerError::Tamper { seq: 1, why }) => assert!(why.contains("anchor"), "{why}"),
+        Err(e) => panic!("refused for another reason: {e}"),
+        Ok(_) => panic!("an anchored open of a removed ledger was not refused"),
+    }
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(&anchor);
 }

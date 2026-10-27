@@ -4,7 +4,7 @@
 //! and the append handle.
 
 use crate::anchor::{ledger_extends_checkpoint_at, load_anchor};
-use crate::checkpoint::{key_fingerprint, verify_checkpoint_sig};
+use crate::checkpoint::{Checkpoint, key_fingerprint, verify_checkpoint_sig};
 use crate::error::{LedgerError, io_err};
 use crate::segment;
 use crate::verify::{VerifyReport, verify_prefix};
@@ -160,16 +160,8 @@ pub(crate) fn resolve_open_head(
     // Consult the anchor BEFORE any mutation, and before the signing key is judged: a
     // truncation is tamper whichever key opens the log.
     if let Some(anchor_path) = anchor
-        && let Some(cp) = load_anchor(anchor_path)?
+        && let Some(cp) = trusted_anchor(anchor_path, verifiers)?
     {
-        if !verifiers.iter().any(|k| verify_checkpoint_sig(&cp, k)) {
-            return Err(LedgerError::Tamper {
-                seq: cp.count,
-                why: "anchor signature is not from a trusted ledger key \
-                          (forged or wrong-key anchor)"
-                    .into(),
-            });
-        }
         // `ledger_extends_checkpoint_at` re-derives the head over the
         // PREFIX only (torn fragment excluded), so a prefix shorter
         // than the committed height reports `false` here.
@@ -281,6 +273,45 @@ pub(crate) fn open_append_owner_only(path: &Path) -> Result<File, LedgerError> {
     }
 }
 
+/// The anchor at `anchor_path`, when there is one, refused unless a ledger key signed it.
+fn trusted_anchor(
+    anchor_path: &Path,
+    verifiers: &[VerifyingKey],
+) -> Result<Option<Checkpoint>, LedgerError> {
+    let Some(cp) = load_anchor(anchor_path)? else {
+        return Ok(None);
+    };
+    if !verifiers.iter().any(|k| verify_checkpoint_sig(&cp, k)) {
+        return Err(LedgerError::Tamper {
+            seq: cp.count,
+            why: "anchor signature is not from a trusted ledger key (forged or wrong-key anchor)"
+                .into(),
+        });
+    }
+    Ok(Some(cp))
+}
+
+/// An anchored open of a ledger with no file: an anchor that counts a record says the ledger's
+/// history was removed, which is refused as a truncation is.
+pub(crate) fn refuse_removed_history(
+    anchor: Option<&Path>,
+    verifiers: &[VerifyingKey],
+) -> Result<(), LedgerError> {
+    if let Some(anchor_path) = anchor
+        && let Some(cp) = trusted_anchor(anchor_path, verifiers)?
+        && cp.count > 0
+    {
+        return Err(LedgerError::Tamper {
+            seq: cp.count,
+            why: format!(
+                "ledger no longer extends its anchor at count {}: its file is gone",
+                cp.count
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// Take the one writer's lock on the single-file ledger at `path`, held while the returned
 /// file stays open. Two processes appending to one ledger each extend the chain from the same
 /// head and fork it, so a second writer is refused here, before its open-time verify could
@@ -288,18 +319,15 @@ pub(crate) fn open_append_owner_only(path: &Path) -> Result<File, LedgerError> {
 ///
 /// On Unix the lock is on the ledger file itself, so every path, link or mount that reaches
 /// the same file shares it; readers take no lock and are not blocked. An existing ledger is
-/// opened read-only for it and left as it is; an absent one is created, owner-only, and
-/// [`WriterLock::created`] says so. On Windows a lock on the file would block the reads every
+/// opened read-only for it and left as it is; an absent one is created, owner-only, and empty.
+/// On Windows a lock on the file would block the reads every
 /// verify makes, so the lock is a sidecar `<ledger>.lock` beside the ledger's canonical path,
 /// which another spelling or a symbolic link finds and a hard link does not. The sidecar is
 /// left in place.
 pub(crate) fn lock_single_writer(path: &Path) -> Result<WriterLock, LedgerError> {
-    let (file, created, sidecar) = writer_lock_file(path)?;
+    let (file, sidecar) = writer_lock_file(path)?;
     match file.try_lock() {
-        Ok(()) => Ok(WriterLock {
-            _file: file,
-            created,
-        }),
+        Ok(()) => Ok(WriterLock { _file: file }),
         Err(fs::TryLockError::WouldBlock) => Err(LedgerError::Io {
             path: path.display().to_string(),
             err: format!(
@@ -314,12 +342,11 @@ pub(crate) fn lock_single_writer(path: &Path) -> Result<WriterLock, LedgerError>
     }
 }
 
-/// The file [`lock_single_writer`] locks, whether opening it created the ledger, and the
-/// sidecar's path where the lock is one. On Unix, the ledger itself: created owner-only if
+/// The file [`lock_single_writer`] locks, and the sidecar's path where the lock is one. On Unix, the ledger itself: created owner-only if
 /// absent, through a symbolic link to a ledger not created yet too, and otherwise opened
 /// read-only and left as it is.
 #[cfg(unix)]
-fn writer_lock_file(path: &Path) -> Result<(File, bool, Option<PathBuf>), LedgerError> {
+fn writer_lock_file(path: &Path) -> Result<(File, Option<PathBuf>), LedgerError> {
     use std::os::unix::fs::OpenOptionsExt;
     match OpenOptions::new()
         .write(true)
@@ -327,16 +354,16 @@ fn writer_lock_file(path: &Path) -> Result<(File, bool, Option<PathBuf>), Ledger
         .mode(0o600)
         .open(path)
     {
-        Ok(f) => Ok((f, true, None)),
+        Ok(f) => Ok((f, None)),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match File::open(path) {
-            Ok(f) => Ok((f, false, None)),
+            Ok(f) => Ok((f, None)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(false)
                 .mode(0o600)
                 .open(path)
-                .map(|f| (f, true, None))
+                .map(|f| (f, None))
                 .map_err(|e| io_err(path, e)),
             Err(e) => Err(io_err(path, e)),
         },
@@ -346,17 +373,14 @@ fn writer_lock_file(path: &Path) -> Result<(File, bool, Option<PathBuf>), Ledger
 
 /// On Windows, the `<ledger>.lock` sidecar; the ledger itself is opened by its caller.
 #[cfg(not(unix))]
-fn writer_lock_file(path: &Path) -> Result<(File, bool, Option<PathBuf>), LedgerError> {
+fn writer_lock_file(path: &Path) -> Result<(File, Option<PathBuf>), LedgerError> {
     let lock_path = writer_lock_path(path)?;
-    Ok((open_lock_file(&lock_path)?, false, Some(lock_path)))
+    Ok((open_lock_file(&lock_path)?, Some(lock_path)))
 }
 
 /// The single-file ledger's writer lock, released when dropped.
 pub(crate) struct WriterLock {
     _file: File,
-    /// Whether taking the lock created the ledger file, which a ledger opened afresh starts
-    /// from rather than verifying.
-    pub(crate) created: bool,
 }
 
 /// The Windows sidecar, created if absent and never truncated. Compiled everywhere, so the

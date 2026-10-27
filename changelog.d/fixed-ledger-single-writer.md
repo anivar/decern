@@ -4,7 +4,10 @@
   writing now takes an exclusive lock before anything reads the log, and a second writer is
   refused at startup. On Unix the lock is on the ledger file itself, so it holds through any
   path, symbolic or hard link, or mount; on Windows it is a `<ledger>.lock` file beside the
-  ledger's canonical path, which a hard link does not share. On a network filesystem the lock
-  holds only where the filesystem honours it. Readers such as `decern verify` take no lock. A deployment that runs a second replica on the same file, or starts the new
-  process before the old one exits, is now refused rather than forked.
+  ledger's canonical path, which a hard link to the ledger, or a link made before the ledger
+  existed, does not share. On a network filesystem the lock holds only where the filesystem
+  honours it. Readers such as `decern verify` take no lock. A deployment that runs a second
+  replica on the same file, or starts the new process before the old one exits, is now refused
+  rather than forked. `Ledger::open_anchored` now refuses a ledger whose file is gone when its
+  anchor counts a record, as it refuses a truncation; it started a new ledger.
   Authored by @anivar.
