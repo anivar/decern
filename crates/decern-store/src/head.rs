@@ -308,6 +308,14 @@ struct FileHead {
     log_len: u64,
 }
 
+impl FileHead {
+    /// The head of a shard created and not yet appended to.
+    const EMPTY: FileHead = FileHead {
+        cursor: None,
+        log_len: 0,
+    };
+}
+
 /// **Single-host, multi-process** persistent `LedgerHeadStore` — the durable
 /// reference backend for the sharded ledger on ONE machine.
 ///
@@ -347,10 +355,10 @@ pub struct FileLedgerHeadStore {
     root: PathBuf,
 }
 
-/// The files that hold one shard: its lock key (the earlier `.shard` path, whose `.lock`
-/// sibling an earlier release locks too), head, and log.
+/// The files that hold one shard: its `.shard` file, which holds the marker or an
+/// earlier-layout shard and whose `.lock` sibling every release locks, its head, and its log.
 struct ShardFiles {
-    legacy: PathBuf,
+    shard_file: PathBuf,
     head: PathBuf,
     log: PathBuf,
 }
@@ -379,7 +387,7 @@ impl FileLedgerHeadStore {
         }
         let stem = self.root.join(shard_to_hex(shard));
         Ok(ShardFiles {
-            legacy: stem.with_extension("shard"),
+            shard_file: stem.with_extension("shard"),
             head: stem.with_extension("head"),
             log: stem.with_extension("log"),
         })
@@ -556,7 +564,7 @@ fn refuse_unless_prefix(
     Err(StoreError::Invalid(format!(
         "shard file {} holds records its log does not: an earlier release wrote to the shard \
          after this one had converted it",
-        files.legacy.display()
+        files.shard_file.display()
     )))
 }
 
@@ -582,7 +590,7 @@ impl FileLedgerHeadStore {
     /// The shard's cursor and, when `history`, its committed records, under the lock the
     /// caller holds. An earlier-layout shard with no head reads from its `.shard` file.
     fn load(&self, files: &ShardFiles, history: bool) -> Result<Loaded, StoreError> {
-        let beside = read_beside(&files.legacy)?;
+        let beside = read_beside(&files.shard_file)?;
         let head = read_head(&files.head)?;
         let records = match &head {
             Some(head) => {
@@ -636,15 +644,9 @@ impl FileLedgerHeadStore {
             ),
             (None, _) => {
                 if !marked {
-                    atomic_write_json(&files.legacy, &MOVED)?;
+                    atomic_write_json(&files.shard_file, &MOVED)?;
                 }
-                atomic_write_json(
-                    &files.head,
-                    &FileHead {
-                        cursor: None,
-                        log_len: 0,
-                    },
-                )?;
+                atomic_write_json(&files.head, &FileHead::EMPTY)?;
                 (0, Vec::new(), false)
             }
         };
@@ -660,7 +662,7 @@ impl FileLedgerHeadStore {
             },
         )?;
         if mark_after {
-            atomic_write_json(&files.legacy, &MOVED)?;
+            atomic_write_json(&files.shard_file, &MOVED)?;
         }
         Ok(())
     }
@@ -678,7 +680,7 @@ impl FileLedgerHeadStore {
         // cached/re-used fd would re-lock the same OFD immediately and silently destroy
         // same-process exclusion between two store instances — never cache the lock handle
         // in the struct. It is the lock an earlier release takes on the same shard.
-        with_write_lock(&files.legacy, || {
+        with_write_lock(&files.shard_file, || {
             // Read FRESH from disk under the lock — never from an in-process cache — so a
             // commit by another process is always seen.
             let loaded = self.load(&files, history)?;
@@ -762,7 +764,7 @@ impl LedgerHeadStore for FileLedgerHeadStore {
                     if files.head.exists() {
                         continue;
                     }
-                    refuse_orphan_log(&files, &read_beside(&files.legacy)?)?;
+                    refuse_orphan_log(&files, &read_beside(&files.shard_file)?)?;
                     continue;
                 }
             }
@@ -1012,6 +1014,21 @@ mod tests {
         }
     }
 
+    /// An earlier-layout shard file holding `lines` as its records, its cursor at their end.
+    fn earlier(lines: &[&str]) -> Vec<u8> {
+        let n = lines.len();
+        let records: Vec<_> = lines
+            .iter()
+            .enumerate()
+            .map(|(seq, line)| serde_json::json!({"seq": seq, "record_json": line}))
+            .collect();
+        serde_json::to_vec(&serde_json::json!({
+            "cursor": {"next_seq": n, "last_hash": format!("h{n}")},
+            "records": records,
+        }))
+        .unwrap()
+    }
+
     fn marked(path: &Path) -> bool {
         matches!(read_beside(path).unwrap(), Beside::Marker)
     }
@@ -1081,7 +1098,7 @@ mod tests {
             head < first_head + 16,
             "the head grew from {first_head} to {head} bytes"
         );
-        assert!(marked(&files.legacy), "a new shard carries no marker");
+        assert!(marked(&files.shard_file), "a new shard carries no marker");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1094,7 +1111,7 @@ mod tests {
         let s = FileLedgerHeadStore::new(&dir).unwrap();
         let files = s.files("acme").unwrap();
         append(&s, "acme", "line-0");
-        let left = fs::read(&files.legacy).expect("a new shard left no .shard file");
+        let left = fs::read(&files.shard_file).expect("a new shard left no .shard file");
         assert!(
             serde_json::from_slice::<LegacyShard>(&left).is_err(),
             "an earlier release could read a new shard as an earlier-layout one"
@@ -1110,16 +1127,9 @@ mod tests {
         let s = FileLedgerHeadStore::new(&dir).unwrap();
         let files = s.files("acme").unwrap();
         // After the marker; then after the head with no cursor and part of the line.
-        atomic_write_json(&files.legacy, &MOVED).unwrap();
+        atomic_write_json(&files.shard_file, &MOVED).unwrap();
         assert_eq!(history(&s, "acme"), (None, Vec::new()));
-        atomic_write_json(
-            &files.head,
-            &FileHead {
-                cursor: None,
-                log_len: 0,
-            },
-        )
-        .unwrap();
+        atomic_write_json(&files.head, &FileHead::EMPTY).unwrap();
         fs::write(&files.log, "line-").unwrap();
         assert_eq!(history(&s, "acme"), (None, Vec::new()));
         assert!(
@@ -1144,32 +1154,17 @@ mod tests {
         append(&s, "good", "line-0");
         append(&s, "other", "line-0");
         let other = s.files("other").unwrap();
-        fs::write(&other.legacy, "{not json").unwrap();
+        fs::write(&other.shard_file, "{not json").unwrap();
         let crafted = s.files("crafted").unwrap();
-        atomic_write_json(
-            &crafted.head,
-            &FileHead {
-                cursor: None,
-                log_len: 0,
-            },
-        )
-        .unwrap();
-        fs::write(
-            &crafted.legacy,
-            serde_json::to_vec(&serde_json::json!({
-                "cursor": {"next_seq": 1, "last_hash": "h1"},
-                "records": [{"seq": 0, "record_json": "old-0"}],
-            }))
-            .unwrap(),
-        )
-        .unwrap();
+        atomic_write_json(&crafted.head, &FileHead::EMPTY).unwrap();
+        fs::write(&crafted.shard_file, earlier(&["old-0"])).unwrap();
 
         assert_eq!(s.list_shards().unwrap(), ["crafted", "good", "other"]);
         let e = s
             .with_shard("other", &mut |_, _| Ok(None))
             .unwrap_err()
             .to_string();
-        assert!(e.contains(&other.legacy.display().to_string()), "{e}");
+        assert!(e.contains(&other.shard_file.display().to_string()), "{e}");
         assert!(s.with_shard("crafted", &mut |_, _| Ok(None)).is_err());
         assert_eq!(history(&s, "good").1, ["line-0"]);
 
@@ -1191,12 +1186,8 @@ mod tests {
         let files = s.files("acme").unwrap();
         append(&s, "acme", "new-0");
         append(&s, "acme", "new-1");
-        let written = serde_json::to_vec(&serde_json::json!({
-            "cursor": {"next_seq": 1, "last_hash": "h1"},
-            "records": [{"seq": 0, "record_json": "old-0"}],
-        }))
-        .unwrap();
-        fs::write(&files.legacy, &written).unwrap();
+        let written = earlier(&["old-0"]);
+        fs::write(&files.shard_file, &written).unwrap();
         assert!(s.with_shard("acme", &mut |_, _| Ok(None)).is_err());
         let mut ran = false;
         let r = s.with_shard_head("acme", &mut |_| {
@@ -1207,7 +1198,7 @@ mod tests {
             r.is_err() && !ran,
             "an append ran on a shard an earlier release wrote to"
         );
-        assert_eq!(fs::read(&files.legacy).unwrap(), written);
+        assert_eq!(fs::read(&files.shard_file).unwrap(), written);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1219,18 +1210,7 @@ mod tests {
         let dir = tmp_dir("convert");
         let s = FileLedgerHeadStore::new(&dir).unwrap();
         let files = s.files("acme").unwrap();
-        fs::write(
-            &files.legacy,
-            serde_json::to_vec(&serde_json::json!({
-                "cursor": {"next_seq": 2, "last_hash": "h2"},
-                "records": [
-                    {"seq": 0, "record_json": "line-0"},
-                    {"seq": 1, "record_json": "line-1"},
-                ],
-            }))
-            .unwrap(),
-        )
-        .unwrap();
+        fs::write(&files.shard_file, earlier(&["line-0", "line-1"])).unwrap();
 
         assert_eq!(
             history(&s, "acme"),
@@ -1250,7 +1230,7 @@ mod tests {
         assert_eq!(c.unwrap().next_seq, 3);
         assert_eq!(lines, ["line-0", "line-1", "line-2"]);
         assert_eq!(s.list_shards().unwrap(), ["acme"]);
-        let marker = fs::read(&files.legacy).unwrap();
+        let marker = fs::read(&files.shard_file).unwrap();
         assert!(
             serde_json::from_slice::<LegacyShard>(&marker).is_err(),
             "an earlier release could still read the converted shard's old file"
@@ -1266,30 +1246,26 @@ mod tests {
         let dir = tmp_dir("marker");
         let s = FileLedgerHeadStore::new(&dir).unwrap();
         let files = s.files("acme").unwrap();
-        let earlier = serde_json::to_vec(&serde_json::json!({
-            "cursor": {"next_seq": 1, "last_hash": "h1"},
-            "records": [{"seq": 0, "record_json": "line-0"}],
-        }))
-        .unwrap();
-        fs::write(&files.legacy, &earlier).unwrap();
+        let crash_left = earlier(&["line-0"]);
+        fs::write(&files.shard_file, &crash_left).unwrap();
         append(&s, "acme", "line-1");
-        assert!(marked(&files.legacy));
+        assert!(marked(&files.shard_file));
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            let before = fs::metadata(&files.legacy).unwrap().ino();
+            let before = fs::metadata(&files.shard_file).unwrap().ino();
             append(&s, "acme", "line-2");
-            let after = fs::metadata(&files.legacy).unwrap().ino();
+            let after = fs::metadata(&files.shard_file).unwrap().ino();
             assert_eq!(before, after, "an append rewrote the marker");
         }
         #[cfg(not(unix))]
         append(&s, "acme", "line-2");
 
-        fs::write(&files.legacy, &earlier).unwrap();
-        assert!(!marked(&files.legacy));
+        fs::write(&files.shard_file, &crash_left).unwrap();
+        assert!(!marked(&files.shard_file));
         append(&s, "acme", "line-3");
-        assert!(marked(&files.legacy));
+        assert!(marked(&files.shard_file));
         let (c, lines) = history(&s, "acme");
         assert_eq!(c.unwrap().next_seq, 4);
         assert_eq!(lines, ["line-0", "line-1", "line-2", "line-3"]);
@@ -1642,9 +1618,9 @@ mod tests {
 
         let dir = tmp_dir("records-no-cursor-legacy");
         let s = FileLedgerHeadStore::new(&dir).unwrap();
-        let legacy = s.files("acme").unwrap().legacy;
+        let shard_file = s.files("acme").unwrap().shard_file;
         fs::write(
-            &legacy,
+            &shard_file,
             serde_json::to_vec(&serde_json::json!({
                 "cursor": null,
                 "records": [{"seq": 0, "record_json": "line-0"}],

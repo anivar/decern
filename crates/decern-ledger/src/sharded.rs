@@ -148,20 +148,14 @@ impl ShardedLedger {
             return outcome;
         }
         let Some(entry) = entry else {
-            return Err(LedgerError::Io {
-                path: format!("<sharded ledger, shard {shard}>"),
-                err: "append produced no record (store did not commit)".into(),
-            });
+            return Err(no_record(shard));
         };
         let (record, _) = self.critical_section(shard, move |_existing| Ok((Some(entry), ())))?;
         // `critical_section`'s closure above always returns `Some(entry)`, so
         // `append` never legitimately produces `None` — a `None` here would
         // mean the store silently dropped a write, which is exactly the
         // fail-closed condition callers must see as an error, not a quiet Ok.
-        record.ok_or_else(|| LedgerError::Io {
-            path: format!("<sharded ledger, shard {shard}>"),
-            err: "append produced no record (store did not commit)".into(),
-        })
+        record.ok_or_else(|| no_record(shard))
     }
 
     /// The general primitive: run `f` with the shard's existing records (each
@@ -309,7 +303,7 @@ impl ShardedLedger {
     /// state `append`'s first call on it would extend, not an error.
     ///
     /// Reads the cursor alone, through `LedgerHeadStore::with_shard_head` — a checkpoint
-    /// needs nothing else, so its cost does not grow with the shard.
+    /// needs nothing else, so it reads no records.
     pub fn checkpoint(&self, shard: &str, ts_ms: u64) -> Result<Checkpoint, LedgerError> {
         let mut cursor_out: Option<HeadCursor> = None;
         self.store
@@ -533,6 +527,14 @@ pub type ShardVerification = (String, Result<crate::VerifyReport, LedgerError>);
 /// shard would stop verifying. The latest signer must be `kid`, or a key this process holds
 /// that `kid` has not signed before. `spans` are the shard's keys in the order each took
 /// over; an empty `kid` stands for a record no key this process holds could be attributed to.
+/// An append the store did not commit: fail-closed, never a quiet `Ok`.
+fn no_record(shard: &str) -> LedgerError {
+    LedgerError::Io {
+        path: format!("<sharded ledger, shard {shard}>"),
+        err: "append produced no record (store did not commit)".into(),
+    }
+}
+
 fn may_extend(
     spans: &[KeySpan],
     kid: &str,

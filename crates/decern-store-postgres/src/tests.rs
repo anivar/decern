@@ -21,7 +21,11 @@ fn uniq(prefix: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    format!("test-{prefix}-{nanos}-{:?}", thread::current().id())
+    let thread: String = format!("{:?}", thread::current().id())
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    format!("test_{prefix}_{nanos}_{thread}")
 }
 
 fn test_url() -> Option<String> {
@@ -344,20 +348,25 @@ fn weird_shard_ids_round_trip_and_list_in_byte_order() {
     );
 }
 
-/// Run an empty section on `shard` on its own thread, and give up after 30 seconds rather than
-/// wait with it. A section left waiting keeps its handle on the store, so the store is never
-/// dropped (and its actor never joined) while it waits.
+/// Run `f` on its own thread and give up after `secs` rather than wait with it. A call left
+/// waiting keeps whatever `f` holds, so a store it holds is never dropped (and its actor
+/// never joined) while it waits.
+fn within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(Duration::from_secs(secs)).ok()
+}
+
+/// An empty section on `shard`, given up after 30 seconds.
 fn section_within(
     store: &Arc<PostgresLedgerHeadStore>,
     shard: &str,
 ) -> Option<Result<(), StoreError>> {
     let store = Arc::clone(store);
     let shard = shard.to_owned();
-    let (tx, rx) = std::sync::mpsc::channel();
-    thread::spawn(move || {
-        let _ = tx.send(store.with_shard(&shard, &mut |_, _| Ok(None)));
-    });
-    rx.recv_timeout(Duration::from_secs(30)).ok()
+    within(30, move || store.with_shard(&shard, &mut |_, _| Ok(None)))
 }
 
 /// A shard that fails to load is answered as an error, and the store serves the next shard
@@ -533,14 +542,10 @@ fn key_spans_round_trip_and_the_head_only_section_matches_with_shard() {
     assert_eq!(full, Some((head_only, 1)));
 }
 
-/// Open a store on its own thread and give up after `secs` rather than wait with it.
+/// Open a store, given up after `secs`.
 fn open_within(url: &str, secs: u64) -> Option<Result<(), StoreError>> {
     let url = url.to_owned();
-    let (tx, rx) = std::sync::mpsc::channel();
-    thread::spawn(move || {
-        let _ = tx.send(PostgresLedgerHeadStore::new(&url).map(drop));
-    });
-    rx.recv_timeout(Duration::from_secs(secs)).ok()
+    within(secs, move || PostgresLedgerHeadStore::new(&url).map(drop))
 }
 
 /// A boot that finds the `signers` column takes no lock on the head table, so a reader
@@ -571,11 +576,7 @@ fn a_boot_that_must_add_the_column_gives_up_behind_a_reader() {
     let Some(url) = test_url() else {
         return;
     };
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let schema = format!("decern_upgrade_{nanos}");
+    let schema = uniq("upgrade");
     let mut raw = postgres::Client::connect(&url, postgres::NoTls).unwrap();
     raw.batch_execute(&format!(
         "CREATE SCHEMA {schema}; \
