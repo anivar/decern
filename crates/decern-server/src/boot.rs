@@ -1009,17 +1009,26 @@ mod tests {
     /// Rewrite the last record of the one shard under `heads`, the way an operator with the
     /// files could.
     fn edit_last_record(heads: &std::path::Path, edit: impl Fn(&str) -> String) {
-        let shard = std::fs::read_dir(heads)
+        let head = std::fs::read_dir(heads)
             .unwrap()
             .map(|e| e.unwrap().path())
-            .find(|p| p.extension().is_some_and(|x| x == "shard"))
-            .expect("a shard file");
+            .find(|p| p.extension().is_some_and(|x| x == "head"))
+            .expect("a shard head");
+        let log = head.with_extension("log");
+        let mut lines: Vec<String> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        let last = lines.last_mut().unwrap();
+        *last = edit(last);
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(&log, &text).unwrap();
+        // The head's committed length follows the edit, as the operator's would.
         let mut state: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&shard).unwrap()).unwrap();
-        let last = state["records"].as_array_mut().unwrap().last_mut().unwrap();
-        let edited = edit(last["record_json"].as_str().unwrap());
-        last["record_json"] = serde_json::Value::String(edited);
-        std::fs::write(&shard, serde_json::to_vec(&state).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(&head).unwrap()).unwrap();
+        state["log_len"] = serde_json::json!(text.len());
+        std::fs::write(&head, serde_json::to_vec(&state).unwrap()).unwrap();
     }
 
     /// The Mission registry defaults into the shard directory. The boot-time key check lists

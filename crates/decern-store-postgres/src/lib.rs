@@ -47,7 +47,7 @@
 //! `FnMut` that is neither `Send` nor `'static`, so it cannot cross a thread
 //! boundary. Instead the actor holds the transaction open and the work
 //! **round-trips**: the actor `BEGIN`s, takes the advisory lock, reads the
-//! shard's cursor+records, and ships them to the caller thread; the caller runs
+//! shard's cursor (and, for `with_shard`, its records), and ships them to the caller thread; the caller runs
 //! `f` locally and ships back what to write; the actor commits (or rolls back).
 //! The advisory lock is held across the entire round trip — exactly the
 //! held-lock semantics the trait requires, not a bare compare-and-swap.
@@ -58,13 +58,14 @@
 //! BEGIN;
 //! SELECT pg_advisory_xact_lock($key);   -- $key = a stable 64-bit hash of shard;
 //!                                       --   txn-scoped, cross-host EXCLUSIVE lock
-//! SELECT next_seq, last_hash FROM decern_ledger_head   WHERE shard = $s;      -- cursor
-//! SELECT seq, record         FROM decern_ledger_record WHERE shard = $s ORDER BY seq;
+//! SELECT next_seq, last_hash, signers FROM decern_ledger_head WHERE shard = $s;  -- cursor
+//! SELECT seq, record FROM decern_ledger_record WHERE shard = $s ORDER BY seq;
+//!                                       -- with_shard only; with_shard_head skips it
 //! -- (records + cursor shipped to caller; caller runs f; ships decision back)
 //! -- if f returned Some((new_cursor, record_json)):
 //!   INSERT INTO decern_ledger_record (shard, seq, record) VALUES ($s, $new_cursor.next_seq - 1, $record_json);
-//!   INSERT INTO decern_ledger_head (shard, next_seq, last_hash) VALUES ($s, $new_cursor.next_seq, $new_cursor.last_hash)
-//!     ON CONFLICT (shard) DO UPDATE SET next_seq = EXCLUDED.next_seq, last_hash = EXCLUDED.last_hash;
+//!   INSERT INTO decern_ledger_head (shard, next_seq, last_hash, signers) VALUES (...)
+//!     ON CONFLICT (shard) DO UPDATE SET next_seq = ..., last_hash = ..., signers = ...;
 //! COMMIT;                               -- releases the advisory lock
 //! -- if f returned None: COMMIT with nothing written (still releases the lock)
 //! -- if f returned Err / a DB error occurred: ROLLBACK (RAII on the Transaction), no write
@@ -82,7 +83,12 @@
 //! a duplicate-object error):
 //!
 //! - `decern_ledger_record (shard TEXT, seq BIGINT, record TEXT, PRIMARY KEY (shard, seq))`
-//! - `decern_ledger_head   (shard TEXT PRIMARY KEY, next_seq BIGINT, last_hash TEXT)`
+//! - `decern_ledger_head   (shard TEXT PRIMARY KEY, next_seq BIGINT, last_hash TEXT, signers TEXT)`
+//!
+//! `signers` is the cursor's key spans as JSON, null where a release before it wrote the
+//! row; the column is added to an existing table on boot. An earlier release still running
+//! against the same tables updates a head without it, which the spans' own `through` count
+//! shows, so the ledger reads the history instead of trusting them.
 //!
 //! **One deliberate behavior divergence from the Memory/File backends:** the
 //! `(shard, seq)` primary key REJECTS a duplicate seq. Those backends trust the
@@ -104,7 +110,8 @@ use std::sync::mpsc::{Receiver, Sender, SyncSender, channel, sync_channel};
 use std::thread::{self, JoinHandle};
 
 use decern_store::{
-    HeadCursor, LedgerHeadStore, ShardCriticalSection, ShardWrite, StoreError, StoredRecord,
+    HeadCriticalSection, HeadCursor, LedgerHeadStore, ShardCriticalSection, ShardSigners,
+    ShardWrite, StoreError, StoredRecord,
 };
 use postgres::{Client, Transaction};
 use tokio_postgres_rustls::MakeRustlsConnect;
@@ -127,6 +134,8 @@ enum Job {
     /// commits/rolls back and reports the outcome over `done`.
     WithShard {
         shard: String,
+        /// Whether to read the shard's records too, or only its head.
+        history: bool,
         loaded: SyncSender<Result<ShardState, StoreError>>,
         decision: Receiver<Result<ShardWrite, StoreError>>,
         done: SyncSender<Result<(), StoreError>>,
@@ -198,8 +207,13 @@ impl Drop for PostgresLedgerHeadStore {
     }
 }
 
-impl LedgerHeadStore for PostgresLedgerHeadStore {
-    fn with_shard(&self, shard: &str, f: &mut ShardCriticalSection<'_>) -> Result<(), StoreError> {
+impl PostgresLedgerHeadStore {
+    fn section(
+        &self,
+        shard: &str,
+        history: bool,
+        f: &mut ShardCriticalSection<'_>,
+    ) -> Result<(), StoreError> {
         // Rendezvous channels (capacity 0): each hop blocks until the other side
         // is ready, keeping the actor's held transaction in lockstep with `f`.
         let (loaded_tx, loaded_rx) = sync_channel(0);
@@ -208,6 +222,7 @@ impl LedgerHeadStore for PostgresLedgerHeadStore {
         self.jobs
             .send(Job::WithShard {
                 shard: shard.to_owned(),
+                history,
                 loaded: loaded_tx,
                 decision: decision_rx,
                 done: done_tx,
@@ -232,6 +247,22 @@ impl LedgerHeadStore for PostgresLedgerHeadStore {
             Ok(outcome) => outcome,
             Err(_) => Err(actor_gone()),
         }
+    }
+}
+
+impl LedgerHeadStore for PostgresLedgerHeadStore {
+    fn with_shard(&self, shard: &str, f: &mut ShardCriticalSection<'_>) -> Result<(), StoreError> {
+        self.section(shard, true, f)
+    }
+
+    /// The head row alone: the same transaction and advisory lock, without reading the
+    /// shard's records.
+    fn with_shard_head(
+        &self,
+        shard: &str,
+        f: &mut HeadCriticalSection<'_>,
+    ) -> Result<(), StoreError> {
+        self.section(shard, false, &mut |cursor, _| f(cursor))
     }
 
     fn list_shards(&self) -> Result<Vec<String>, StoreError> {
@@ -286,13 +317,14 @@ fn actor_main(
         match job {
             Job::WithShard {
                 shard,
+                history,
                 loaded,
                 decision,
                 done,
             } => {
                 // A single call's failure never kills the actor: the transaction
                 // rolls back via RAII and the loop continues with the next job.
-                let ended = run_with_shard(&mut client, &shard, &loaded, &decision);
+                let ended = run_with_shard(&mut client, &shard, history, &loaded, &decision);
                 note_closed(&client, closed);
                 match ended {
                     // The caller is waiting on `loaded`, not `done`: answered anywhere else,
@@ -329,10 +361,11 @@ enum Ended {
 fn run_with_shard(
     client: &mut Client,
     shard: &str,
+    history: bool,
     loaded: &SyncSender<Result<ShardState, StoreError>>,
     decision: &Receiver<Result<ShardWrite, StoreError>>,
 ) -> Ended {
-    match load(client, shard) {
+    match load(client, shard, history) {
         Ok((tx, state)) => Ended::Ran(run_loaded(tx, shard, state, loaded, decision)),
         Err(e) => Ended::Unloaded(e),
     }
@@ -375,10 +408,23 @@ fn run_loaded(
             &[&shard, &seq, &record_json],
         )
         .map_err(|e| db(&e))?;
+        let signers = new_cursor
+            .signers
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| StoreError::Serde(e.to_string()))?;
         tx.execute(
-            "INSERT INTO decern_ledger_head (shard, next_seq, last_hash) VALUES ($1, $2, $3) \
-             ON CONFLICT (shard) DO UPDATE SET next_seq = EXCLUDED.next_seq, last_hash = EXCLUDED.last_hash",
-            &[&shard, &to_i64(new_cursor.next_seq)?, &new_cursor.last_hash],
+            "INSERT INTO decern_ledger_head (shard, next_seq, last_hash, signers) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (shard) DO UPDATE SET next_seq = EXCLUDED.next_seq, \
+             last_hash = EXCLUDED.last_hash, signers = EXCLUDED.signers",
+            &[
+                &shard,
+                &to_i64(new_cursor.next_seq)?,
+                &new_cursor.last_hash,
+                &signers,
+            ],
         )
         .map_err(|e| db(&e))?;
     }
@@ -394,10 +440,12 @@ fn note_closed(client: &Client, closed: &AtomicBool) {
     }
 }
 
-/// Begin the section's transaction, take the shard's lock, and read the shard.
+/// Begin the section's transaction, take the shard's lock, and read its head and, when
+/// `history`, its records.
 fn load<'c>(
     client: &'c mut Client,
     shard: &str,
+    history: bool,
 ) -> Result<(Transaction<'c>, ShardState), StoreError> {
     let mut tx = client.transaction().map_err(|e| db(&e))?;
     // Transaction-scoped, cross-host EXCLUSIVE lock on this shard. Blocks (in the
@@ -405,21 +453,31 @@ fn load<'c>(
     tx.execute("SELECT pg_advisory_xact_lock($1)", &[&advisory_key(shard)])
         .map_err(|e| db(&e))?;
     let cursor = read_head(&mut tx, shard)?;
-    let records = read_records(&mut tx, shard)?;
+    let records = if history {
+        read_records(&mut tx, shard)?
+    } else {
+        Vec::new()
+    };
     Ok((tx, (cursor, records)))
 }
 
 fn read_head(tx: &mut Transaction<'_>, shard: &str) -> Result<Option<HeadCursor>, StoreError> {
     let row = tx
         .query_opt(
-            "SELECT next_seq, last_hash FROM decern_ledger_head WHERE shard = $1",
+            "SELECT next_seq, last_hash, signers FROM decern_ledger_head WHERE shard = $1",
             &[&shard],
         )
         .map_err(|e| db(&e))?;
     row.map(|r| {
+        let signers = r
+            .get::<_, Option<String>>(2)
+            .map(|s| serde_json::from_str::<ShardSigners>(&s))
+            .transpose()
+            .map_err(|e| StoreError::Serde(e.to_string()))?;
         Ok(HeadCursor {
             next_seq: from_i64(r.get::<_, i64>(0))?,
             last_hash: r.get::<_, String>(1),
+            signers,
         })
     })
     .transpose()
@@ -472,20 +530,54 @@ fn ensure_schema(client: &mut Client) -> Result<(), StoreError> {
     client
         .execute("SELECT pg_advisory_lock($1)", &[&SCHEMA_LOCK_KEY])
         .map_err(|e| db(&e))?;
-    let ddl = client.batch_execute(
-        "CREATE TABLE IF NOT EXISTS decern_ledger_record (\
-             shard  TEXT   NOT NULL, \
-             seq    BIGINT NOT NULL, \
-             record TEXT   NOT NULL, \
-             PRIMARY KEY (shard, seq)); \
-         CREATE TABLE IF NOT EXISTS decern_ledger_head (\
-             shard     TEXT   PRIMARY KEY, \
-             next_seq  BIGINT NOT NULL, \
-             last_hash TEXT   NOT NULL);",
-    );
+    let ddl = create_schema(client);
     // Release the session lock regardless of the DDL outcome.
     let _ = client.execute("SELECT pg_advisory_unlock($1)", &[&SCHEMA_LOCK_KEY]);
-    ddl.map_err(|e| db(&e))
+    ddl
+}
+
+fn create_schema(client: &mut Client) -> Result<(), StoreError> {
+    client
+        .batch_execute(
+            "CREATE TABLE IF NOT EXISTS decern_ledger_record (\
+                 shard  TEXT   NOT NULL, \
+                 seq    BIGINT NOT NULL, \
+                 record TEXT   NOT NULL, \
+                 PRIMARY KEY (shard, seq)); \
+             CREATE TABLE IF NOT EXISTS decern_ledger_head (\
+                 shard     TEXT   PRIMARY KEY, \
+                 next_seq  BIGINT NOT NULL, \
+                 last_hash TEXT   NOT NULL);",
+        )
+        .map_err(|e| db(&e))?;
+    // `ADD COLUMN IF NOT EXISTS` takes the table's exclusive lock and needs its owner even
+    // when the column is there, so it runs only on the boot that adds the column, and gives
+    // up rather than wait behind a reader with every replica's appends queued behind it.
+    let present: bool = client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_attribute \
+             WHERE attrelid = 'decern_ledger_head'::regclass \
+             AND attname = 'signers' AND NOT attisdropped)",
+            &[],
+        )
+        .map_err(|e| db(&e))?
+        .get(0);
+    if present {
+        return Ok(());
+    }
+    let mut tx = client.transaction().map_err(|e| db(&e))?;
+    tx.batch_execute(
+        "SET LOCAL lock_timeout = '5s'; \
+         ALTER TABLE decern_ledger_head ADD COLUMN IF NOT EXISTS signers TEXT;",
+    )
+    .and_then(|()| tx.commit())
+    .map_err(|e| StoreError::Io {
+        path: "postgres".into(),
+        err: format!(
+            "adding column signers to decern_ledger_head: {e}; as the table's owner, run \
+             ALTER TABLE decern_ledger_head ADD COLUMN signers TEXT, then start again"
+        ),
+    })
 }
 
 // ============================ helpers ============================

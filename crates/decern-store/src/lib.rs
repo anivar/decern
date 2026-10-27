@@ -26,8 +26,8 @@ mod head;
 mod missions;
 
 pub use head::{
-    FileLedgerHeadStore, HeadCursor, LedgerHeadStore, MemoryLedgerHeadStore, ShardCriticalSection,
-    ShardWrite, StoredRecord,
+    FileLedgerHeadStore, HeadCriticalSection, HeadCursor, KeySpan, LedgerHeadStore,
+    MemoryLedgerHeadStore, ShardCriticalSection, ShardSigners, ShardWrite, StoredRecord,
 };
 pub use missions::{FileMissionRegistry, MemoryMissionRegistry, MissionEntry, MissionRegistry};
 

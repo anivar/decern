@@ -21,7 +21,26 @@ fn uniq(prefix: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    format!("test-{prefix}-{nanos}-{:?}", thread::current().id())
+    let thread: String = format!("{:?}", thread::current().id())
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    format!("test_{prefix}_{nanos}_{thread}")
+}
+
+/// A cursor that keeps no key spans.
+fn cursor_at(next_seq: u64, last_hash: impl Into<String>) -> HeadCursor {
+    HeadCursor {
+        next_seq,
+        last_hash: last_hash.into(),
+        signers: None,
+    }
+}
+
+/// `url` with one more connection parameter.
+fn with_param(url: &str, param: &str) -> String {
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}{param}")
 }
 
 fn test_url() -> Option<String> {
@@ -78,13 +97,7 @@ fn roundtrip_append_advances_cursor_and_persists_across_a_fresh_handle() {
         store
             .with_shard(&shard, &mut |cursor, records| {
                 seen = Some((cursor.cloned(), records.len()));
-                Ok(Some((
-                    HeadCursor {
-                        next_seq: 1,
-                        last_hash: "h0".into(),
-                    },
-                    "line-0".into(),
-                )))
+                Ok(Some((cursor_at(1, "h0"), "line-0".into())))
             })
             .unwrap();
         assert_eq!(seen, Some((None, 0)), "first write sees genesis");
@@ -97,17 +110,7 @@ fn roundtrip_append_advances_cursor_and_persists_across_a_fresh_handle() {
                 Ok(None)
             })
             .unwrap();
-        assert_eq!(
-            after,
-            Some((
-                Some(HeadCursor {
-                    next_seq: 1,
-                    last_hash: "h0".into()
-                }),
-                1,
-                0
-            ))
-        );
+        assert_eq!(after, Some((Some(cursor_at(1, "h0")), 1, 0)));
     }
 
     // A freshly-opened store (a NEW connection) sees the persisted state.
@@ -120,13 +123,7 @@ fn roundtrip_append_advances_cursor_and_persists_across_a_fresh_handle() {
         })
         .unwrap();
     let (cursor, records) = reopened.unwrap();
-    assert_eq!(
-        cursor,
-        Some(HeadCursor {
-            next_seq: 1,
-            last_hash: "h0".into()
-        })
-    );
+    assert_eq!(cursor, Some(cursor_at(1, "h0")));
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].seq, 0);
     assert_eq!(records[0].record_json, "line-0");
@@ -176,13 +173,7 @@ fn list_shards_is_sorted_and_only_committed() {
     for (shard, hash) in [(&zeta, "z1"), (&alpha, "a1")] {
         store
             .with_shard(shard, &mut |_, _| {
-                Ok(Some((
-                    HeadCursor {
-                        next_seq: 1,
-                        last_hash: hash.into(),
-                    },
-                    "line".into(),
-                )))
+                Ok(Some((cursor_at(1, hash), "line".into())))
             })
             .unwrap();
     }
@@ -234,10 +225,7 @@ fn two_instances_two_connections_serialize_the_critical_section() {
                             thread::sleep(Duration::from_millis(2));
                             let next_seq = cursor.map(|c| c.next_seq).unwrap_or(0) + 1;
                             Ok(Some((
-                                HeadCursor {
-                                    next_seq,
-                                    last_hash: format!("h{my_index}"),
-                                },
+                                cursor_at(next_seq, format!("h{my_index}")),
                                 format!("record-{my_index}"),
                             )))
                         })
@@ -314,13 +302,7 @@ fn weird_shard_ids_round_trip_and_list_in_byte_order() {
         store
             .with_shard(shard, &mut |cursor, records| {
                 assert!(cursor.is_none() && records.is_empty(), "fresh shard");
-                Ok(Some((
-                    HeadCursor {
-                        next_seq: 1,
-                        last_hash: "h".into(),
-                    },
-                    "line".into(),
-                )))
+                Ok(Some((cursor_at(1, "h"), "line".into())))
             })
             .unwrap();
     }
@@ -338,20 +320,25 @@ fn weird_shard_ids_round_trip_and_list_in_byte_order() {
     );
 }
 
-/// Run an empty section on `shard` on its own thread, and give up after 30 seconds rather than
-/// wait with it. A section left waiting keeps its handle on the store, so the store is never
-/// dropped (and its actor never joined) while it waits.
+/// Run `f` on its own thread and give up after `secs` rather than wait with it. A call left
+/// waiting keeps whatever `f` holds, so a store it holds is never dropped (and its actor
+/// never joined) while it waits.
+fn within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(Duration::from_secs(secs)).ok()
+}
+
+/// An empty section on `shard`, given up after 30 seconds.
 fn section_within(
     store: &Arc<PostgresLedgerHeadStore>,
     shard: &str,
 ) -> Option<Result<(), StoreError>> {
     let store = Arc::clone(store);
     let shard = shard.to_owned();
-    let (tx, rx) = std::sync::mpsc::channel();
-    thread::spawn(move || {
-        let _ = tx.send(store.with_shard(&shard, &mut |_, _| Ok(None)));
-    });
-    rx.recv_timeout(Duration::from_secs(30)).ok()
+    within(30, move || store.with_shard(&shard, &mut |_, _| Ok(None)))
 }
 
 /// A shard that fails to load is answered as an error, and the store serves the next shard
@@ -404,9 +391,9 @@ fn a_store_whose_connection_was_closed_answers_each_section_as_an_error() {
     };
     // Names the store's own connection, so only it is closed under tests running in parallel.
     let name = uniq("closed");
-    let sep = if url.contains('?') { '&' } else { '?' };
     let store = Arc::new(
-        PostgresLedgerHeadStore::new(&format!("{url}{sep}application_name={name}")).unwrap(),
+        PostgresLedgerHeadStore::new(&with_param(&url, &format!("application_name={name}")))
+            .unwrap(),
     );
     assert!(matches!(
         section_within(&store, &uniq("before")),
@@ -478,4 +465,123 @@ fn a_store_whose_worker_has_stopped_has_failed() {
         section_within(&store, &uniq("after")),
         Some(Err(_))
     ));
+}
+
+/// The cursor's key spans survive the head row, and the head-only section sees the cursor
+/// `with_shard` sees and commits as it does (DB-gated).
+#[test]
+fn key_spans_round_trip_and_the_head_only_section_matches_with_shard() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    let shard = uniq("headonly");
+    let store = PostgresLedgerHeadStore::new(&url).unwrap();
+    let spans = decern_store::ShardSigners {
+        through: 1,
+        spans: vec![decern_store::KeySpan {
+            kid: "k1".into(),
+            first_seq: 0,
+        }],
+    };
+    store
+        .with_shard_head(&shard, &mut |c| {
+            assert!(c.is_none());
+            Ok(Some((
+                HeadCursor {
+                    next_seq: 1,
+                    last_hash: "h1".into(),
+                    signers: Some(spans.clone()),
+                },
+                "line-0".into(),
+            )))
+        })
+        .unwrap();
+    let mut head_only = None;
+    store
+        .with_shard_head(&shard, &mut |c| {
+            head_only = c.cloned();
+            Ok(None)
+        })
+        .unwrap();
+    let mut full = None;
+    store
+        .with_shard(&shard, &mut |c, records| {
+            full = Some((c.cloned(), records.len()));
+            Ok(None)
+        })
+        .unwrap();
+    assert_eq!(head_only.as_ref().unwrap().signers, Some(spans));
+    assert_eq!(full, Some((head_only, 1)));
+}
+
+/// Open a store, given up after `secs`.
+fn open_within(url: &str, secs: u64) -> Option<Result<(), StoreError>> {
+    let url = url.to_owned();
+    within(secs, move || PostgresLedgerHeadStore::new(&url).map(drop))
+}
+
+/// A boot that finds the `signers` column takes no lock on the head table, so a reader
+/// holding the table open, a long query or a dump, does not hold the boot (DB-gated).
+#[test]
+fn a_boot_that_finds_the_column_waits_on_no_reader() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    drop(PostgresLedgerHeadStore::new(&url).unwrap());
+    let mut reader = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    let mut open = reader.transaction().unwrap();
+    open.query("SELECT 1 FROM decern_ledger_head LIMIT 1", &[])
+        .unwrap();
+    let booted = open_within(&url, 10);
+    open.rollback().unwrap();
+    assert!(
+        matches!(booted, Some(Ok(()))),
+        "a boot waited on a reader of the head table: {booted:?}"
+    );
+}
+
+/// A boot that has to add the `signers` column gives up behind a reader and says what to
+/// run, rather than wait with every append queued behind it; once the reader is gone it
+/// adds the column (DB-gated). Run in a schema of its own, through the URL's search path.
+#[test]
+fn a_boot_that_must_add_the_column_gives_up_behind_a_reader() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    let schema = uniq("upgrade");
+    let mut raw = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    raw.batch_execute(&format!(
+        "CREATE SCHEMA {schema}; \
+         CREATE TABLE {schema}.decern_ledger_head (\
+             shard TEXT PRIMARY KEY, next_seq BIGINT NOT NULL, last_hash TEXT NOT NULL);"
+    ))
+    .unwrap();
+    let scoped = with_param(&url, &format!("options=-c%20search_path%3D{schema}"));
+
+    let mut reader = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    let mut open = reader.transaction().unwrap();
+    open.query(&format!("SELECT 1 FROM {schema}.decern_ledger_head"), &[])
+        .unwrap();
+    let refused = open_within(&scoped, 30);
+    open.rollback().unwrap();
+    let added = open_within(&scoped, 30);
+    let column: bool = raw
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = $1 AND table_name = 'decern_ledger_head' \
+             AND column_name = 'signers')",
+            &[&schema],
+        )
+        .unwrap()
+        .get(0);
+    raw.batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+        .unwrap();
+
+    assert!(
+        matches!(&refused, Some(Err(StoreError::Io { err, .. }))
+            if err.contains("ALTER TABLE decern_ledger_head ADD COLUMN signers TEXT")),
+        "{refused:?}"
+    );
+    assert!(matches!(added, Some(Ok(()))), "{added:?}");
+    assert!(column, "the boot did not add the column");
 }

@@ -490,14 +490,18 @@ async fn run() -> Result<ExitCode> {
     }
 }
 
-/// True if `dir` holds any `*.shard` file — the flock head-store layout. Used only to
-/// redirect an operator who passed such a directory to `--ledger` toward `--sharded`.
+/// True if `dir` holds a shard's `*.head` file, or a `*.shard` file of the earlier layout —
+/// the flock head-store layout. Used only to redirect an operator who passed such a
+/// directory to `--ledger` toward `--sharded`.
 fn looks_like_sharded_dir(dir: &std::path::Path) -> bool {
     std::fs::read_dir(dir)
         .map(|entries| {
-            entries
-                .filter_map(std::result::Result::ok)
-                .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("shard"))
+            entries.filter_map(std::result::Result::ok).any(|e| {
+                matches!(
+                    e.path().extension().and_then(|x| x.to_str()),
+                    Some("head" | "shard")
+                )
+            })
         })
         .unwrap_or(false)
 }
