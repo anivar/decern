@@ -145,8 +145,8 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
 
     // The key a ledger was signed with is the key it keeps being signed with: a new key, or
     // an ephemeral one, would fork the signing identity, and the next restart under the old
-    // key would read the fork as tampering. A ledger that exists is therefore extended only by
-    // a key file that exists; whether that file holds the right key is checked against the
+    // key would read the fork as tampering. A ledger file that is not empty is therefore
+    // extended only by a key file that exists; whether that file holds the right key is checked against the
     // records once it is loaded, below. Checked here by presence alone, before anything is
     // written. A Postgres head store cannot be looked at before connecting, so a missing key
     // file is refused only after it is created when that store already holds shards.

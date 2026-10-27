@@ -172,10 +172,13 @@ grants itself, and one for an agent that is not a principal in the approver's te
 backs a decision only in its approver's tenant, and only while the approver, in the model the
 server runs, is unrevoked, unexpired and holds the scope the decision needs; that model is fixed
 at boot, so a revocation reaches existing Missions at the next restart. Every accepted transition
-is recorded before it is reported; a terminated Mission never revives on the host that
-terminated it. The registry is a durable local file, consulted in-perimeter with no phone-home,
+is recorded before it is reported; on Unix a terminated Mission never revives on the host
+that terminated it. The registry is a durable local file, consulted in-perimeter with no phone-home,
 so under `--sharded postgres://…` each replica has its own. A Mission binds only the built-in
-actions `Read`, `MoveMoney` and `AccessPII`; under a Mission any other action is denied.
+actions `Read`, `MoveMoney` and `AccessPII`; under a Mission any other action is denied. The
+self-approval refusal compares ids only: an approver in the agent's own delegation chain, or one
+the model does not mark `Human`, may approve, so `human_approved` means another principal
+approved, not that a person did.
 
 decern records an approval it is given and holds decisions to it; it does not render one. The
 approval screen, the consent record and the tokens belong outside decern, and the enforcement
@@ -266,14 +269,21 @@ release still does not claim and carries each earlier release's limits forward.
   empty store under different keys both boot, each then refuses with `503` to record into a
   shard the other wrote first, and the store holds shards under both keys, so start the first
   replica alone, or give every replica the same key before any starts.
-- **The AAuth posture covers agent identity access only, and does not yet signal its
-  refusals as draft-hardt-oauth-aauth-protocol-11 asks.** It verifies the draft's signature
+- **The AAuth posture follows an individual Internet-Draft, covers agent identity access
+  only, and does not yet signal its refusals as draft-hardt-oauth-aauth-protocol-11 asks.**
+  The draft is not adopted by a working group and can change in ways that break this posture. It verifies the draft's signature
   profile for Ed25519 keys (ES256, which the draft says every party SHOULD support, is not
-  verified), and on a request with a body it also requires `content-digest`, which an agent
+  verified), and on a POST or any request with a body it also requires `content-digest`, which an agent
   following the draft's base component list leaves out and learns of only from the response
   body, since a signature failure other than clock skew carries no `Signature-Error` code and
   no resource metadata is published. Providers are configured, never discovered. The [standards
   registry](.agent/standards/registry.yaml) lists each departure.
+- **The Windows build does not protect its files by permission.** On Windows `decern-serve`
+  refuses to create a missing `--key` file, loads an existing one without checking who can read
+  it, and writes the ledger, the head store and the Mission registry with the platform's default
+  permissions. The owner-only and readable-key checks are Unix only. Nor does it make a Mission
+  registry update durable on its own: the rename that publishes it is not synced, so a crash
+  just after a termination can bring the Mission back.
 - **The default build is not free of compiled native code.** No TLS, no OpenSSL, no cmake —
   but `cedar-policy` → `stacker` → `psm` compiles a small assembly routine through `cc`.
   The claim that holds is "no TLS/OpenSSL/cmake in the default build," not "zero compiled

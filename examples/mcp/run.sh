@@ -151,12 +151,13 @@ echo "   both refused, WWW-Authenticate present."
 echo
 # NOTE for beat authors: every tools/call that reaches the PDP appends a ledger
 # record, so ADDING A BEAT SHIFTS EVERY SEQ ASSERTED BELOW. Recount before merging.
-echo "== 10. The ledger holds all five decisions, arguments digest-bound =="
+echo "== 10. The ledger holds all six records, arguments digest-bound =="
 kill "$PDP" 2>/dev/null || true; wait "$PDP" 2>/dev/null || true
 cargo run -q -p decern-cli -- verify --ledger "$LEDGER" --pubkey "$KID"
-# seq 0 legacy allow, 1 allow, 2 money deny, 3 step-up allow, 4 tenant deny —
-# denials are records too, and so is the earlier-revision client's call.
-for SEQ in 0 1 2 3 4; do
+# seq 0 legacy allow, 1 allow, 2 money deny, 3 the Mission approval the step-up makes,
+# 4 step-up allow, 5 tenant deny — denials are records too, and so are the
+# earlier-revision client's call and the approval.
+for SEQ in 0 1 2 3 4 5; do
   cargo run -q -p decern-cli -- explain --ledger "$LEDGER" --seq "$SEQ" --pubkey "$KID" \
     | grep -E "decision:|bound to:" | head -2
 done

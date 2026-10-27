@@ -9,8 +9,8 @@
 //! Both stop at ONE machine. This crate is the third backend behind the SAME
 //! trait: a Postgres store where the shard critical section is held across
 //! **every replica/host** via a transaction-scoped advisory lock, so more than
-//! one `decern-server` host can safely extend the same tenant hash chain (and
-//! gate the cumulative money-budget) without forking it.
+//! one `decern-server` host can safely extend the same tenant hash chain without
+//! forking it.
 //!
 //! # The TLS exception (deliberate, isolated, documented)
 //!
@@ -19,7 +19,8 @@
 //! (via `cedar-policy` → `stacker`) compiles a small assembly routine in every
 //! build. This crate is the ONE documented exception for TLS: multi-host Postgres
 //! needs it, and TLS providers link compiled C/assembly. The exception is contained
-//! here — the binaries do NOT depend on this crate. We use `rustls`
+//! here: the default build of the binaries does not depend on this crate, and
+//! `decern-serve` built with `--features postgres` does. We use `rustls`
 //! with the `ring` provider (not `aws-lc-rs`, which needs a `cmake` toolchain),
 //! keeping the exception a single, audit-scoped stack. See this crate's README.
 //!

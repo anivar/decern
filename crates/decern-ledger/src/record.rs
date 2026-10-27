@@ -67,16 +67,16 @@ pub struct Entry {
     pub decision_subject: Option<DecisionSubject>,
     /// The caller the server verified when it took this request — who ASSERTED the
     /// subject, distinct from the subject itself and from the accountable sponsor.
-    /// Present only under bearer validation, where it is what the token proved, on
-    /// decision records and mission lifecycle records (`Mission.Approve`, `Mission.Terminate`).
+    /// Present under every credential posture, where it is what that posture verified, on
+    /// decision and search records and on mission lifecycle records (`Mission.Approve`,
+    /// `Mission.Terminate`).
     /// Absent under a trusted front: an assertion the server did not verify itself does not
     /// belong on a permanent record. Descriptive, never a decision input.
     ///
-    /// The token's `sub` is written verbatim, permanently, and the subject-side
-    /// projection returns whole records — so front service identities here, not
-    /// end-user tokens: a person's identifier in `sub` becomes visible to anyone
-    /// holding a decision-subject handle on the same record, and cannot be redacted
-    /// after the fact.
+    /// The verified caller's identifier is written verbatim, permanently, and the
+    /// subject-side projection returns whole records — so a caller should be a service
+    /// identity, not a person: a person's identifier here becomes visible to anyone holding
+    /// a decision-subject handle on the same record, and cannot be redacted after the fact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asserted_by: Option<AssertedBy>,
     /// Whether this decision is one an affected party should be told about. Recorded, not

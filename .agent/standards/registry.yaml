@@ -343,7 +343,7 @@ standards:
       rather than ignore it (§2.3), so a signer cannot claim a property nothing checked, and
       verify Ed25519 only. The signed-request profile: label `sig1`; covered components
       exactly `@method`, `@authority`, `@path` and `signature-key`, with `content-digest`
-      before `signature-key` on any request carrying a body; `alg` and `expires` refused;
+      before `signature-key` on a POST or any request carrying a body; `alg` and `expires` refused;
       `created` no more than 60s old and no more than 5s ahead; the fixed label departs from
       §7.2.5's advice not to rely on one, so a relabelled signature is refused. The AAuth
       profile follows draft-hardt-oauth-aauth-protocol-11 §11.3: the signer's own label;
