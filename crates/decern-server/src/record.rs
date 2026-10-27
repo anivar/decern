@@ -96,15 +96,12 @@ pub(crate) fn evaluation_body(decision: bool, reasons: &[String], errors: &[Stri
     body
 }
 
-/// Write the audit record, or hand back the fail-closed 503 the whole service rests on.
-/// `None` = the record is durable, so the caller builds its own success response;
-/// `Some(resp)` = it could not be written, so this 503 must be returned instead. No
-/// transition — a decision OR a Mission lifecycle event — is ever reported as succeeded
-/// unless its record landed.
 /// `GET /healthz`: `ok`, or `503` once the single-file ledger has stopped after a write
-/// error or its lock is poisoned. Neither recovers without a restart, so a liveness probe on
-/// this route restarts the process, and the restart reopens the ledger. A lock held by an
-/// append in progress counts as alive: the probe never waits behind a write.
+/// error or its lock is poisoned, or once a sharded ledger's store has failed: a Postgres
+/// store whose connection closed or whose worker thread stopped. None recovers without a
+/// restart, so a liveness probe on this route restarts the process, and the restart reopens
+/// the ledger. A lock held by an append in progress counts as alive: the probe never waits
+/// behind a write.
 pub(crate) async fn healthz(
     axum::extract::State(st): axum::extract::State<crate::AppState>,
 ) -> Response {
@@ -113,17 +110,15 @@ pub(crate) async fn healthz(
             Ok(ledger) => ledger.has_failed(),
             Err(std::sync::TryLockError::Poisoned(_)) => true,
             Err(std::sync::TryLockError::WouldBlock) => false,
-        },
-        LedgerBackend::Sharded(_) => false,
+        }
+        .then_some("ledger stopped after a write error; restart to recover"),
+        LedgerBackend::Sharded(s) => s
+            .has_failed()
+            .then_some("ledger store can no longer record; restart to recover"),
     };
-    if stopped {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "ledger stopped after a write error; restart to recover",
-        )
-            .into_response()
-    } else {
-        "ok".into_response()
+    match stopped {
+        Some(why) => (StatusCode::SERVICE_UNAVAILABLE, why).into_response(),
+        None => "ok".into_response(),
     }
 }
 
@@ -146,6 +141,11 @@ pub(crate) async fn off_the_executor(
     }
 }
 
+/// Write the audit record, or hand back the fail-closed 503 the whole service rests on.
+/// `None` = the record is durable, so the caller builds its own success response;
+/// `Some(resp)` = it could not be written, so this 503 must be returned instead. No
+/// transition — a decision OR a Mission lifecycle event — is ever reported as succeeded
+/// unless its record landed.
 pub(crate) fn record_or_503(append: impl FnOnce() -> Result<(), LedgerError>) -> Option<Response> {
     match append() {
         Ok(()) => None,

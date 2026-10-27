@@ -109,6 +109,11 @@ impl ShardedLedger {
         self.store.list_shards().map_err(store_to_ledger_err)
     }
 
+    /// Whether the store can record nothing again until the process restarts.
+    pub fn has_failed(&self) -> bool {
+        self.store.has_failed()
+    }
+
     /// Append `entry` to `shard`'s chain — the sharded analog of
     /// `Ledger::append`, held under `shard`'s exclusive lock for the write.
     pub fn append(&self, shard: &str, entry: Entry) -> Result<Record, LedgerError> {
