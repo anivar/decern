@@ -21,8 +21,8 @@ gate fail for reasons that have nothing to do with the change. A target that cli
 repository is reported, since no file here can satisfy it, and so is a tracked Markdown file
 missing from the working tree. The Markdown is read with patterns, not a parser; forms this
 repository does not use (angle-bracketed targets with spaces, percent-encoded targets, indented
-code, a fence inside a list item indented four spaces or more, reference definitions inside
-block quotes) are not handled.
+code, a fence inside a list item indented with a tab or four spaces or more, lines ended by a
+lone carriage return, a fence or a reference definition inside a block quote) are not handled.
 
 Usage: python3 scripts/doclinks.py check
 """
@@ -36,10 +36,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-_FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _CODE_SPAN = re.compile(r"(`+)(?:(?!\1).)+?\1")
 _INLINE = re.compile(r"""\]\(\s*<?([^)\s>]+)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)""")
-_REFERENCE = re.compile(r"^\s{0,3}\[(?!\^)[^\]]+\]:\s*<?(\S+?)>?(?:\s+.*)?$")
+_REFERENCE = re.compile(r"^ {0,3}\[(?!\^)[^\]]+\]:\s*<?(\S+?)>?(?:\s+.*)?$")
 _HTML = re.compile(r"""\b(?:href|src)\s*=\s*["']([^"']+)["']""")
 _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
@@ -48,7 +48,9 @@ def targets(text: str) -> list[tuple[int, str]]:
     """Each (line number, link target) in `text`, outside code."""
     found: list[tuple[int, str]] = []
     fence: str | None = None
-    for number, line in enumerate(text.splitlines(), start=1):
+    # A line ends at a newline; `splitlines` would also split on a form feed, which Markdown
+    # does not.
+    for number, line in enumerate(text.split("\n"), start=1):
         opened = _FENCE.match(line)
         if fence is not None:
             # A closing fence is its own character, at least as long, with nothing after it.

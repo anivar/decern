@@ -100,6 +100,17 @@ class Broken(unittest.TestCase):
             ["README.md:5: missing.md", "README.md:12: missing.md", "README.md:13: missing.md"],
         )
 
+    def test_only_spaces_indent_a_fence_and_only_a_newline_ends_a_line(self) -> None:
+        text = (
+            "\t```\n[tab](missing.md)\n"
+            "\u00a0```\n[nbsp](missing.md)\n"
+            "a\x0c```\n[after a form feed](missing.md)\n"
+        )
+        self.assertEqual(
+            self.misses(text),
+            ["README.md:2: missing.md", "README.md:4: missing.md", "README.md:6: missing.md"],
+        )
+
     def test_the_root_and_indented_definitions_are_not_misses(self) -> None:
         self.assertEqual(self.misses("[r](./) [s](/)\n    [a]: missing.md\n"), [])
 
