@@ -1440,6 +1440,15 @@ mod tests {
                 .is_some_and(|s| s.contains("not evaluated again")),
             "{d}"
         );
+        assert_eq!(
+            d["challenge_bases_that_bear_on_the_facts"],
+            json!([
+                "factual-error",
+                "category-mismatch",
+                "change-in-circumstances"
+            ]),
+            "{d}"
+        );
         assert_eq!(d["notice"]["emitted_by_this_server"], false);
         assert_eq!(
             d["caller"]["mode"], "trusted-proxy",

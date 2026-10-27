@@ -79,22 +79,23 @@ pub(crate) struct Challenge {
 }
 
 /// How the challenge was answered. Neither outcome evaluates the decision again: the
-/// kernel ran once, without the challenge, and the decision stands as recorded. An outcome
-/// says what the challenge's basis is, so whoever acts on it knows which challenges bear on
-/// the facts the decision was made from.
+/// kernel ran once, without the challenge, and the decision stands as recorded. A challenge
+/// is classified only when its standing names the decision subject the request carries and a
+/// basis it gives bears on the facts the decision was made from; any other is affirmed, with
+/// the reason. The record `decision_ref` names is not read.
 ///
 /// Two of these are produced here. Handing a challenge to a human approver is the third
 /// shape the surface can take, and it needs an approver service this server does not have;
 /// a deployment that has one says so in its disclosure. Claiming it while routing nowhere
 /// would be worse than not offering it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Outcome {
-    /// No basis given bears on the facts the decision was made from, and the reason is
-    /// stated.
+    /// The standing does not name the decision subject the request carries, or no basis
+    /// given bears on the facts the decision was made from; which of the two is stated.
     AffirmPriorDecision { affirm_basis: String },
-    /// A basis given bears on the facts the decision was made from, and it is named. The
-    /// decision is not made again here; acting on the challenge falls to whoever reads it.
+    /// The standing names the decision subject the request carries, and a basis given bears
+    /// on the facts the decision was made from; that basis is named. The decision is not
+    /// made again here; acting on the challenge falls to whoever reads it.
     ChallengeClassified { classified_basis: String },
 }
 
@@ -323,7 +324,9 @@ fn string_claim(claims: &BTreeMap<String, Value>, name: &str) -> Result<String, 
 pub(crate) fn answer(challenge: &Challenge, subject_matches: bool) -> Outcome {
     if !subject_matches {
         return Outcome::AffirmPriorDecision {
-            affirm_basis: "the challenged decision does not name this party as its subject".into(),
+            affirm_basis: "the challenge's standing does not name the decision subject this \
+                           request carries"
+                .into(),
         };
     }
     match challenge
@@ -665,10 +668,15 @@ mod tests {
             1_000,
         )
         .unwrap();
-        assert!(matches!(
-            answer(&c, false),
-            Outcome::AffirmPriorDecision { .. }
-        ));
+        match answer(&c, false) {
+            Outcome::AffirmPriorDecision { affirm_basis } => {
+                assert!(
+                    affirm_basis.contains("does not name the decision subject"),
+                    "{affirm_basis}"
+                );
+            }
+            other => panic!("classified: {}", other.into_record().0),
+        }
     }
 
     #[test]
