@@ -25,6 +25,11 @@ fn entry(resource_id: &str) -> Entry {
     }
 }
 
+/// One test at a time. These tests spawn `decern` while another may hold a ledger open, and on
+/// Unix a child shares the writer lock's descriptor until it starts its own program, so a
+/// reopen in that moment would be refused as a second writer.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Fixture {
     dir: PathBuf,
     ledger_path: PathBuf,
@@ -81,6 +86,7 @@ fn cleanup(dir: &Path) {
 /// A log that has only grown since the commitment still extends it.
 #[test]
 fn a_log_that_only_grew_still_extends_its_anchor() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let f = seed_and_anchor("grow", 3);
 
     // Append after publishing, so the anchored tree is a strict prefix of the current one.
@@ -111,6 +117,7 @@ fn a_log_that_only_grew_still_extends_its_anchor() {
 /// Only the earlier commitment exposes it.
 #[test]
 fn a_log_truncated_below_its_anchor_is_detected() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let f = seed_and_anchor("trunc", 4);
 
     let all = std::fs::read_to_string(&f.ledger_path).unwrap();
@@ -148,6 +155,7 @@ fn a_log_truncated_below_its_anchor_is_detected() {
 /// An anchor that does not verify under the reader's own key is refused, not believed.
 #[test]
 fn an_anchor_not_signed_by_the_ledger_key_is_refused() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let f = seed_and_anchor("forged", 2);
     let other_hex = hex::encode(generate().unwrap().verifying_key().to_bytes());
 

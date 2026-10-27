@@ -8,6 +8,8 @@
   existed, does not share. On a network filesystem the lock holds only where the filesystem
   honours it. Readers such as `decern verify` take no lock. A deployment that runs a second
   replica on the same file, or starts the new process before the old one exits, is now refused
-  rather than forked. `Ledger::open_anchored` now refuses a ledger whose file is gone when its
+  rather than forked. On Unix a child process started while a ledger is open shares its lock
+  until it starts its own program, so an open in that moment is refused as a second writer.
+  `Ledger::open_anchored` now refuses a ledger whose file is gone when its
   anchor counts a record, as it refuses a truncation; it started a new ledger.
   Authored by @anivar.

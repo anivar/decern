@@ -323,7 +323,8 @@ pub(crate) fn refuse_removed_history(
 /// On Windows a lock on the file would block the reads every
 /// verify makes, so the lock is a sidecar `<ledger>.lock` beside the ledger's canonical path,
 /// which another spelling or a symbolic link finds and a hard link does not. The sidecar is
-/// left in place.
+/// left in place. On Unix a child process started while the ledger is open shares the lock
+/// until it starts its own program, so an open in that moment is refused as a second writer.
 pub(crate) fn lock_single_writer(path: &Path) -> Result<WriterLock, LedgerError> {
     let (file, sidecar) = writer_lock_file(path)?;
     match file.try_lock() {
