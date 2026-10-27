@@ -46,7 +46,7 @@ pub(crate) struct Args {
     pub(crate) sharded: Option<String>,
     /// 32-byte hex signing seed file, required with `--sharded`. When a missing one is
     /// created and when it is refused is in docs/CLI.md. Omit for an ephemeral key, which a
-    /// ledger with records refuses.
+    /// ledger file that is not empty refuses.
     #[arg(long, value_name = "PATH")]
     pub(crate) key: Option<PathBuf>,
     /// Hex Ed25519 public key of a ledger signing key this deployment rotated away from.
