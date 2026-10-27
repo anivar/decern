@@ -14,10 +14,9 @@ not re-baselined quietly.
   OpenSSF Best Practices published; the 0.4.0 release with the RustCrypto line moved
   together; the AAuth posture answers with draft `-11`'s `AAuth-Requirement` challenge and
   `clock_skew` signal, and does not yet conform to `-11` otherwise — the standards registry
-  lists each gap.
-- **November 2026** — the AuthZEN 1.0 certification scenario runs in CI; the
-  COAZ-MCP binding (OpenID AuthZEN WG draft) replaces the ad-hoc tool-call mapping in
-  `examples/mcp`; implementation feedback filed on the drafts.
+  lists each gap; the AuthZEN 1.0 certification scenario runs in CI.
+- **November 2026** — the COAZ-MCP binding (OpenID AuthZEN WG draft) replaces the ad-hoc
+  tool-call mapping in `examples/mcp`; implementation feedback filed on the drafts.
 - **December 2026 – January 2027** — decern documented as an external authorization service
   for agentgateway; the decision about recording a committed *effect* beside the decision;
   a written seam for a non-Cedar policy backend.

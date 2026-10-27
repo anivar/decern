@@ -113,7 +113,7 @@ standards:
       - crates/decern-kernel/model/
     conformance: >-
       The policy, schema, and entities in model/ are Cedar; the engine is pinned
-      to cedar-policy =4.13.0 in Cargo.toml.
+      to cedar-policy =4.14.0 in Cargo.toml.
 
   - name: Cedar symbolic compiler (cedar-policy-symcc)
     url: https://github.com/cedar-policy/cedar-spec
@@ -124,7 +124,7 @@ standards:
       decern-proof compiles the Cedar model to SMT with cedar-policy-symcc — the
       Lean-verified symbolic compiler — and discharges the nine invariants as policy
       subsumption. The "proven" claim rests on this crate, so it is exact-pinned
-      =0.7.0 in Cargo.toml, as tightly as the evaluator.
+      =0.8.0 in Cargo.toml, as tightly as the evaluator.
 
   - name: cvc5 SMT solver
     url: https://cvc5.github.io/
@@ -133,7 +133,8 @@ standards:
       - crates/decern-proof/src/
     conformance: >-
       The proof obligations from cedar-policy-symcc are discharged by the cvc5 binary
-      on PATH (or $CVC5); the proofs are developed and run against cvc5 1.3.1. An
+      on PATH (or $CVC5); CI runs the proofs against cvc5 1.3.4, the release ci.yml pins,
+      and they hold under 1.3.1 too. An
       external tool, so it is not a Cargo dependency; `decern prove` fails closed if it
       is absent or a proof does not hold.
 

@@ -92,9 +92,13 @@ the kernel derives in Rust before the prover runs, and say so:
 - **isolation** — no allow ever crosses a tenant boundary
 - **decay** — no allow once authority has expired
 - **attenuation-edge** — no access without ownership, a delegation ancestor, or an explicit grant
-- **scope-gate** — bounded actions require their scope
+- **scope-gate** — `Read`, `MoveMoney` and `AccessPII` require their scope; an action a custom
+  model adds is outside it, as it is outside money-gate
 - **revocation-gate** — a revoked principal is allowed nothing
-- **residency-gate** / **role-gate** / **consent-gate** — data-bound access conditions
+- **residency-gate** / **role-gate** / **consent-gate** — data-bound access conditions; the
+  consent gate reads `consent: true` from the request's context, the caller's word, which
+  decern does not check, so take it only from a PEP that holds the consent; under a Mission it
+  is removed instead, and on-behalf-of PII access fails closed
 
 ## What is recorded
 
@@ -174,7 +178,10 @@ server runs, is unrevoked, unexpired and holds the scope the decision needs; tha
 at boot, so a revocation reaches existing Missions at the next restart. Every accepted transition
 is recorded before it is reported; on Unix a terminated Mission never revives on the host
 that terminated it. The registry is a durable local file, consulted in-perimeter with no phone-home,
-so under `--sharded postgres://…` each replica has its own. A Mission binds only the built-in
+and the processes that open one file share it; under `--sharded postgres://…` a replica on
+another host has its own, so a Mission approved or terminated on one host is unknown to, or
+still live on, the others: send a Mission's requests and its termination to the host that holds
+it. A Mission binds only the built-in
 actions `Read`, `MoveMoney` and `AccessPII`; under a Mission any other action is denied. The
 self-approval refusal compares ids only: an approver in the agent's own delegation chain, or one
 the model does not mark `Human`, may approve, so `human_approved` means another principal
