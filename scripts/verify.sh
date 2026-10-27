@@ -118,6 +118,10 @@ step "no-lineage"     no_lineage
 # This is what turns `.agent/standards/registry.yaml` into something an agent graph can ground on.
 step "standards"      python3 scripts/standards.py check
 step "standards tests" python3 -I scripts/test_standards.py
+# A relative link in a tracked Markdown file that names no path is a claim about the tree
+# that stopped being true; external URLs are not fetched.
+step "doc links"      python3 -I scripts/doclinks.py check
+step "doc links tests" python3 -I scripts/test_doclinks.py
 
 echo
 if [ "${skip_proofs}" -eq 1 ]; then

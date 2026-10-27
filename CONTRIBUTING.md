@@ -11,9 +11,9 @@ Every change must pass the canonical verify script before you open a PR:
 ./scripts/verify.sh
 ```
 
-It runs build, test, the cvc5 proofs, clippy, fmt, docs, cargo-deny, and the no-lineage / standards guard — the
+It runs build, test, the cvc5 proofs, clippy, fmt, docs, cargo-deny, the no-lineage / standards guard and the doc-link check — the
 same gates CI runs. Prerequisites: the pinned toolchain (`rust-toolchain.toml`), **cargo-deny**
-(`cargo install cargo-deny`), **python3** for the standards-registry check, and **cvc5** on
+(`cargo install cargo-deny`), **python3** for the standards-registry and doc-link checks, and **cvc5** on
 `PATH` (or `$CVC5`) for the proof tests. Only cvc5 is proof-specific — the rest are needed
 even with `--skip-proofs`.
 
@@ -89,7 +89,7 @@ decern is built to be contributed to by agents as well as people. If you're an a
 - Start from [`AGENTS.md`](AGENTS.md) (the working method) and [`.agent/standards/`](.agent/standards/)
   (the conventions, including the comment standard). `.agent/` is method only — no project history.
 - The bar is identical to a human PR: [`./scripts/verify.sh`](scripts/verify.sh) green (build, test,
-  cvc5 proofs, clippy, fmt, docs, cargo-deny, no-lineage / standards guard) and honest, scoped commits.
+  cvc5 proofs, clippy, fmt, docs, cargo-deny, no-lineage / standards guard, doc links) and honest, scoped commits.
 - A **human sponsors the change and signs off the DCO** (`git commit -s`) — the sign-off certifies a
   person stands behind the submission, whoever wrote the diff.
 - Touching authorization semantics (the kernel decision, the model, an invariant)? Keep `decern prove`

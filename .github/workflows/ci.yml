@@ -54,7 +54,7 @@ jobs:
         run: cargo install cargo-deny --locked
 
       # One canonical loop — identical to what contributors run locally.
-      - name: Verify (build · test · cvc5 proofs · clippy · fmt · docs · deny · no-lineage)
+      - name: Verify (build · test · cvc5 proofs · clippy · fmt · docs · deny · no-lineage · doc links)
         run: ./scripts/verify.sh
 
   # A change a user would notice ships with its own changelog entry, written while the author
