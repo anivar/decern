@@ -15,7 +15,7 @@ use decern_store::MissionRegistry;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::record::{Shard, append_to_backend, record_and_respond, shard_for};
+use crate::record::{Shard, record_and_respond, record_decision, shard_for};
 use crate::{AppState, challenge};
 
 /// AuthZEN subject or resource: a `type`, an `id`, and optionally `properties` — what the
@@ -165,12 +165,7 @@ pub(crate) fn decide_one(
     }
     match evaluate_one(st, caller, req) {
         Err(refusal) => refusal.into_response(),
-        Ok(e) => {
-            let backend = st.backend.clone();
-            record_and_respond(e.decision, e.reasons, e.errors, move || {
-                append_to_backend(&backend, e.shard, e.entry)
-            })
-        }
+        Ok(e) => record_and_respond(e.errors, || record_decision(st, e.shard, e.entry)),
     }
 }
 
@@ -1374,6 +1369,384 @@ mod tests {
                 "the handle is still dropped from the record: {rec}"
             );
         }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A state like [`mission_state_at`]'s over `model`, on a sharded in-memory ledger.
+    fn sharded_state(model: decern_kernel::Model, base: &std::path::Path) -> AppState {
+        let (st, _) = crate::testutil::mission_state_with(base, model);
+        let key = decern_crypto::SigningKey::from_bytes(&[9u8; 32]);
+        let store: Arc<dyn decern_store::LedgerHeadStore> =
+            Arc::new(decern_store::MemoryLedgerHeadStore::new());
+        AppState {
+            backend: Arc::new(crate::LedgerBackend::Sharded(
+                decern_ledger::ShardedLedger::new(store, key, Vec::new()),
+            )),
+            ..st
+        }
+    }
+
+    /// A Mission for agent1, registered as approve would leave it.
+    fn register_mission(st: &AppState, s256: &str) {
+        st.missions
+            .register(
+                s256,
+                decern_store::MissionEntry {
+                    approver: "corp".into(),
+                    expiry: now_secs().unwrap() + 3600,
+                    terminated: false,
+                    agent: "agent1".into(),
+                    approved_tools: vec!["read".into()],
+                },
+                now_secs().unwrap(),
+            )
+            .unwrap();
+    }
+
+    /// agent1 reading claim1 under the Mission `s256`.
+    fn request_under(s256: &str) -> DecideReq {
+        serde_json::from_value(json!({
+            "subject": {"type": "Principal", "id": "agent1"},
+            "action": {"name": "Read"},
+            "resource": {"type": "Resource", "id": "claim1"},
+            "context": {"mission": {"approver": "corp", "s256": s256}},
+        }))
+        .unwrap()
+    }
+
+    /// An admitted request, evaluated; a refusal fails the test.
+    fn evaluated(st: &AppState, req: DecideReq) -> Evaluated {
+        match evaluate_one(st, &None, req) {
+            Ok(e) => e,
+            Err(r) => panic!("refused: {} {}", r.error, r.detail),
+        }
+    }
+
+    /// The recorded decisions of every backend, in order.
+    fn recorded_decisions(st: &AppState, base: &std::path::Path) -> Vec<(bool, Vec<String>)> {
+        match &*st.backend {
+            crate::LedgerBackend::Single(_) => {
+                let (_r, records) = decern_ledger::read_verified(
+                    &base.join("decern-ledger.jsonl"),
+                    Some(&st.pubkey),
+                    0,
+                    100,
+                )
+                .unwrap();
+                records
+                    .iter()
+                    .map(|r| {
+                        (
+                            r["entry"]["decision"].as_bool().unwrap(),
+                            serde_json::from_value(r["entry"]["reasons"].clone()).unwrap(),
+                        )
+                    })
+                    .collect()
+            }
+            crate::LedgerBackend::Sharded(s) => {
+                let shard = crate::record::shard_for(&st.backend, st.kernel.directory(), "agent1")
+                    .unwrap()
+                    .unwrap();
+                s.critical_section(&shard, |existing| {
+                    Ok((
+                        None,
+                        existing
+                            .iter()
+                            .map(|r| {
+                                (
+                                    r["entry"]["decision"].as_bool().unwrap(),
+                                    serde_json::from_value(r["entry"]["reasons"].clone()).unwrap(),
+                                )
+                            })
+                            .collect(),
+                    ))
+                })
+                .unwrap()
+                .1
+            }
+        }
+    }
+
+    /// A decision bound to a live Mission and recorded after that Mission's termination is
+    /// recorded, and answered, as a Deny with that reason, on either backend: on one host no
+    /// Allow under a Mission follows its termination in the ledger. One recorded while the
+    /// Mission is live is the Allow it was evaluated as.
+    #[tokio::test]
+    async fn a_decision_bound_before_a_termination_is_recorded_after_it_as_a_deny() {
+        for sharded in [false, true] {
+            let base = mission_base();
+            let st = if sharded {
+                sharded_state(crate::testutil::live_agent1_model(), &base)
+            } else {
+                crate::testutil::mission_state_with(&base, crate::testutil::live_agent1_model()).0
+            };
+            register_mission(&st, "m-race");
+
+            let live = evaluated(&st, request_under("m-race"));
+            assert!(
+                live.decision,
+                "the request must be an Allow under the Mission: {:?} {:?}",
+                live.reasons, live.errors
+            );
+            let recorded = crate::record::record_decision(&st, live.shard, live.entry).unwrap();
+            assert!(recorded.decision, "sharded={sharded}");
+
+            let raced = evaluated(&st, request_under("m-race"));
+            assert!(raced.decision);
+            st.missions
+                .terminate("m-race", now_secs().unwrap())
+                .unwrap();
+            let recorded = crate::record::record_decision(&st, raced.shard, raced.entry).unwrap();
+            assert!(!recorded.decision, "sharded={sharded}");
+            assert!(
+                recorded.reasons[0].contains("terminated before this decision was recorded"),
+                "{recorded:?}"
+            );
+
+            let decisions = recorded_decisions(&st, &base);
+            assert_eq!(decisions.len(), 2, "sharded={sharded}");
+            assert!(decisions[0].0 && !decisions[0].1.iter().any(|r| r.contains("terminated")));
+            assert!(!decisions[1].0 && decisions[1].1[0].contains("terminated"));
+            let _ = std::fs::remove_dir_all(&base);
+        }
+    }
+
+    /// A registry that answers as its inner one does until `flip_after` status reads, then
+    /// reports the Mission terminated and asserts the read is made under the ledger's lock:
+    /// the shape a termination landing between a decision's bind and its record has.
+    struct Flipping {
+        inner: decern_store::MemoryMissionRegistry,
+        flip_after: usize,
+        /// Report the Mission gone rather than terminated once flipped: a prune by a later
+        /// write.
+        vanish: bool,
+        reads: std::sync::atomic::AtomicUsize,
+        backend: std::sync::Mutex<Option<Arc<crate::LedgerBackend>>>,
+    }
+
+    impl Flipping {
+        fn new(flip_after: usize) -> Self {
+            Flipping {
+                inner: decern_store::MemoryMissionRegistry::default(),
+                flip_after,
+                vanish: false,
+                reads: std::sync::atomic::AtomicUsize::new(0),
+                backend: std::sync::Mutex::new(None),
+            }
+        }
+    }
+
+    impl decern_store::MissionRegistry for Flipping {
+        fn register(
+            &self,
+            s256: &str,
+            entry: decern_store::MissionEntry,
+            now: u64,
+        ) -> Result<(), decern_store::StoreError> {
+            self.inner.register(s256, entry, now)
+        }
+
+        fn status(
+            &self,
+            s256: &str,
+        ) -> Result<Option<decern_store::MissionEntry>, decern_store::StoreError> {
+            let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            let mut entry = self.inner.status(s256)?;
+            if read > self.flip_after {
+                if let Some(crate::LedgerBackend::Single(m)) =
+                    self.backend.lock().unwrap().as_deref()
+                {
+                    assert!(
+                        matches!(m.try_lock(), Err(std::sync::TryLockError::WouldBlock)),
+                        "the registry was read outside the ledger's lock"
+                    );
+                }
+                if self.vanish {
+                    return Ok(None);
+                }
+                if let Some(e) = entry.as_mut() {
+                    e.terminated = true;
+                }
+            }
+            Ok(entry)
+        }
+
+        fn terminate(&self, s256: &str, now: u64) -> Result<(), decern_store::StoreError> {
+            self.inner.terminate(s256, now)
+        }
+    }
+
+    /// [`mission_state_with`]'s state with `flipping` as its registry, watching its ledger.
+    fn flipping_state(base: &std::path::Path, flipping: &Arc<Flipping>) -> AppState {
+        let (st, _) =
+            crate::testutil::mission_state_with(base, crate::testutil::live_agent1_model());
+        *flipping.backend.lock().unwrap() = Some(st.backend.clone());
+        AppState {
+            missions: flipping.clone(),
+            ..st
+        }
+    }
+
+    /// Through the handler: a Mission terminated between a decision's bind and its record
+    /// gives a Deny, read under the ledger's lock, answered as recorded and recorded as
+    /// answered.
+    #[tokio::test]
+    async fn a_decision_whose_mission_ends_before_its_record_is_served_as_the_deny_recorded() {
+        let base = mission_base();
+        let flipping = Arc::new(Flipping::new(1));
+        let st = flipping_state(&base, &flipping);
+        register_mission(&st, "m-flip");
+
+        let (status, body) =
+            body_json(decide(State(st.clone()), None, Ok(Json(request_under("m-flip")))).await)
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["decision"], false, "{body}");
+        assert!(
+            body["context"]["reasons"]
+                .to_string()
+                .contains("terminated before this decision was recorded"),
+            "{body}"
+        );
+        assert_eq!(
+            flipping.reads.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "one read to bind, one under the lock to settle"
+        );
+        let decisions = recorded_decisions(&st, &base);
+        assert_eq!(decisions.len(), 1);
+        assert!(!decisions[0].0 && decisions[0].1[0].contains("terminated"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A Mission the registry no longer holds at the record was pruned as expired by a later
+    /// write; its expiry at the decision's time was checked at the bind, so the Allow stands.
+    #[tokio::test]
+    async fn a_mission_pruned_before_the_record_leaves_the_decision_as_evaluated() {
+        let base = mission_base();
+        let flipping = Arc::new(Flipping {
+            vanish: true,
+            ..Flipping::new(1)
+        });
+        let st = flipping_state(&base, &flipping);
+        register_mission(&st, "m-gone");
+        let (status, body) =
+            body_json(decide(State(st.clone()), None, Ok(Json(request_under("m-gone")))).await)
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["decision"], true, "{body}");
+        assert_eq!(flipping.reads.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert!(recorded_decisions(&st, &base)[0].0);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The semantic was applied to the decisions as evaluated: a `permit_on_first_permit`
+    /// batch ended on the Allow it evaluated, so it ends on the Deny settled at the record with
+    /// the items after it unanswered; a `deny_on_first_deny` batch went on past it.
+    #[tokio::test]
+    async fn a_batch_semantic_is_applied_to_the_decisions_as_evaluated() {
+        for (semantic, answered) in [("permit_on_first_permit", 1), ("deny_on_first_deny", 2)] {
+            let base = mission_base();
+            let flipping = Arc::new(Flipping::new(1));
+            let st = flipping_state(&base, &flipping);
+            register_mission(&st, "m-sem");
+            let req: crate::batch::BatchReq = serde_json::from_value(json!({
+                "subject": {"type": "Principal", "id": "agent1"},
+                "action": {"name": "Read"},
+                "resource": {"type": "Resource", "id": "claim1"},
+                "options": {"evaluations_semantic": semantic},
+                "evaluations": [
+                    {"context": {"mission": {"approver": "corp", "s256": "m-sem"}}},
+                    {},
+                ],
+            }))
+            .unwrap();
+            let (status, body) =
+                body_json(crate::batch::evaluations(State(st.clone()), None, Ok(Json(req))).await)
+                    .await;
+            assert_eq!(status, StatusCode::OK, "{semantic}: {body}");
+            let items = body["evaluations"].as_array().unwrap();
+            assert_eq!(items.len(), answered, "{semantic}: {body}");
+            assert_eq!(items[0]["decision"], false, "{semantic}: {body}");
+            assert_eq!(recorded_decisions(&st, &base).len(), answered, "{semantic}");
+            let _ = std::fs::remove_dir_all(&base);
+        }
+    }
+
+    /// Through the batch handler: the item whose Mission ended at the record is answered as
+    /// the Deny recorded, the item beside it as evaluated.
+    #[tokio::test]
+    async fn a_batch_item_whose_mission_ends_at_the_record_is_answered_as_recorded() {
+        let base = mission_base();
+        let flipping = Arc::new(Flipping::new(1));
+        let st = flipping_state(&base, &flipping);
+        register_mission(&st, "m-flip");
+
+        let req: crate::batch::BatchReq = serde_json::from_value(json!({
+            "subject": {"type": "Principal", "id": "agent1"},
+            "action": {"name": "Read"},
+            "resource": {"type": "Resource", "id": "claim1"},
+            "evaluations": [
+                {"context": {"mission": {"approver": "corp", "s256": "m-flip"}}},
+                {},
+            ],
+        }))
+        .unwrap();
+        let (status, body) =
+            body_json(crate::batch::evaluations(State(st.clone()), None, Ok(Json(req))).await)
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let items = body["evaluations"].as_array().unwrap();
+        assert_eq!(items[0]["decision"], false, "{body}");
+        assert!(
+            items[0]["context"]["reasons"]
+                .to_string()
+                .contains("terminated"),
+            "{body}"
+        );
+        assert_eq!(items[1]["decision"], true, "{body}");
+        let decisions = recorded_decisions(&st, &base);
+        assert_eq!(
+            decisions.iter().map(|d| d.0).collect::<Vec<_>>(),
+            [false, true]
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Recording a batch settles each decision as it records it: the item whose Mission was
+    /// terminated is recorded and returned as a Deny, the others as evaluated.
+    #[tokio::test]
+    async fn record_decisions_settles_each_decision_as_it_records() {
+        let base = mission_base();
+        let (st, _) =
+            crate::testutil::mission_state_with(&base, crate::testutil::live_agent1_model());
+        register_mission(&st, "m-batch");
+        let plain: DecideReq = serde_json::from_value(json!({
+            "subject": {"type": "Principal", "id": "agent1"},
+            "action": {"name": "Read"},
+            "resource": {"type": "Resource", "id": "claim1"},
+        }))
+        .unwrap();
+        let under = evaluated(&st, request_under("m-batch"));
+        let without = evaluated(&st, plain);
+        assert!(under.decision && without.decision);
+        st.missions
+            .terminate("m-batch", now_secs().unwrap())
+            .unwrap();
+        let recorded = crate::record::record_decisions(
+            &st,
+            vec![(under.shard, under.entry), (without.shard, without.entry)],
+        )
+        .unwrap();
+        assert!(
+            !recorded[0].decision && recorded[1].decision,
+            "{recorded:?}"
+        );
+        let decisions = recorded_decisions(&st, &base);
+        assert_eq!(
+            decisions.iter().map(|d| d.0).collect::<Vec<_>>(),
+            [false, true]
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

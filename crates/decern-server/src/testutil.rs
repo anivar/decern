@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use decern_kernel::{Directory, Kernel, Model};
 use decern_ledger::Ledger;
-use decern_store::{FileMissionRegistry, MissionEntry, MissionRegistry};
+use decern_store::{FileMissionRegistry, MissionEntry};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde_json::{Value, json};
 

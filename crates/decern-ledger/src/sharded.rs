@@ -122,6 +122,18 @@ impl ShardedLedger {
     /// sends this one append through [`Self::critical_section`], which reads the history
     /// once and writes spans for the appends after it.
     pub fn append(&self, shard: &str, entry: Entry) -> Result<Record, LedgerError> {
+        self.append_revised(shard, entry, &mut Ok)
+    }
+
+    /// [`Self::append`], with `revise` run on the entry under the shard's lock, just before it
+    /// is sealed: what it returns is what is recorded, and its error records nothing. For a
+    /// check that must hold at the moment the record lands, not when the entry was built.
+    pub fn append_revised(
+        &self,
+        shard: &str,
+        entry: Entry,
+        revise: &mut dyn FnMut(Entry) -> Result<Entry, LedgerError>,
+    ) -> Result<Record, LedgerError> {
         let mut entry = Some(entry);
         let mut sealed: Option<Result<Record, LedgerError>> = None;
         self.store
@@ -132,6 +144,13 @@ impl ShardedLedger {
                 let Some(entry) = entry.take() else {
                     return Ok(None);
                 };
+                let entry = match revise(entry) {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        sealed = Some(Err(e));
+                        return Ok(None);
+                    }
+                };
                 Ok(self.seal_into(shard, cursor, spans, entry, &mut sealed))
             })
             .map_err(store_to_ledger_err)?;
@@ -141,7 +160,8 @@ impl ShardedLedger {
         let Some(entry) = entry else {
             return Err(no_record(shard));
         };
-        let (record, _) = self.critical_section(shard, move |_existing| Ok((Some(entry), ())))?;
+        let (record, _) =
+            self.critical_section(shard, move |_existing| revise(entry).map(|e| (Some(e), ())))?;
         // `critical_section`'s closure above always returns `Some(entry)`, so
         // `append` never legitimately produces `None` — a `None` here would
         // mean the store silently dropped a write, which is exactly the
@@ -763,6 +783,119 @@ mod tests {
         fn list_shards(&self) -> Result<Vec<String>, StoreError> {
             self.inner.list_shards()
         }
+    }
+
+    /// A store that knows when a section of its own is open, so a revision can show it ran
+    /// inside one.
+    #[derive(Default)]
+    struct GuardedStore {
+        inner: MemoryLedgerHeadStore,
+        inside: std::sync::atomic::AtomicBool,
+    }
+
+    impl LedgerHeadStore for GuardedStore {
+        fn with_shard(
+            &self,
+            shard: &str,
+            f: &mut decern_store::ShardCriticalSection<'_>,
+        ) -> Result<(), StoreError> {
+            self.inside.store(true, std::sync::atomic::Ordering::SeqCst);
+            let r = self.inner.with_shard(shard, f);
+            self.inside
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            r
+        }
+
+        fn with_shard_head(
+            &self,
+            shard: &str,
+            f: &mut decern_store::HeadCriticalSection<'_>,
+        ) -> Result<(), StoreError> {
+            self.inside.store(true, std::sync::atomic::Ordering::SeqCst);
+            let r = self.inner.with_shard_head(shard, f);
+            self.inside
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            r
+        }
+
+        fn list_shards(&self) -> Result<Vec<String>, StoreError> {
+            self.inner.list_shards()
+        }
+    }
+
+    /// The revision runs inside the store's section, on the head-only path and the history
+    /// path alike: what it checks holds at the moment the record lands.
+    #[test]
+    fn a_revision_runs_inside_the_shards_section_on_either_path() {
+        let store = Arc::new(GuardedStore::default());
+        let key = decern_crypto::generate().unwrap();
+        let ledger = ShardedLedger::new(store.clone(), key.clone(), Vec::new());
+        let mut inside = {
+            let store = Arc::clone(&store);
+            move |e: Entry| {
+                assert!(
+                    store.inside.load(std::sync::atomic::Ordering::SeqCst),
+                    "the revision ran outside the shard's section"
+                );
+                Ok(e)
+            }
+        };
+        ledger
+            .append_revised("acme", entry("Read", "r1"), &mut inside)
+            .unwrap();
+        append_crafted(&*store, "acme", &key, true);
+        ledger
+            .append_revised("acme", entry("Read", "r2"), &mut inside)
+            .unwrap();
+    }
+
+    /// What `revise` returns under the lock is what is recorded, on the head-only path and on
+    /// the history path a cursor without current spans takes; its error records nothing.
+    #[test]
+    fn an_append_records_what_revise_returns_under_the_lock_or_nothing() {
+        let store: Arc<dyn LedgerHeadStore> = Arc::new(MemoryLedgerHeadStore::new());
+        let key = decern_crypto::generate().unwrap();
+        let ledger = ShardedLedger::new(store.clone(), key.clone(), Vec::new());
+        let flip = &mut |mut e: Entry| {
+            e.decision = false;
+            e.reasons.push("revised".into());
+            Ok(e)
+        };
+        let refuse = &mut |_: Entry| {
+            Err(LedgerError::Io {
+                path: "registry".into(),
+                err: "unavailable".into(),
+            })
+        };
+        // Head-only path: the first append has current spans.
+        let r = ledger
+            .append_revised("acme", entry("Read", "r1"), flip)
+            .unwrap();
+        assert!(!r.entry.decision && r.entry.reasons == ["revised"]);
+        assert!(
+            ledger
+                .append_revised("acme", entry("Read", "r2"), refuse)
+                .is_err()
+        );
+        // History path: a writer that keeps no spans leaves them behind.
+        append_crafted(&*store, "acme", &key, true);
+        let r = ledger
+            .append_revised("acme", entry("Read", "r3"), flip)
+            .unwrap();
+        assert!(!r.entry.decision && r.entry.reasons == ["revised"]);
+        append_crafted(&*store, "acme", &key, true);
+        assert!(
+            ledger
+                .append_revised("acme", entry("Read", "r4"), refuse)
+                .is_err()
+        );
+        let (_, records) = ledger
+            .critical_section("acme", |existing| Ok((None, existing.len())))
+            .unwrap();
+        assert_eq!(
+            records, 4,
+            "two revised appends and two crafted: nothing from a refusal"
+        );
     }
 
     /// An append reads the shard's head alone while the cursor's spans are current, and the

@@ -6,7 +6,7 @@
 use crate::caller;
 use decern_kernel::{Kernel, Model};
 use decern_ledger::{Ledger, ShardedLedger};
-use decern_store::FileMissionRegistry;
+use decern_store::MissionRegistry;
 use ed25519_dalek::VerifyingKey;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -42,7 +42,7 @@ pub(crate) struct AppState {
     pub(crate) public_url: Option<Arc<str>>,
     /// The durable record of approved Missions. Held so a mission's termination
     /// outlives any single in-memory handle and is seen across processes.
-    pub(crate) missions: Arc<FileMissionRegistry>,
+    pub(crate) missions: Arc<dyn MissionRegistry>,
     pub(crate) pubkey: VerifyingKey,
     /// Ledger keys this deployment rotated away from (`--retired-key`), in the order given.
     pub(crate) retired_keys: Arc<Vec<VerifyingKey>>,

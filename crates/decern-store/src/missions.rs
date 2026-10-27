@@ -143,10 +143,12 @@ impl MissionRegistry for MemoryMissionRegistry {
 
     fn terminate(&self, s256: &str, now: u64) -> Result<(), StoreError> {
         let mut g = self.inner.lock().map_err(poisoned)?;
-        g.retain(|_, e| mission_entry_retained(e, now));
+        // Marked before the sweep: a Mission terminated at or past its expiry keeps its
+        // tombstone, where the sweep first would prune it and leave no termination on record.
         if let Some(e) = g.get_mut(s256) {
             e.terminated = true;
         }
+        g.retain(|_, e| mission_entry_retained(e, now));
         Ok(())
     }
 }
@@ -179,7 +181,7 @@ impl MissionRegistry for FileMissionRegistry {
 
     fn terminate(&self, s256: &str, now: u64) -> Result<(), StoreError> {
         self.inner.write(|map| {
-            map.retain(|_, e| mission_entry_retained(e, now));
+            // Marked before the sweep, as the volatile registry does.
             let dirty = match map.get_mut(s256) {
                 Some(e) if !e.terminated => {
                     e.terminated = true;
@@ -187,6 +189,7 @@ impl MissionRegistry for FileMissionRegistry {
                 }
                 _ => false,
             };
+            map.retain(|_, e| mission_entry_retained(e, now));
             ((), dirty)
         })
     }
@@ -195,6 +198,35 @@ impl MissionRegistry for FileMissionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Mission terminated at or past its expiry keeps its termination on record, in both
+    /// registries: the sweep that prunes an expired Mission runs after the mark, so a decision
+    /// settled against the registry afterwards finds it terminated, not gone.
+    #[test]
+    fn a_mission_terminated_at_its_expiry_keeps_its_tombstone() {
+        let dir = crate::testing::tmp("terminate-at-expiry");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = FileMissionRegistry::open(dir.join("missions.json")).unwrap();
+        let registries: [&dyn MissionRegistry; 2] = [&MemoryMissionRegistry::default(), &file];
+        for registry in registries {
+            let entry = MissionEntry {
+                approver: "corp".into(),
+                expiry: 100,
+                terminated: false,
+                agent: "agent1".into(),
+                approved_tools: vec!["read".into()],
+            };
+            registry.register("m", entry, 50).unwrap();
+            registry.terminate("m", 150).unwrap();
+            let after = registry.status("m").unwrap();
+            assert!(
+                after.as_ref().is_some_and(|e| e.terminated),
+                "terminated at expiry, then read as {after:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use crate::testing::tmp;
 
     // --------------------------- mission registry ---------------------------

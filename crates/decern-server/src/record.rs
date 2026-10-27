@@ -8,6 +8,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use decern_kernel::Directory;
 use decern_ledger::{Entry, LedgerError, UNATTRIBUTED_SHARD};
+use decern_store::MissionRegistry;
 use serde_json::{Value, json};
 
 use crate::LedgerBackend;
@@ -128,35 +129,108 @@ pub(crate) async fn healthz(
 /// transition — a decision OR a Mission lifecycle event — is ever reported as succeeded
 /// unless its record landed.
 pub(crate) fn record_or_503(append: impl FnOnce() -> Result<(), LedgerError>) -> Option<Response> {
-    match append() {
-        Ok(()) => None,
-        Err(e) => Some(
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(
-                    json!({ "error": "not recorded; refusing to serve", "detail": e.to_string() }),
-                ),
-            )
-                .into_response(),
-        ),
+    append().err().map(not_recorded)
+}
+
+/// The 503 for a record that did not land: nothing it would have served is served.
+pub(crate) fn not_recorded(e: LedgerError) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({ "error": "not recorded; refusing to serve", "detail": e.to_string() })),
+    )
+        .into_response()
+}
+
+/// Serve a decision ONLY if its audit record was written, and serve it as recorded: the
+/// entry `record` lands is the one answered, with `errors` from evaluating it. A record that
+/// does not land is a 503, never a bare allow.
+pub(crate) fn record_and_respond(
+    errors: Vec<String>,
+    record: impl FnOnce() -> Result<Entry, LedgerError>,
+) -> Response {
+    match record() {
+        Err(e) => not_recorded(e),
+        Ok(entry) => (
+            StatusCode::OK,
+            Json(evaluation_body(entry.decision, &entry.reasons, &errors)),
+        )
+            .into_response(),
     }
 }
 
-/// Serve a decision ONLY if its audit record was written. An append failure returns 503 —
-/// a decision that cannot be recorded is never served.
-pub(crate) fn record_and_respond(
-    decision: bool,
-    reasons: Vec<String>,
-    errors: Vec<String>,
-    append: impl FnOnce() -> Result<(), LedgerError>,
-) -> Response {
-    match record_or_503(append) {
-        Some(unavailable) => unavailable,
-        None => (
-            StatusCode::OK,
-            Json(evaluation_body(decision, &reasons, &errors)),
-        )
-            .into_response(),
+/// Settle a decision under the ledger's lock, just before its record lands. An Allow under a
+/// Mission is checked once more against the registry: one whose Mission was terminated since
+/// the decision was bound is recorded, and served, as a Deny with that reason, so on this
+/// host no Allow under a Mission follows the Mission's termination in the ledger. A Mission
+/// the registry no longer holds was pruned as expired by a later write; its expiry at the
+/// decision's time was checked when it was bound, so the decision stands. A registry that
+/// cannot be read records nothing.
+fn settle(missions: &dyn MissionRegistry, mut entry: Entry) -> Result<Entry, LedgerError> {
+    let Some(s256) = entry
+        .mission
+        .as_ref()
+        .filter(|_| entry.decision)
+        .map(|m| m.s256.clone())
+    else {
+        return Ok(entry);
+    };
+    let status = missions.status(&s256).map_err(|e| LedgerError::Io {
+        path: "mission registry".into(),
+        err: e.to_string(),
+    })?;
+    if status.is_some_and(|m| m.terminated) {
+        entry.decision = false;
+        entry.reasons = vec![format!(
+            "mission {s256} was terminated before this decision was recorded"
+        )];
+    }
+    Ok(entry)
+}
+
+/// Record one decision, settled under the lock, and return it as recorded.
+pub(crate) fn record_decision(
+    st: &crate::AppState,
+    shard: Shard,
+    entry: Entry,
+) -> Result<Entry, LedgerError> {
+    match &*st.backend {
+        LedgerBackend::Single(m) => {
+            let mut g = m.lock().map_err(|_| poisoned())?;
+            let entry = settle(&*st.missions, entry)?;
+            g.append(entry).map(|r| r.entry)
+        }
+        LedgerBackend::Sharded(s) => {
+            let shard = resolved(shard)?;
+            s.append_revised(&shard, entry, &mut |e| settle(&*st.missions, e))
+                .map(|r| r.entry)
+        }
+    }
+}
+
+/// Record a batch's decisions, each settled under the lock, and return them as recorded, in
+/// order. On the single-file backend the batch is one durable step under one lock — one sync
+/// for the exchange, not one per decision — so a thousand decisions cannot hold the ledger
+/// for a thousand fsyncs. On the sharded backend each entry is its own append under its
+/// shard's lock, since entries may span shards. Either way nothing is served until every
+/// entry has landed.
+pub(crate) fn record_decisions(
+    st: &crate::AppState,
+    decided: Vec<(Shard, Entry)>,
+) -> Result<Vec<Entry>, LedgerError> {
+    match &*st.backend {
+        LedgerBackend::Single(m) => {
+            let mut g = m.lock().map_err(|_| poisoned())?;
+            let entries = decided
+                .into_iter()
+                .map(|(_, e)| settle(&*st.missions, e))
+                .collect::<Result<Vec<_>, _>>()?;
+            g.append_all(entries)
+                .map(|records| records.into_iter().map(|r| r.entry).collect())
+        }
+        LedgerBackend::Sharded(_) => decided
+            .into_iter()
+            .map(|(shard, e)| record_decision(st, shard, e))
+            .collect(),
     }
 }
 
@@ -184,40 +258,21 @@ pub(crate) fn append_to_backend(
             Ok(mut g) => g.append(entry).map(|_| ()),
             Err(_) => Err(poisoned()),
         },
-        LedgerBackend::Sharded(s) => {
-            let resolver_err = |err: String| LedgerError::Io {
-                path: "<sharded ledger, shard resolver>".into(),
-                err,
-            };
-            let shard = match shard {
-                Some(Ok(shard)) => shard,
-                Some(Err(err)) => return Err(resolver_err(err)),
-                None => return Err(resolver_err("shard unresolved for sharded backend".into())),
-            };
-            s.append(&shard, entry).map(|_| ())
-        }
+        LedgerBackend::Sharded(s) => s.append(&resolved(shard)?, entry).map(|_| ()),
     }
 }
 
-/// Append every entry of a batch, fail-closed. On the single-file backend the batch is
-/// one durable step under one lock — one sync for the exchange, not one per decision —
-/// so a thousand decisions cannot hold the ledger for a thousand fsyncs. On the sharded
-/// backend each entry is its own append under its shard's lock, since entries may span
-/// shards. Either way nothing is served until every entry has landed.
-pub(crate) fn append_all_to_backend(
-    backend: &LedgerBackend,
-    entries: Vec<(Shard, Entry)>,
-) -> Result<(), LedgerError> {
-    match backend {
-        LedgerBackend::Single(m) => match m.lock() {
-            Ok(mut g) => g
-                .append_all(entries.into_iter().map(|(_, entry)| entry).collect())
-                .map(|_| ()),
-            Err(_) => Err(poisoned()),
-        },
-        LedgerBackend::Sharded(_) => entries
-            .into_iter()
-            .try_for_each(|(shard, entry)| append_to_backend(backend, shard, entry)),
+/// The shard an entry goes to on the sharded backend: a resolver error, or the impossible
+/// `None`, is a ledger error, so a 503 rather than a panic or a misfiled record.
+fn resolved(shard: Shard) -> Result<String, LedgerError> {
+    let resolver_err = |err: String| LedgerError::Io {
+        path: "<sharded ledger, shard resolver>".into(),
+        err,
+    };
+    match shard {
+        Some(Ok(shard)) => Ok(shard),
+        Some(Err(err)) => Err(resolver_err(err)),
+        None => Err(resolver_err("shard unresolved for sharded backend".into())),
     }
 }
 
@@ -257,15 +312,18 @@ mod tests {
     #[test]
     fn unrecordable_decision_returns_503_never_the_allow() {
         // A proven Allow whose audit record fails to write is not served.
-        let resp = record_and_respond(true, vec!["policy0".into()], vec![], || {
-            Err(LedgerError::Serde("disk wedged".into()))
-        });
+        let resp = record_and_respond(vec![], || Err(LedgerError::Serde("disk wedged".into())));
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[test]
     fn recorded_decision_is_served_200() {
-        let resp = record_and_respond(true, vec![], vec![], || Ok(()));
+        let resp = record_and_respond(vec![], || {
+            Ok(Entry {
+                decision: true,
+                ..Default::default()
+            })
+        });
         assert_eq!(resp.status(), StatusCode::OK);
     }
 

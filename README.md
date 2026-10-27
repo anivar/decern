@@ -177,7 +177,8 @@ backs a decision only in its approver's tenant, and only while the approver, in 
 server runs, is unrevoked, unexpired and holds the scope the decision needs; that model is fixed
 at boot, so a revocation reaches existing Missions at the next restart. Every accepted transition
 is recorded before it is reported; on Unix a terminated Mission never revives on the host
-that terminated it. The registry is a durable local file, consulted in-perimeter with no phone-home,
+that terminated it, and no Allow under it is recorded there after its termination: a decision
+bound to the Mission before and recorded after is recorded, and answered, as a Deny saying so. The registry is a durable local file, consulted in-perimeter with no phone-home,
 and the processes that open one file share it; under `--sharded postgres://…` a replica on
 another host has its own, so a Mission approved or terminated on one host is unknown to, or
 still live on, the others: send a Mission's requests and its termination to the host that holds
