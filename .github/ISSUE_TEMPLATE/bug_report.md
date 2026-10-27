@@ -13,7 +13,7 @@ labels: bug
 ```
 ```
 
-**Affected crate / area** (if known — see [ARCHITECTURE.md](../../ARCHITECTURE.md))
+**Affected crate / area** (if known — see [ARCHITECTURE.md](https://github.com/anivar/decern/blob/main/ARCHITECTURE.md))
 
 **Environment** — OS, `rustc --version`, cvc5 version (if a proof is involved), `--features postgres`?
 

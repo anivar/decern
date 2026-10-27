@@ -5,7 +5,7 @@ labels: help wanted
 ---
 
 **What you'd like to pick up** (link a `help wanted` issue, or name an area from
-[ARCHITECTURE.md → Where to start](../../ARCHITECTURE.md#where-to-start-contributing))
+[ARCHITECTURE.md → Where to start](https://github.com/anivar/decern/blob/main/ARCHITECTURE.md#where-to-start-contributing))
 
 **Your sketch of the approach** — a few lines is enough; this is the "discuss first" step so we can
 point you at the right crate/trait before you write code.

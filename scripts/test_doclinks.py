@@ -27,11 +27,15 @@ class Broken(unittest.TestCase):
     def tearDown(self) -> None:
         self._dir.cleanup()
 
-    def misses(self, text: str, at: str = "README.md") -> list[str]:
+    def present(self) -> set[str]:
+        """Every path in the tree, named as the directory lists it."""
+        return {p.relative_to(self.root).as_posix() for p in self.root.rglob("*")}
+
+    def misses(self, text: str, at: str = "README.md", present: set[str] | None = None) -> list[str]:
         md = self.root / at
         md.parent.mkdir(parents=True, exist_ok=True)
         md.write_text(text)
-        return doclinks.broken(md, self.root)
+        return doclinks.broken(md, self.root, self.present() if present is None else present)
 
     def test_a_link_to_a_missing_file_is_reported_with_its_line(self) -> None:
         self.assertEqual(
@@ -73,6 +77,49 @@ class Broken(unittest.TestCase):
             "[after](missing.md)\n"
         )
         self.assertEqual(self.misses(text), ["README.md:9: missing.md"])
+
+    def test_a_fence_closes_only_on_its_own_character_at_its_length_or_longer(self) -> None:
+        text = (
+            "~~~\n````\n[in](missing.md)\n~~~\n"
+            "````\n```\n[in](missing.md)\n````\n"
+            "[after](missing.md)\n"
+        )
+        self.assertEqual(self.misses(text), ["README.md:9: missing.md"])
+
+    def test_a_root_relative_link_resolves_from_the_root_in_any_directory(self) -> None:
+        self.assertEqual(self.misses("[r](/img.png)\n", at="docs/page.md"), [])
+
+    def test_a_changelog_fragment_resolves_from_the_root_its_entry_is_copied_to(self) -> None:
+        at = "changelog.d/fixed-thing.md"
+        self.assertEqual(self.misses("[g](docs/guide.md)\n", at=at), [])
+        self.assertIn("outside", self.misses("[g](../docs/guide.md)\n", at=at)[0])
+        self.assertEqual(self.misses("[g](../docs/guide.md)\n", at="changelog.d/README.md"), [])
+
+    def test_a_path_present_on_disk_but_not_to_git_does_not_satisfy_a_link(self) -> None:
+        self.assertEqual(
+            self.misses("[g](docs/Guide.md)\n"),
+            ["README.md:1: docs/Guide.md"],
+            "a case-insensitive disk finds docs/guide.md; git does not",
+        )
+        unlisted = self.present() - {"img.png"}
+        self.assertEqual(self.misses("[i](img.png)\n", present=unlisted), ["README.md:1: img.png"])
+
+    def test_footnotes_and_link_titles_are_read_as_markdown_has_them(self) -> None:
+        text = "[^1]: some note\n[a](docs/guide.md 'T') [b](docs/guide.md (T)) [c](gone.md 'T')\n"
+        self.assertEqual(self.misses(text), ["README.md:2: gone.md"])
+
+    def test_a_template_under_github_links_by_url(self) -> None:
+        at = ".github/ISSUE_TEMPLATE/bug.md"
+        self.assertIn("link by URL", self.misses("[a](../../docs/guide.md)\n", at=at)[0])
+        url = "[a](https://github.com/o/r/blob/main/docs/guide.md)\n"
+        self.assertEqual(self.misses(url, at=at), [])
+
+    def test_a_tracked_file_missing_from_the_working_tree_is_reported(self) -> None:
+        gone = self.root / "docs" / "moved.md"
+        self.assertEqual(
+            doclinks.check([gone], self.root, self.present()),
+            ["docs/moved.md: tracked, but missing from the working tree"],
+        )
 
     def test_a_target_outside_the_repository_is_reported(self) -> None:
         misses = self.misses("[out](../../etc/hosts)\n")
