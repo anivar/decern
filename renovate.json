@@ -2,5 +2,28 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "description": "A major version is a change to read, not a PR to wave through: it waits for approval on the Dependency Dashboard, as .github/dependabot.yml leaves majors to a person.",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "cedar-policy-symcc pins cedar-policy exactly and the proofs are built against one Cedar version, so the Cedar crates move as one change, approved on the Dependency Dashboard and proved in CI.",
+      "matchPackageNames": [
+        "cedar-policy",
+        "cedar-policy-core",
+        "cedar-policy-formatter",
+        "cedar-policy-symcc"
+      ],
+      "groupName": "Cedar",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "An SDK's dependency bump is not release-notes material, so the changelog gate is told so up front.",
+      "matchFileNames": ["sdks/**"],
+      "addLabels": ["dependencies", "no-changelog"]
+    }
   ]
 }
