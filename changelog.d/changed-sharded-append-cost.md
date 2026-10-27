@@ -8,7 +8,8 @@
   records; the in-memory store takes 17 µs, so nearly all of it is the file store's disk writes.
   A record edited so it no longer parses as JSON is no longer refused by the next append to its
   shard; the next boot's check of every shard and `decern verify --sharded` find it, as they find
-  any edit to a record.
+  any edit to a record. An append does refuse a log an edit has left with its committed length
+  inside a record, rather than cut a committed record there.
   A file store written by an earlier release is read as it is, and each shard is converted at its
   next append. Every shard this release creates carries, from before its first record, a marker
   an earlier release cannot read, and every shard it converts gets one as the conversion
@@ -19,6 +20,6 @@
   A Postgres store gains a nullable `signers` column. The first boot of this release adds it,
   which needs the role that owns `decern_ledger_head`, and gives up after 5 seconds behind
   another session holding the table, naming the statement to run; later boots only check for it.
-  An earlier release still writing to the store leaves the column behind, and the next append then
-  reads the history instead of trusting it.
+  An earlier release still writing to the store leaves the column out of date, and the next append
+  then reads the history instead of trusting it.
   Authored by @anivar.

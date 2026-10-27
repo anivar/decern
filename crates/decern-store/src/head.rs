@@ -18,7 +18,7 @@ use crate::fsio::{atomic_write_json, io, poisoned, with_write_lock};
 /// `__system__` shard for entries with no resolvable tenant) — the same
 /// `(prev_hash) -> hash` chaining `decern_ledger::Ledger` uses on a single node, now
 /// keyed so more than one `decern-server` replica can safely extend the SAME chain.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HeadCursor {
     /// The next sequence number this shard will assign.
     pub next_seq: u64,
@@ -34,7 +34,7 @@ pub struct HeadCursor {
 /// The keys that have signed a shard, each from the first record it signed, as of
 /// `through` records. A reader trusts them only while `through` equals the cursor's
 /// `next_seq`: a writer that does not keep them advances the cursor and leaves them behind.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ShardSigners {
     pub through: u64,
     pub spans: Vec<KeySpan>,
@@ -280,7 +280,7 @@ fn shard_from_hex(stem: &str) -> Result<String, StoreError> {
 /// A shard as releases before the cursor-and-log layout stored it: its cursor and full
 /// record history, in one JSON object per `<hex-shard>.shard` file. Read as it is, and
 /// converted on the shard's next append.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct LegacyShard {
     cursor: Option<HeadCursor>,
     records: Vec<StoredRecord>,
@@ -288,7 +288,9 @@ struct LegacyShard {
 
 /// What every shard in this layout keeps at its `.shard` path, written before its first
 /// record and when an earlier-layout shard is converted: a file a release that reads only the
-/// old layout fails to parse, so it refuses the store rather than read the shard as empty.
+/// old layout fails to parse, so it refuses the store rather than read the shard as empty. It is
+/// known by its shape, `records` a string where the old layout keeps a list, so its wording can
+/// change.
 #[derive(Serialize)]
 struct MovedMarker {
     records: &'static str,
@@ -406,15 +408,13 @@ enum Beside {
 /// Read a shard's `.shard` path. A file that is neither the marker nor an earlier-layout
 /// shard fails closed.
 fn read_beside(path: &Path) -> Result<Beside, StoreError> {
-    let bytes = match fs::read(path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Beside::Missing),
-        Err(e) => return Err(io(path, e)),
+    let Some(bytes) = read_if_present(path)? else {
+        return Ok(Beside::Missing);
     };
     let marker = serde_json::from_slice::<serde_json::Value>(&bytes)
         .ok()
-        .and_then(|v| v.get("records")?.as_str().map(|r| r == MOVED.records));
-    if marker == Some(true) {
+        .is_some_and(|v| v.get("records").is_some_and(serde_json::Value::is_string));
+    if marker {
         return Ok(Beside::Marker);
     }
     let state: LegacyShard = serde_json::from_slice(&bytes)
@@ -434,35 +434,40 @@ fn read_beside(path: &Path) -> Result<Beside, StoreError> {
 
 /// The shard's head, or `None` when it has not been written in this layout.
 fn read_head(path: &Path) -> Result<Option<FileHead>, StoreError> {
+    read_if_present(path)?
+        .map(|bytes| {
+            serde_json::from_slice(&bytes)
+                .map_err(|e| StoreError::Serde(format!("shard head {}: {e}", path.display())))
+        })
+        .transpose()
+}
+
+/// A file's bytes, or `None` when it does not exist.
+fn read_if_present(path: &Path) -> Result<Option<Vec<u8>>, StoreError> {
     match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|e| StoreError::Serde(format!("shard head {}: {e}", path.display()))),
+        Ok(bytes) => Ok(Some(bytes)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io(path, e)),
     }
+}
+
+/// A log shorter than the length its head committed.
+fn short_log(path: &Path, len: u64, committed: u64) -> StoreError {
+    StoreError::Invalid(format!(
+        "shard log {} holds {len} bytes, fewer than the {committed} committed",
+        path.display()
+    ))
 }
 
 /// The committed records of a shard's log: its first `head.log_len` bytes, one record a
 /// line, exactly `head.cursor.next_seq` of them. Bytes past the committed length are an
 /// append that never committed and are not read.
 fn read_log(path: &Path, head: &FileHead) -> Result<Vec<StoredRecord>, StoreError> {
-    let bytes = match fs::read(path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(io(path, e)),
-    };
+    let bytes = read_if_present(path)?.unwrap_or_default();
     let committed = usize::try_from(head.log_len)
         .ok()
         .filter(|&n| n <= bytes.len())
-        .ok_or_else(|| {
-            StoreError::Invalid(format!(
-                "shard log {} holds {} bytes, fewer than the {} committed",
-                path.display(),
-                bytes.len(),
-                head.log_len
-            ))
-        })?;
+        .ok_or_else(|| short_log(path, bytes.len() as u64, head.log_len))?;
     let text = std::str::from_utf8(&bytes[..committed])
         .map_err(|e| StoreError::Invalid(format!("shard log {}: {e}", path.display())))?;
     let records: Vec<StoredRecord> = text
@@ -487,9 +492,9 @@ fn read_log(path: &Path, head: &FileHead) -> Result<Vec<StoredRecord>, StoreErro
 /// Append `lines` to the log after its first `committed` bytes, dropping any tail past them,
 /// and sync it. Returns the log's new committed length, for the head to record.
 fn append_log(path: &Path, committed: u64, lines: &[String]) -> Result<u64, StoreError> {
-    use std::io::{Seek, SeekFrom, Write};
+    use std::io::{Read, Seek, SeekFrom, Write};
     let mut options = fs::OpenOptions::new();
-    options.create(true).truncate(false).write(true);
+    options.create(true).truncate(false).read(true).write(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -498,10 +503,22 @@ fn append_log(path: &Path, committed: u64, lines: &[String]) -> Result<u64, Stor
     let mut file = options.open(path).map_err(|e| io(path, e))?;
     let len = file.metadata().map_err(|e| io(path, e))?.len();
     if len < committed {
-        return Err(StoreError::Invalid(format!(
-            "shard log {} holds {len} bytes, fewer than the {committed} committed",
-            path.display()
-        )));
+        return Err(short_log(path, len, committed));
+    }
+    // What committed ends a record. A log whose committed length falls inside a line was edited
+    // after it committed, and cutting it there would destroy a committed record.
+    if committed > 0 {
+        let mut last = [0u8; 1];
+        file.seek(SeekFrom::Start(committed - 1))
+            .and_then(|_| file.read_exact(&mut last))
+            .map_err(|e| io(path, e))?;
+        if last != *b"\n" {
+            return Err(StoreError::Invalid(format!(
+                "shard log {} does not end a record at its committed length {committed}; it was \
+                 edited after it committed",
+                path.display()
+            )));
+        }
     }
     if len > committed {
         file.set_len(committed).map_err(|e| io(path, e))?;
@@ -621,8 +638,8 @@ impl FileLedgerHeadStore {
     /// Commit `record_json` as the record before `new_cursor`. Every step is written so a
     /// crash after it leaves a shard that reads as it did before the step or after the append:
     ///
-    /// - a shard with a head: the line is appended past the committed length, then the head
-    ///   moves, then the marker is written if its `.shard` path does not hold it;
+    /// - a shard with a head: the marker, if its `.shard` path does not hold it, then the line
+    ///   past the committed length, then the head;
     /// - an earlier-layout shard: its records and the line are written to the log, then the
     ///   head, then the marker over the `.shard` file;
     /// - a new shard: the marker, then a head with no cursor, then the line, then the head.
@@ -635,8 +652,16 @@ impl FileLedgerHeadStore {
     ) -> Result<(), StoreError> {
         let Loaded { head, beside, .. } = loaded;
         let marked = matches!(beside, Beside::Marker);
-        let (committed, mut lines, mark_after) = match (head, beside) {
-            (Some(h), _) => (h.log_len, Vec::new(), !marked),
+        let (committed, mut lines, converting) = match (head, beside) {
+            // A file beside the head holds only records the log does, as `load` checked, so the
+            // marker replaces it first: a marker that cannot be written fails the append before
+            // it commits.
+            (Some(h), _) => {
+                if !marked {
+                    atomic_write_json(&files.shard_file, &MOVED)?;
+                }
+                (h.log_len, Vec::new(), false)
+            }
             (None, Beside::Earlier(old)) if old.cursor.is_some() => (
                 0,
                 old.records.into_iter().map(|r| r.record_json).collect(),
@@ -661,7 +686,9 @@ impl FileLedgerHeadStore {
                 log_len,
             },
         )?;
-        if mark_after {
+        // A conversion marks the shard last: until its head is written, the earlier-layout file
+        // is the shard's only commit record.
+        if converting {
             atomic_write_json(&files.shard_file, &MOVED)?;
         }
         Ok(())
@@ -1063,11 +1090,21 @@ mod tests {
     }
 
     fn append(s: &dyn LedgerHeadStore, shard: &str, line: &str) {
+        try_append(s, shard, line).unwrap();
+    }
+
+    fn try_append(s: &dyn LedgerHeadStore, shard: &str, line: &str) -> Result<(), StoreError> {
         s.with_shard_head(shard, &mut |c| {
             let next = c.map(|c| c.next_seq).unwrap_or(0) + 1;
             Ok(Some((cursor(next, &format!("h{next}")), line.into())))
         })
-        .unwrap();
+    }
+
+    /// Make a write to `path` fail, as a full or failing disk would, by pointing it into a
+    /// directory that does not exist.
+    #[cfg(unix)]
+    fn block(path: &Path) {
+        std::os::unix::fs::symlink(path.with_file_name("absent").join("file"), path).unwrap();
     }
 
     fn history(s: &dyn LedgerHeadStore, shard: &str) -> (Option<HeadCursor>, Vec<String>) {
@@ -1325,6 +1362,101 @@ mod tests {
         let logs = ["done", "mid", "fresh"]
             .map(|shard| s.files(shard).unwrap().log.file_name().unwrap().to_owned());
         assert_eq!(s.list_named(logs.to_vec()).unwrap(), ["done", "mid"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A log edited after it committed, so its committed length no longer ends a record, is
+    /// refused by the next append rather than cut there, which would destroy a committed
+    /// record; the log is left as it was.
+    #[test]
+    fn an_append_refuses_a_log_edited_inside_its_committed_length() {
+        let dir = tmp_dir("edited-log");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        append(&s, "acme", "line-0");
+        append(&s, "acme", "line-1");
+        fs::write(&files.log, "line-0XX\nline-1\n").unwrap();
+        let e = try_append(&s, "acme", "line-2").unwrap_err().to_string();
+        assert!(e.contains("does not end a record"), "{e}");
+        assert_eq!(fs::read(&files.log).unwrap(), b"line-0XX\nline-1\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The marker is known by its shape, so a marker worded otherwise still marks the shard.
+    #[test]
+    fn a_marker_is_known_by_its_shape() {
+        let dir = tmp_dir("marker-shape");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        fs::write(&files.shard_file, r#"{"records":"moved, in other words"}"#).unwrap();
+        assert!(marked(&files.shard_file));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A new shard is marked and given a head with no cursor before its log is written, so an
+    /// append that fails writing the log leaves a shard an earlier release refuses and this one
+    /// reads as empty, and the next append succeeds.
+    #[cfg(unix)]
+    #[test]
+    fn a_new_shard_is_marked_and_headed_before_its_log() {
+        let dir = tmp_dir("new-order");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        block(&files.log);
+        assert!(try_append(&s, "acme", "line-0").is_err());
+        assert!(marked(&files.shard_file));
+        assert!(matches!(
+            read_head(&files.head).unwrap(),
+            Some(FileHead { cursor: None, .. })
+        ));
+        fs::remove_file(&files.log).unwrap();
+        append(&s, "acme", "line-0");
+        assert_eq!(history(&s, "acme").1, ["line-0"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A conversion writes its log and head before the marker, so an append that fails writing
+    /// the log leaves the earlier-layout shard as it was, listed and read, and the next append
+    /// converts it.
+    #[cfg(unix)]
+    #[test]
+    fn a_conversion_writes_its_log_and_head_before_the_marker() {
+        let dir = tmp_dir("convert-order");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        fs::write(&files.shard_file, earlier(&["line-0", "line-1"])).unwrap();
+        block(&files.log);
+        assert!(try_append(&s, "acme", "line-2").is_err());
+        assert!(!marked(&files.shard_file) && !files.head.exists());
+        assert_eq!(history(&s, "acme").1, ["line-0", "line-1"]);
+        assert_eq!(s.list_shards().unwrap(), ["acme"]);
+        fs::remove_file(&files.log).unwrap();
+        append(&s, "acme", "line-2");
+        assert_eq!(history(&s, "acme").1, ["line-0", "line-1", "line-2"]);
+        assert!(marked(&files.shard_file));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A shard with a head whose marker is missing gets it before the record, so a failure
+    /// writing the record leaves no committed record behind an error, and the marker in place.
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_marker_is_written_before_the_record() {
+        let dir = tmp_dir("marker-first");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        append(&s, "acme", "line-0");
+        fs::remove_file(&files.shard_file).unwrap();
+        let kept = dir.join("kept.log");
+        fs::rename(&files.log, &kept).unwrap();
+        block(&files.log);
+        assert!(try_append(&s, "acme", "line-1").is_err());
+        assert!(marked(&files.shard_file));
+        fs::remove_file(&files.log).unwrap();
+        fs::rename(&kept, &files.log).unwrap();
+        assert_eq!(history(&s, "acme").1, ["line-0"]);
+        append(&s, "acme", "line-1");
+        assert_eq!(history(&s, "acme").1, ["line-0", "line-1"]);
         let _ = fs::remove_dir_all(&dir);
     }
 

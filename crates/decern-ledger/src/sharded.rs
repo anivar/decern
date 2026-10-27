@@ -132,16 +132,7 @@ impl ShardedLedger {
                 let Some(entry) = entry.take() else {
                     return Ok(None);
                 };
-                match self.seal(shard, cursor, spans, entry) {
-                    Ok((record, new_cursor, line)) => {
-                        sealed = Some(Ok(record));
-                        Ok(Some((new_cursor, line)))
-                    }
-                    Err(e) => {
-                        sealed = Some(Err(e));
-                        Ok(None)
-                    }
-                }
+                Ok(self.seal_into(shard, cursor, spans, entry, &mut sealed))
             })
             .map_err(store_to_ledger_err)?;
         if let Some(outcome) = sealed {
@@ -178,7 +169,7 @@ impl ShardedLedger {
         T: Default,
     {
         let mut inner_err: Option<LedgerError> = None;
-        let mut out_record: Option<Record> = None;
+        let mut sealed: Option<Result<Record, LedgerError>> = None;
         let mut out_value: T = T::default();
         // `LedgerHeadStore::with_shard` requires an `FnMut` (the trait can't
         // express "called at most once" through `dyn`) even though every real
@@ -218,23 +209,36 @@ impl ShardedLedger {
                     return Ok(None); // f decided nothing appends (e.g. a deny).
                 };
                 let spans = spans_of(&parsed, &self.verifiers);
-                match self.seal(shard, cursor, spans, entry) {
-                    Ok((record, new_cursor, line)) => {
-                        out_record = Some(record);
-                        Ok(Some((new_cursor, line)))
-                    }
-                    Err(e) => {
-                        inner_err = Some(e);
-                        Ok(None)
-                    }
-                }
+                Ok(self.seal_into(shard, cursor, spans, entry, &mut sealed))
             })
             .map_err(store_to_ledger_err)?;
 
         if let Some(e) = inner_err {
             return Err(e);
         }
-        Ok((out_record, out_value))
+        Ok((sealed.transpose()?, out_value))
+    }
+
+    /// Seal `entry` for the store to commit, keeping the record, or the refusal, in `sealed`
+    /// for the caller: a refusal commits nothing.
+    fn seal_into(
+        &self,
+        shard: &str,
+        cursor: Option<&HeadCursor>,
+        spans: Vec<KeySpan>,
+        entry: Entry,
+        sealed: &mut Option<Result<Record, LedgerError>>,
+    ) -> Option<(HeadCursor, String)> {
+        match self.seal(shard, cursor, spans, entry) {
+            Ok((record, new_cursor, line)) => {
+                *sealed = Some(Ok(record));
+                Some((new_cursor, line))
+            }
+            Err(e) => {
+                *sealed = Some(Err(e));
+                None
+            }
+        }
     }
 
     /// Check that this process's key may extend a shard whose keys took over at `spans`,
@@ -721,6 +725,67 @@ mod tests {
     fn ledger() -> ShardedLedger {
         let key = decern_crypto::generate().unwrap();
         ShardedLedger::new(Arc::new(MemoryLedgerHeadStore::new()), key, Vec::new())
+    }
+
+    /// A store that counts the sections that read a shard's history.
+    #[derive(Default)]
+    struct CountingStore {
+        inner: MemoryLedgerHeadStore,
+        history_reads: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CountingStore {
+        fn history_reads(&self) -> usize {
+            self.history_reads
+                .load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    impl LedgerHeadStore for CountingStore {
+        fn with_shard(
+            &self,
+            shard: &str,
+            f: &mut decern_store::ShardCriticalSection<'_>,
+        ) -> Result<(), StoreError> {
+            self.history_reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.inner.with_shard(shard, f)
+        }
+
+        fn with_shard_head(
+            &self,
+            shard: &str,
+            f: &mut decern_store::HeadCriticalSection<'_>,
+        ) -> Result<(), StoreError> {
+            self.inner.with_shard_head(shard, f)
+        }
+
+        fn list_shards(&self) -> Result<Vec<String>, StoreError> {
+            self.inner.list_shards()
+        }
+    }
+
+    /// An append reads the shard's head alone while the cursor's spans are current, and the
+    /// history once after a writer that keeps no spans has appended.
+    #[test]
+    fn an_append_reads_the_history_only_when_the_spans_are_behind() {
+        let store = Arc::new(CountingStore::default());
+        let key = decern_crypto::generate().unwrap();
+        let ledger = ShardedLedger::new(store.clone(), key.clone(), Vec::new());
+        for r in ["r1", "r2", "r3"] {
+            ledger.append("acme", entry("Read", r)).unwrap();
+        }
+        assert_eq!(store.history_reads(), 0, "an append read the history");
+        append_crafted(&*store, "acme", &key, true);
+        let before = store.history_reads();
+        for r in ["r4", "r5"] {
+            ledger.append("acme", entry("Read", r)).unwrap();
+        }
+        assert_eq!(
+            store.history_reads() - before,
+            1,
+            "spans behind are read once"
+        );
     }
 
     /// Append a record signed by `key` straight into the store, past the append guard: what

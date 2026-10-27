@@ -28,6 +28,21 @@ fn uniq(prefix: &str) -> String {
     format!("test_{prefix}_{nanos}_{thread}")
 }
 
+/// A cursor that keeps no key spans.
+fn cursor_at(next_seq: u64, last_hash: impl Into<String>) -> HeadCursor {
+    HeadCursor {
+        next_seq,
+        last_hash: last_hash.into(),
+        signers: None,
+    }
+}
+
+/// `url` with one more connection parameter.
+fn with_param(url: &str, param: &str) -> String {
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}{param}")
+}
+
 fn test_url() -> Option<String> {
     std::env::var("DECERN_TEST_POSTGRES_URL").ok()
 }
@@ -82,14 +97,7 @@ fn roundtrip_append_advances_cursor_and_persists_across_a_fresh_handle() {
         store
             .with_shard(&shard, &mut |cursor, records| {
                 seen = Some((cursor.cloned(), records.len()));
-                Ok(Some((
-                    HeadCursor {
-                        next_seq: 1,
-                        last_hash: "h0".into(),
-                        signers: None,
-                    },
-                    "line-0".into(),
-                )))
+                Ok(Some((cursor_at(1, "h0"), "line-0".into())))
             })
             .unwrap();
         assert_eq!(seen, Some((None, 0)), "first write sees genesis");
@@ -102,18 +110,7 @@ fn roundtrip_append_advances_cursor_and_persists_across_a_fresh_handle() {
                 Ok(None)
             })
             .unwrap();
-        assert_eq!(
-            after,
-            Some((
-                Some(HeadCursor {
-                    next_seq: 1,
-                    last_hash: "h0".into(),
-                    signers: None
-                }),
-                1,
-                0
-            ))
-        );
+        assert_eq!(after, Some((Some(cursor_at(1, "h0")), 1, 0)));
     }
 
     // A freshly-opened store (a NEW connection) sees the persisted state.
@@ -126,14 +123,7 @@ fn roundtrip_append_advances_cursor_and_persists_across_a_fresh_handle() {
         })
         .unwrap();
     let (cursor, records) = reopened.unwrap();
-    assert_eq!(
-        cursor,
-        Some(HeadCursor {
-            next_seq: 1,
-            last_hash: "h0".into(),
-            signers: None
-        })
-    );
+    assert_eq!(cursor, Some(cursor_at(1, "h0")));
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].seq, 0);
     assert_eq!(records[0].record_json, "line-0");
@@ -183,14 +173,7 @@ fn list_shards_is_sorted_and_only_committed() {
     for (shard, hash) in [(&zeta, "z1"), (&alpha, "a1")] {
         store
             .with_shard(shard, &mut |_, _| {
-                Ok(Some((
-                    HeadCursor {
-                        next_seq: 1,
-                        last_hash: hash.into(),
-                        signers: None,
-                    },
-                    "line".into(),
-                )))
+                Ok(Some((cursor_at(1, hash), "line".into())))
             })
             .unwrap();
     }
@@ -242,11 +225,7 @@ fn two_instances_two_connections_serialize_the_critical_section() {
                             thread::sleep(Duration::from_millis(2));
                             let next_seq = cursor.map(|c| c.next_seq).unwrap_or(0) + 1;
                             Ok(Some((
-                                HeadCursor {
-                                    next_seq,
-                                    last_hash: format!("h{my_index}"),
-                                    signers: None,
-                                },
+                                cursor_at(next_seq, format!("h{my_index}")),
                                 format!("record-{my_index}"),
                             )))
                         })
@@ -323,14 +302,7 @@ fn weird_shard_ids_round_trip_and_list_in_byte_order() {
         store
             .with_shard(shard, &mut |cursor, records| {
                 assert!(cursor.is_none() && records.is_empty(), "fresh shard");
-                Ok(Some((
-                    HeadCursor {
-                        next_seq: 1,
-                        last_hash: "h".into(),
-                        signers: None,
-                    },
-                    "line".into(),
-                )))
+                Ok(Some((cursor_at(1, "h"), "line".into())))
             })
             .unwrap();
     }
@@ -419,9 +391,9 @@ fn a_store_whose_connection_was_closed_answers_each_section_as_an_error() {
     };
     // Names the store's own connection, so only it is closed under tests running in parallel.
     let name = uniq("closed");
-    let sep = if url.contains('?') { '&' } else { '?' };
     let store = Arc::new(
-        PostgresLedgerHeadStore::new(&format!("{url}{sep}application_name={name}")).unwrap(),
+        PostgresLedgerHeadStore::new(&with_param(&url, &format!("application_name={name}")))
+            .unwrap(),
     );
     assert!(matches!(
         section_within(&store, &uniq("before")),
@@ -584,8 +556,7 @@ fn a_boot_that_must_add_the_column_gives_up_behind_a_reader() {
              shard TEXT PRIMARY KEY, next_seq BIGINT NOT NULL, last_hash TEXT NOT NULL);"
     ))
     .unwrap();
-    let sep = if url.contains('?') { '&' } else { '?' };
-    let scoped = format!("{url}{sep}options=-c%20search_path%3D{schema}");
+    let scoped = with_param(&url, &format!("options=-c%20search_path%3D{schema}"));
 
     let mut reader = postgres::Client::connect(&url, postgres::NoTls).unwrap();
     let mut open = reader.transaction().unwrap();
