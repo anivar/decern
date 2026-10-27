@@ -515,6 +515,53 @@ fn key_spans_round_trip_and_the_head_only_section_matches_with_shard() {
 }
 
 /// Open a store, given up after `secs`.
+/// A section that finds the actor's queue full is refused at once, where it would otherwise
+/// wait behind every stalled section (DB-gated). The actor is stalled by another session
+/// holding a shard's advisory lock, as a partitioned replica holds it.
+#[test]
+fn a_full_queue_refuses_a_section_at_once() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    let store = Arc::new(PostgresLedgerHeadStore::with_queue_depth(&url, 1).unwrap());
+    let stalled = uniq("stalled");
+    let mut raw = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    let mut holding = raw.transaction().unwrap();
+    holding
+        .execute(
+            "SELECT pg_advisory_xact_lock($1)",
+            &[&super::advisory_key(&stalled)],
+        )
+        .unwrap();
+
+    let section = |shard: String| {
+        let store = Arc::clone(&store);
+        thread::spawn(move || store.with_shard(&shard, &mut |_, _| Ok(None)))
+    };
+    // The actor takes this job and waits in the database for the lock.
+    let first = section(stalled.clone());
+    thread::sleep(Duration::from_millis(300));
+    // The queue, one deep, holds this one.
+    let second = section(uniq("queued"));
+    thread::sleep(Duration::from_millis(300));
+
+    let refused = {
+        let store = Arc::clone(&store);
+        let shard = uniq("refused");
+        within(5, move || store.with_shard(&shard, &mut |_, _| Ok(None)))
+    }
+    .expect("a section that found the queue full waited behind it");
+    assert!(
+        matches!(&refused, Err(StoreError::Io { err, .. }) if err.contains("queue is full")),
+        "{refused:?}"
+    );
+    assert!(!store.has_failed(), "a full queue is not a failed store");
+
+    holding.rollback().unwrap();
+    assert!(first.join().unwrap().is_ok());
+    assert!(second.join().unwrap().is_ok());
+}
+
 fn open_within(url: &str, secs: u64) -> Option<Result<(), StoreError>> {
     let url = url.to_owned();
     within(secs, move || PostgresLedgerHeadStore::new(&url).map(drop))

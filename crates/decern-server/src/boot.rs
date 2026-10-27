@@ -329,6 +329,9 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
     let state = AppState {
         kernel: Arc::new(kernel),
         model: Arc::new(model),
+        blocking: Arc::new(crate::blocking::Blocking::new(
+            crate::blocking::MAX_BLOCKING,
+        )),
         backend: Arc::new(backend),
         type_aliases: Arc::new(type_aliases),
         public_url,

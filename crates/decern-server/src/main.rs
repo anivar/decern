@@ -11,6 +11,7 @@ mod audit;
 mod authzen_certification;
 mod batch;
 mod bearer;
+mod blocking;
 mod boot;
 mod caller;
 mod challenge;
@@ -44,6 +45,9 @@ fn main() -> Result<()> {
     decern_kernel::with_evaluation_stack("decern-serve", || {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
+            // One thread per place `off_the_executor` hands out, so a request never waits in
+            // this pool's queue: past the places, it is refused at once.
+            .max_blocking_threads(blocking::MAX_BLOCKING)
             .build()
             .context("starting the async runtime")?
             .block_on(serve())

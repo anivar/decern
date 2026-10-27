@@ -53,6 +53,9 @@ fn fixture_state() -> (AppState, TempBase) {
     let st = AppState {
         kernel: Arc::new(Kernel::new(&model).unwrap()),
         model: Arc::new(model),
+        blocking: Arc::new(crate::blocking::Blocking::new(
+            crate::blocking::MAX_BLOCKING,
+        )),
         backend: Arc::new(LedgerBackend::Single(Mutex::new(ledger))),
         type_aliases: Arc::new(aliases),
         public_url: Some(Arc::from(PUBLIC_URL)),

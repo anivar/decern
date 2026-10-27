@@ -32,6 +32,8 @@ pub(crate) struct AppState {
     /// by exactly what a token minted under it would later be bounded by.
     pub(crate) model: Arc<Model>,
     pub(crate) backend: Arc<LedgerBackend>,
+    /// The places on the blocking pool a request takes to be decided, searched or recorded.
+    pub(crate) blocking: Arc<crate::blocking::Blocking>,
     /// Request entity type -> model entity type (`--authzen-type-alias`). Empty means
     /// every request type is taken as written.
     pub(crate) type_aliases: Arc<std::collections::BTreeMap<String, String>>,

@@ -147,7 +147,7 @@ pub(crate) async fn decide(
         Ok(req) => req,
         Err(rejection) => return Refusal::invalid_request(rejection.body_text()).into_response(),
     };
-    crate::record::off_the_executor("decision_unavailable", move || {
+    crate::blocking::off_the_executor(&st.blocking.clone(), "decision_unavailable", move || {
         decide_one(&st, &caller, req)
     })
     .await

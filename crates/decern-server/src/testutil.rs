@@ -105,6 +105,9 @@ pub(crate) fn mission_state_with(base: &Path, model: Model) -> (AppState, Verify
     let st = AppState {
         kernel: Arc::new(Kernel::new(&model).unwrap()),
         model: Arc::new(model),
+        blocking: Arc::new(crate::blocking::Blocking::new(
+            crate::blocking::MAX_BLOCKING,
+        )),
         backend: Arc::new(LedgerBackend::Single(Mutex::new(ledger))),
         missions: Arc::new(FileMissionRegistry::open(&missions_path).unwrap()),
         pubkey,

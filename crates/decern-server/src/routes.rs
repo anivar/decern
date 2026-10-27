@@ -148,6 +148,9 @@ mod tests {
         let st = AppState {
             kernel: Arc::new(kernel),
             model: Arc::new(Model::builtin()),
+            blocking: Arc::new(crate::blocking::Blocking::new(
+                crate::blocking::MAX_BLOCKING,
+            )),
             backend: Arc::new(LedgerBackend::Sharded(sharded)),
             missions: test_missions(),
             pubkey,
@@ -1464,6 +1467,93 @@ mod tests {
             body["truncated"], true,
             "one record under the handle past the bound makes the list cut: {body}"
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Every route that runs on a blocking thread takes a place first: with none to take, a
+    /// decision, a batch, each search, an approval, a termination, a tree head and a
+    /// projection are each answered `server_busy` at once, and nothing is recorded. A search
+    /// is checked before it takes a place, so one missing what its kind requires is refused
+    /// as malformed with no place to take.
+    #[tokio::test]
+    async fn every_blocking_route_takes_a_place_or_is_refused_at_once() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let st = AppState {
+            blocking: Arc::new(crate::blocking::Blocking::new(0)),
+            ..st
+        };
+        let evaluation = r#"{"subject":{"type":"Principal","id":"agent1"},
+            "action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"}}"#;
+        let action_search = r#"{"subject":{"type":"Principal","id":"agent1"},
+            "resource":{"type":"Resource","id":"claim1"}}"#;
+        let approval = format!(
+            r#"{{"approver":"corp","agent":"agent1","description":"reconcile invoices",
+            "approved_tools":["read"],"capabilities":[],"expiry":{}}}"#,
+            crate::testutil::corp_expiry()
+        );
+        for (method, uri, body) in [
+            ("POST", "/access/v1/evaluation", evaluation.to_owned()),
+            ("POST", "/access/v1/evaluations", evaluation.to_owned()),
+            ("POST", "/access/v1/search/subject", evaluation.to_owned()),
+            ("POST", "/access/v1/search/resource", evaluation.to_owned()),
+            ("POST", "/access/v1/search/action", action_search.to_owned()),
+            ("POST", "/mission/v1/approve", approval),
+            ("POST", "/mission/v1/unknown/terminate", String::new()),
+            ("GET", "/anchor/v1/tree-head", String::new()),
+            ("GET", "/audit/v1/subject?handle=ppid:nobody", String::new()),
+        ] {
+            let (status, answer) = body_json(
+                app(st.clone(), open())
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header("content-type", "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(
+                status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{method} {uri}: {answer}"
+            );
+            assert_eq!(answer["error"], "server_busy", "{method} {uri}: {answer}");
+        }
+        assert!(
+            !base.join("decern-ledger.jsonl").exists()
+                || std::fs::read_to_string(base.join("decern-ledger.jsonl"))
+                    .unwrap()
+                    .is_empty(),
+            "a refused request recorded something"
+        );
+        let (status, answer) = body_json(
+            app(st.clone(), open())
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/access/v1/search/resource")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            r#"{"subject":{"type":"Principal","id":"agent1"},
+                            "resource":{"type":"Resource"}}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+        assert_eq!(answer["error"], "invalid_request", "{answer}");
         let _ = std::fs::remove_dir_all(&base);
     }
 

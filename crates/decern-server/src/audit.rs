@@ -56,8 +56,12 @@ pub(crate) async fn tree_head(State(st): State<AppState>) -> Response {
     // ledger's lock, and are served what it computed. The computation keeps its turn until
     // it finishes, so a request that gives up cannot let a second read of the log start.
     let mut cached = st.tree_head.clone().lock_owned().await;
+    let Some(place) = st.blocking.take() else {
+        return st.blocking.busy();
+    };
     let (backend, clock) = (st.backend.clone(), st.clock);
     let computed = tokio::task::spawn_blocking(move || {
+        let _place = place;
         let fresh = current_tree_head(&backend, cached.clone(), clock)?;
         *cached = Some(fresh.clone());
         Ok::<_, HeadError>(fresh.1)
@@ -190,9 +194,12 @@ pub(crate) async fn subject_audit(
     // whole log into memory, and an open route must not let a crowd of them, or of requests
     // that gave up on them, do so at once.
     let turn = st.projection.clone().lock_owned().await;
+    let Some(place) = st.blocking.take() else {
+        return st.blocking.busy();
+    };
     let (backend, clock) = (st.backend.clone(), st.clock);
     let projected = tokio::task::spawn_blocking(move || {
-        let _turn = turn;
+        let (_turn, _place) = (turn, place);
         project(&backend, q.handle, clock)
     });
     let Projection {

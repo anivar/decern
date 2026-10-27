@@ -106,7 +106,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, SyncSender, channel, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::thread::{self, JoinHandle};
 
 use decern_store::{
@@ -150,7 +150,9 @@ enum Job {
 /// Multi-host [`LedgerHeadStore`] backed by Postgres. Cheap to clone-free share
 /// behind an `Arc<dyn LedgerHeadStore>`; all state lives on the actor thread.
 pub struct PostgresLedgerHeadStore {
-    jobs: Sender<Job>,
+    jobs: SyncSender<Job>,
+    /// How many sections the queue holds, named when it is full.
+    depth: usize,
     handle: Option<JoinHandle<()>>,
     /// Set by the actor once its connection has closed. It never reconnects, so the store
     /// serves no section again.
@@ -164,9 +166,14 @@ impl PostgresLedgerHeadStore {
     /// docs). Returns `Err` — never panics — on a bad URL, an unreachable
     /// server, or a schema failure.
     pub fn new(url: &str) -> Result<Self, StoreError> {
+        Self::with_queue_depth(url, QUEUE_DEPTH)
+    }
+
+    /// [`Self::new`] with the number of sections that may wait for the actor at once.
+    fn with_queue_depth(url: &str, depth: usize) -> Result<Self, StoreError> {
         let url = url.to_owned();
         let (ready_tx, ready_rx) = sync_channel::<Result<(), StoreError>>(0);
-        let (job_tx, job_rx) = channel::<Job>();
+        let (job_tx, job_rx) = sync_channel::<Job>(depth);
         let closed = Arc::new(AtomicBool::new(false));
         let seen = Arc::clone(&closed);
         let handle = thread::Builder::new()
@@ -179,6 +186,7 @@ impl PostgresLedgerHeadStore {
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(PostgresLedgerHeadStore {
                 jobs: job_tx,
+                depth,
                 handle: Some(handle),
                 closed,
             }),
@@ -200,7 +208,11 @@ impl Drop for PostgresLedgerHeadStore {
     fn drop(&mut self) {
         // Tell the actor to end its loop, then join so the `Client` is fully
         // dropped on the actor thread (never in a tokio runtime) before we return.
-        let _ = self.jobs.send(Job::Shutdown);
+        // The Shutdown is offered, not waited for: with the one sender gone the actor's loop
+        // ends once the queue drains, so the join below waits on the queued work alone.
+        let _ = self.jobs.try_send(Job::Shutdown);
+        let (gone, _) = sync_channel(0);
+        drop(std::mem::replace(&mut self.jobs, gone));
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
@@ -219,15 +231,17 @@ impl PostgresLedgerHeadStore {
         let (loaded_tx, loaded_rx) = sync_channel(0);
         let (decision_tx, decision_rx) = sync_channel(0);
         let (done_tx, done_rx) = sync_channel(0);
-        self.jobs
-            .send(Job::WithShard {
+        enqueue(
+            &self.jobs,
+            self.depth,
+            Job::WithShard {
                 shard: shard.to_owned(),
                 history,
                 loaded: loaded_tx,
                 decision: decision_rx,
                 done: done_tx,
-            })
-            .map_err(|_| actor_gone())?;
+            },
+        )?;
 
         // The actor has BEGUN, taken the advisory lock, and read the shard.
         let (cursor, records) = match loaded_rx.recv() {
@@ -267,9 +281,7 @@ impl LedgerHeadStore for PostgresLedgerHeadStore {
 
     fn list_shards(&self) -> Result<Vec<String>, StoreError> {
         let (resp_tx, resp_rx) = sync_channel(0);
-        self.jobs
-            .send(Job::ListShards { resp: resp_tx })
-            .map_err(|_| actor_gone())?;
+        enqueue(&self.jobs, self.depth, Job::ListShards { resp: resp_tx })?;
         resp_rx.recv().map_err(|_| actor_gone())?
     }
 
@@ -627,6 +639,26 @@ fn db(e: &postgres::Error) -> StoreError {
         path: "postgres".into(),
         err: e.to_string(),
     }
+}
+
+/// How many sections may wait for the actor at once: the server's connection bound, so a
+/// stalled database holds one request per connection and no more. A section that finds the
+/// queue full is refused at once, where it would otherwise wait behind every stalled one.
+const QUEUE_DEPTH: usize = 1024;
+
+/// Hand `job` to the actor without waiting: a full queue is the database not keeping up,
+/// answered now rather than joined.
+fn enqueue(jobs: &SyncSender<Job>, depth: usize, job: Job) -> Result<(), StoreError> {
+    jobs.try_send(job).map_err(|e| match e {
+        TrySendError::Full(_) => StoreError::Io {
+            path: "<postgres head store>".into(),
+            err: format!(
+                "the store's queue is full ({depth} sections waiting): the database is not \
+                 keeping up"
+            ),
+        },
+        TrySendError::Disconnected(_) => actor_gone(),
+    })
 }
 
 fn actor_gone() -> StoreError {
