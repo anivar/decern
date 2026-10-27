@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -104,6 +105,15 @@ class Broken(unittest.TestCase):
         unlisted = self.present() - {"img.png"}
         self.assertEqual(self.misses("[i](img.png)\n", present=unlisted), ["README.md:1: img.png"])
 
+    def test_a_link_is_resolved_as_git_reads_it_not_through_a_symlink(self) -> None:
+        (self.root / "alias").symlink_to(self.root / "docs", target_is_directory=True)
+        present = {"docs", "docs/guide.md", "alias"}
+        self.assertEqual(
+            self.misses("[a](alias/guide.md)\n", present=present),
+            ["README.md:1: alias/guide.md"],
+            "a path through a symlink is no path in the repository",
+        )
+
     def test_footnotes_and_link_titles_are_read_as_markdown_has_them(self) -> None:
         text = "[^1]: some note\n[a](docs/guide.md 'T') [b](docs/guide.md (T)) [c](gone.md 'T')\n"
         self.assertEqual(self.misses(text), ["README.md:2: gone.md"])
@@ -113,6 +123,25 @@ class Broken(unittest.TestCase):
         self.assertIn("link by URL", self.misses("[a](../../docs/guide.md)\n", at=at)[0])
         url = "[a](https://github.com/o/r/blob/main/docs/guide.md)\n"
         self.assertEqual(self.misses(url, at=at), [])
+        at = ".github/pull_request_template.md"
+        self.assertIn("link by URL", self.misses("[a](../docs/guide.md)\n", at=at)[0])
+        self.assertEqual(
+            self.misses("[a](../docs/guide.md)\n", at=".github/README.md"),
+            [],
+            "a page under .github/ that is not a template resolves as any other",
+        )
+
+    def test_only_a_path_git_carries_is_present(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        (self.root / ".gitignore").write_text("build/\n")
+        (self.root / "build").mkdir()
+        (self.root / "build" / "out.md").write_text("")
+        subprocess.run(["git", "-C", str(self.root), "add", "docs/guide.md"], check=True)
+        self.assertEqual(
+            doclinks.present_paths(self.root),
+            {"docs", "docs/guide.md"},
+            "an untracked or ignored file is not in the checkout CI reads",
+        )
 
     def test_a_tracked_file_missing_from_the_working_tree_is_reported(self) -> None:
         gone = self.root / "docs" / "moved.md"

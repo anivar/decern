@@ -7,10 +7,12 @@ reads sentences for truth does not see it. This reads every tracked `*.md`, take
 inline link `[text](target)`, reference definition `[label]: target` and HTML `href`/`src`,
 and checks the path a relative target names, resolved from the file that holds it. A changelog
 fragment is copied into the root CHANGELOG.md at release, so its links resolve from the root.
-An issue or pull request template under `.github/` is shown in the body of an issue or
-pull request, where a relative link does not resolve, so a relative link there is reported:
-it links by URL. A path counts as present when git carries it, tracked or untracked and not ignored, in exactly
-that case: a case-insensitive disk or a build output must not pass a link CI would reject.
+An issue or pull request template is shown in the body of an issue or pull request, where a
+relative link does not resolve, so a relative link there is reported: it links by URL. A path
+counts as present when the index carries it, in exactly that case: a case-insensitive disk, a
+build output or a file not yet added must not pass a link CI would reject. An entry added with
+`git add -N` is listed by the index before its content is staged, so a link to it passes here
+even when the commit leaves the file out.
 
 Not checked, on purpose: URLs with a scheme (`https:`, `mailto:` and the like), a target
 that is only an `#anchor`, the anchor or query after a path, and anything inside a fenced
@@ -25,6 +27,7 @@ Usage: python3 scripts/doclinks.py check
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -68,8 +71,11 @@ def is_fragment(md: Path, root: Path) -> bool:
 
 
 def is_template(md: Path, root: Path) -> bool:
-    """An issue or pull request template, shown in a body where relative links do not resolve."""
-    return md.is_relative_to(root / ".github")
+    """An issue or pull request template, shown in a body where relative links do not resolve:
+    a file GitHub reads by that name, or one in a directory of that name, in any case."""
+    *dirs, name = (part.lower() for part in md.relative_to(root).parts)
+    kinds = ("issue_template", "pull_request_template")
+    return name.removesuffix(".md") in kinds or any(d in kinds for d in dirs)
 
 
 def broken(md: Path, root: Path, present: set[str]) -> list[str]:
@@ -83,7 +89,8 @@ def broken(md: Path, root: Path, present: set[str]) -> list[str]:
         if not path:
             continue
         base = root if path.startswith("/") or is_fragment(md, root) else md.parent
-        resolved = (base / path.lstrip("/")).resolve()
+        # Lexically, as git and CI read the path: a path through a symlink is no path in git.
+        resolved = Path(os.path.normpath(base / path.lstrip("/")))
         where = f"{md.relative_to(root)}:{number}: {target}"
         if is_template(md, root):
             out.append(f"{where} (shown in an issue or pull request; link by URL)")
@@ -104,10 +111,9 @@ def git_files(root: Path, *args: str) -> list[str]:
 
 
 def present_paths(root: Path = ROOT) -> set[str]:
-    """Every path git carries, tracked or untracked and not ignored, and every directory
-    above one."""
+    """Every path the index carries, and every directory above one."""
     out: set[str] = set()
-    for name in git_files(root, "--cached", "--others", "--exclude-standard"):
+    for name in git_files(root, "--cached"):
         parts = name.split("/")
         out.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
     return out
