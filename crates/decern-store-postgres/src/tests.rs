@@ -440,7 +440,8 @@ fn a_store_whose_connection_was_closed_answers_each_section_as_an_error() {
             matches!(section_within(&store, &uniq("after")), Some(Err(_))),
             "a section on a closed connection was not answered as an error"
         );
-        // Set before the refusal is answered, so a liveness check after it sees it.
+        // Set before the refusal is answered, so a liveness check after it sees it. The code
+        // holds that order, not this test: reversed, the flag is still almost always set first.
         assert!(
             store.has_failed(),
             "a closed connection left the store healthy"

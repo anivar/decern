@@ -219,7 +219,7 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 | `POST` | `/mission/v1/{s256}/terminate` | guarded | End it. A terminated Mission never revives. |
 | `GET` | `/.well-known/decern-subject-side-disclosure` | open | What this deployment does about challenges and callers, read from its running configuration. |
 | `GET` | `/.well-known/authzen-configuration` | open | AuthZEN 1.0 PDP metadata: the decision point and its evaluation endpoint, when `--public-url` is set; 404 otherwise. |
-| `GET` | `/healthz` | open | `ok`, or `503` once the single-file ledger has stopped after a write error, or once a Postgres head store has found its connection closed or the thread that holds it has stopped; a restart recovers. |
+| `GET` | `/healthz` | open | `ok`, or `503` once the single-file ledger has stopped after a write error or its lock was poisoned by a panic, or once a Postgres head store has found its connection closed or the thread that holds it has stopped; a restart recovers. |
 
 "Guarded" routes require the caller to be established; "open" routes are open by intent — they are
 operational, published on purpose, or answerable only to a party who already holds the handle they
@@ -392,8 +392,8 @@ back, such as an unknown action's name, is cut to 512 characters in the answer.
 - **Observability.** The server prints one line at startup and nothing else: no request log,
   no metrics, no tracing. A request refused before evaluation (malformed, unauthenticated, or
   naming a party its caller may not) is not recorded, and neither it nor a failed append
-  (`503`) leaves a trace in the server. `/healthz` checks only that the single-file ledger
-  can still record and that a Postgres head store has not found its connection closed.
+  (`503`) leaves a trace in the server. `/healthz` reports only the conditions the route
+  table lists, and probes neither the disk nor the database.
 - **Ledger retention.** The single-file ledger is one file that grows without bound; nothing
   rolls it over or archives it.
 - **Recovery after a write error.** A write, flush or sync error on the single-file ledger,
