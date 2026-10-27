@@ -32,9 +32,9 @@ cvc5 discharges. A patch release of it could change what gets proved, so it is p
 as the evaluator.
 
 **cvc5** is not a Cargo dependency. It is an external solver invoked by `decern prove`; CI runs
-the proofs against the release `CVC5_TAG` names in [`ci.yml`](.github/workflows/ci.yml), and
-`decern prove` fails closed when it is absent rather than reporting a success it did not
-establish.
+the proofs against the release [`install-cvc5`](.github/actions/install-cvc5/action.yml) pins and
+checks against its digest, and `decern prove` fails closed when it is absent rather than
+reporting a success it did not establish.
 
 The Rust toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml).
 
