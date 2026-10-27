@@ -20,8 +20,9 @@ code block or an inline code span, and footnote definitions. External URLs would
 gate fail for reasons that have nothing to do with the change. A target that climbs out of the
 repository is reported, since no file here can satisfy it, and so is a tracked Markdown file
 missing from the working tree. The Markdown is read with patterns, not a parser; forms this
-repository does not use (angle-bracketed targets with spaces, indented code, reference
-definitions inside block quotes) are not handled.
+repository does not use (angle-bracketed targets with spaces, percent-encoded targets, indented
+code, a fence inside a list item indented four spaces or more, reference definitions inside
+block quotes) are not handled.
 
 Usage: python3 scripts/doclinks.py check
 """
@@ -35,7 +36,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-_FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+_FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
 _CODE_SPAN = re.compile(r"(`+)(?:(?!\1).)+?\1")
 _INLINE = re.compile(r"""\]\(\s*<?([^)\s>]+)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)""")
 _REFERENCE = re.compile(r"^\s{0,3}\[(?!\^)[^\]]+\]:\s*<?(\S+?)>?(?:\s+.*)?$")
@@ -50,10 +51,17 @@ def targets(text: str) -> list[tuple[int, str]]:
     for number, line in enumerate(text.splitlines(), start=1):
         opened = _FENCE.match(line)
         if fence is not None:
-            if opened and opened.group(1)[0] == fence[0] and len(opened.group(1)) >= len(fence):
+            # A closing fence is its own character, at least as long, with nothing after it.
+            if (
+                opened
+                and opened.group(1)[0] == fence[0]
+                and len(opened.group(1)) >= len(fence)
+                and not opened.group(2).strip()
+            ):
                 fence = None
             continue
-        if opened:
+        # A backtick fence's info string holds no backtick; a line whose does opens nothing.
+        if opened and not (opened.group(1)[0] == "`" and "`" in opened.group(2)):
             fence = opened.group(1)
             continue
         prose = _CODE_SPAN.sub("", line)

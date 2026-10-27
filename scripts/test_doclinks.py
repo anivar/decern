@@ -87,6 +87,22 @@ class Broken(unittest.TestCase):
         )
         self.assertEqual(self.misses(text), ["README.md:9: missing.md"])
 
+    def test_a_fence_opens_and_closes_as_commonmark_has_it(self) -> None:
+        text = (
+            "   ```\n[in](missing.md)\n```\n"
+            "    ```\n[indented](missing.md)\n"
+            "```text\n[in](missing.md)\n``` not a close\n[in](missing.md)\n```\n"
+            "``` a`b\n[no fence](missing.md)\n"
+            "[after](missing.md)\n"
+        )
+        self.assertEqual(
+            self.misses(text),
+            ["README.md:5: missing.md", "README.md:12: missing.md", "README.md:13: missing.md"],
+        )
+
+    def test_the_root_and_indented_definitions_are_not_misses(self) -> None:
+        self.assertEqual(self.misses("[r](./) [s](/)\n    [a]: missing.md\n"), [])
+
     def test_a_root_relative_link_resolves_from_the_root_in_any_directory(self) -> None:
         self.assertEqual(self.misses("[r](/img.png)\n", at="docs/page.md"), [])
 
