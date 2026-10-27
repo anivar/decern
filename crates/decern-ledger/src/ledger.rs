@@ -6,7 +6,9 @@
 
 use crate::checkpoint::key_fingerprint;
 use crate::error::{LedgerError, io_err};
-use crate::open::{Location, open_append_owner_only, resolve_open_head};
+use crate::open::{
+    Location, lock_single_writer, open_append_owner_only, refuse_removed_history, resolve_open_head,
+};
 use crate::record::{Entry, GENESIS, Record, RecordOut, chain_hash};
 use crate::segment::{self, RolloverPolicy};
 use crate::verify::{SignerSpan, VerifyReport, verify_inner};
@@ -59,6 +61,9 @@ pub struct Ledger {
     /// behind it, so every later append is refused until the ledger is reopened, which
     /// trims an unterminated tail.
     failed: bool,
+    /// The single-file ledger's writer lock, released when the ledger is dropped. `None` for
+    /// a segmented ledger, which takes no lock: neither binary writes one.
+    _writer_lock: Option<crate::open::WriterLock>,
 }
 
 /// The first [`count`](Prefix::count) records of a ledger, readable without holding it.
@@ -149,12 +154,17 @@ impl Ledger {
                     .into(),
             });
         }
+        // Before anything reads the log: a second writer must not judge, or trim, a tail the
+        // first is still writing.
+        let writer_lock = lock_single_writer(path)?;
         let mut verifiers = retired;
         let current = key.verifying_key();
         if !verifiers.iter().any(|v| v.to_bytes() == current.to_bytes()) {
             verifiers.push(current);
         }
         let location = Location::Single(path.to_owned());
+        // A file is verified, an empty one too, against the anchor when there is one. On Unix
+        // the lock has just created any that was absent; a ledger with no file yet is new.
         let (last_hash, next_seq, signers) = if path.exists() {
             let report = resolve_open_head(&location, &verifiers, &current, anchor)?;
             (
@@ -163,6 +173,7 @@ impl Ledger {
                 report.signers,
             )
         } else {
+            refuse_removed_history(anchor, &verifiers)?;
             (GENESIS.to_owned(), 0, Vec::new())
         };
         let file = open_append_owner_only(path)?;
@@ -178,6 +189,7 @@ impl Ledger {
             sync: false,
             rollover: None,
             failed: false,
+            _writer_lock: Some(writer_lock),
         })
     }
 
@@ -284,6 +296,7 @@ impl Ledger {
             sync: false,
             rollover: Some(RolloverState { policy, manifest }),
             failed: false,
+            _writer_lock: None,
         })
     }
 
