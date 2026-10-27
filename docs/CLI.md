@@ -410,10 +410,10 @@ back, such as an unknown action's name, is cut to 512 characters in the answer.
   store until TCP gives up: each decision meanwhile is answered `503` at the 30-second request
   deadline, `/healthz` answers `ok`, and `SIGTERM` waits. decern sets no
   connection or query timeout of its own, and the URL goes to the Postgres client as given:
-  `connect_timeout` bounds only the first connect, keepalives (`keepalives_idle`,
-  `keepalives_interval`, `keepalives_retries`; on by default, after two idle hours) find a
-  database lost while the store is idle, and only `tcp_user_timeout`, on Linux, bounds a query
-  already waiting.
+  `connect_timeout` bounds the connect, and how soon a lost database is found while a query
+  waits is left to TCP: keepalives (`keepalives_idle`, `keepalives_interval`,
+  `keepalives_retries`; on by default, after two idle hours), the kernel's retransmission
+  limit, and, on Linux, `tcp_user_timeout`.
 - **High availability.** The single-file ledger is one process, and a second is refused at startup. `--sharded postgres://…`
   spreads appends across hosts, every replica started with the same `--key`, but leaves each
   with its own Mission registry, and anchoring and `/audit/v1/subject` refuse a sharded ledger.
