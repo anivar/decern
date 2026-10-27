@@ -707,18 +707,31 @@ impl LedgerHeadStore for FileLedgerHeadStore {
     }
 
     fn list_shards(&self) -> Result<Vec<String>, StoreError> {
-        let mut out = std::collections::BTreeSet::new();
         let entries = match fs::read_dir(&self.root) {
             Ok(e) => e,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(io(&self.root, e)),
         };
-        for entry in entries {
-            let entry = entry.map_err(|e| io(&self.root, e))?;
-            let file_name = entry.file_name();
+        let names = entries
+            .map(|entry| entry.map(|e| e.file_name()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| io(&self.root, e))?;
+        self.list_named(names)
+    }
+}
+
+impl FileLedgerHeadStore {
+    /// The shards with committed history among the directory entries `names`. A shard is
+    /// judged by what its files hold when read, and any one of its data files lists it: its
+    /// head, its `.shard` file or its log. Another process can convert a shard during the
+    /// listing, renaming a marker over its `.shard` file and writing a head the directory read
+    /// may not return, and a shard that had history when the listing began stays in the audit
+    /// set if the read returned any of those three names. Its `.lock` lists nothing.
+    fn list_named(&self, names: Vec<std::ffi::OsString>) -> Result<Vec<String>, StoreError> {
+        let mut out = std::collections::BTreeSet::new();
+        for file_name in names {
             let name = file_name.to_string_lossy();
-            // Shard data files only: a head, or an earlier-layout shard with no head beside
-            // it; never the `.lock`, `.tmp` or `.log` siblings.
+            // Shard data files only, never the `.lock` or `.tmp` siblings.
             let (stem, kind) = if let Some(stem) = name.strip_suffix(".head") {
                 (stem, "head")
             } else if let Some(stem) = name.strip_suffix(".shard") {
@@ -735,37 +748,53 @@ impl LedgerHeadStore for FileLedgerHeadStore {
             // A head with no cursor is a new shard a crash left before its first record. A head,
             // or a `.shard` file with no listed head, that does not read fails the listing,
             // naming the file.
-            let head_listed = !matches!(
-                read_head(&files.head)?,
-                None | Some(FileHead { cursor: None, .. })
-            );
+            let head_listed = || -> Result<bool, StoreError> {
+                Ok(!matches!(
+                    read_head(&files.head)?,
+                    None | Some(FileHead { cursor: None, .. })
+                ))
+            };
             match kind {
                 "head" => {
-                    if !head_listed {
+                    if !head_listed()? {
                         continue;
                     }
                 }
-                // A converted shard is listed through its head, and its `.shard` file is read by
-                // its sections; an earlier-layout one is listed once it has committed history,
-                // as a listed head has.
+                // Listed when its head is, or when it is an earlier-layout shard with committed
+                // history. A conversion writes the head before the marker, so a marker found
+                // after a head with no cursor may be a conversion that finished between the two
+                // reads, and the head is read again. The order of these reads is checked by
+                // reading, not by a test.
                 "shard" => {
-                    if head_listed
-                        || !matches!(
-                            read_beside(&entry.path())?,
-                            Beside::Earlier(l) if l.cursor.is_some()
-                        )
-                    {
+                    let listed = head_listed()?
+                        || match read_beside(&files.shard_file)? {
+                            Beside::Earlier(l) => l.cursor.is_some(),
+                            Beside::Marker => head_listed()?,
+                            Beside::Missing => false,
+                        };
+                    if !listed {
                         continue;
                     }
                 }
-                // A log is listed through its head or the shard it is converting; one with
-                // records and neither is refused, rather than dropped from the audit set.
+                // A log lists its shard as its head does, or as the earlier-layout shard it is
+                // converting does; one with records and neither is refused, rather than dropped
+                // from the audit set. A marker found after no head may, as above, be a
+                // conversion that finished between the two reads.
                 _ => {
-                    if files.head.exists() {
+                    let listed = if files.head.exists() {
+                        head_listed()?
+                    } else {
+                        match read_beside(&files.shard_file)? {
+                            Beside::Marker if files.head.exists() => head_listed()?,
+                            beside => {
+                                refuse_orphan_log(&files, &beside)?;
+                                matches!(beside, Beside::Earlier(l) if l.cursor.is_some())
+                            }
+                        }
+                    };
+                    if !listed {
                         continue;
                     }
-                    refuse_orphan_log(&files, &read_beside(&files.shard_file)?)?;
-                    continue;
                 }
             }
             out.insert(shard);
@@ -1235,6 +1264,67 @@ mod tests {
             serde_json::from_slice::<LegacyShard>(&marker).is_err(),
             "an earlier release could still read the converted shard's old file"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A crash during a conversion, after the log is written and before the head, leaves the
+    /// earlier-layout shard as the shard's only commit record. It is read as it is, the log is
+    /// not, and the next append converts the shard again from its first record.
+    #[test]
+    fn a_conversion_a_crash_left_before_its_head_reads_the_earlier_shard() {
+        let dir = tmp_dir("convert-crash");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        fs::write(&files.shard_file, earlier(&["line-0", "line-1"])).unwrap();
+        fs::write(&files.log, "line-0\nline-1\nline-2\n").unwrap();
+
+        assert_eq!(s.list_shards().unwrap(), ["acme"]);
+        assert_eq!(history(&s, "acme").1, ["line-0", "line-1"]);
+        append(&s, "acme", "line-2b");
+        let (c, lines) = history(&s, "acme");
+        assert_eq!(c.unwrap().next_seq, 3);
+        assert_eq!(lines, ["line-0", "line-1", "line-2b"]);
+        assert!(marked(&files.shard_file));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A shard is listed by what its files hold, whichever of its data files the directory
+    /// read returned: a conversion that writes the head after the read leaves the shard listed.
+    #[test]
+    fn a_shard_converted_after_the_directory_read_is_still_listed() {
+        let dir = tmp_dir("list-race");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        fs::write(&files.shard_file, earlier(&["line-0"])).unwrap();
+        let read: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        append(&s, "acme", "line-1");
+        assert!(files.head.exists() && marked(&files.shard_file));
+        assert_eq!(s.list_named(read).unwrap(), ["acme"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A shard with history is listed through its log alone. A directory read that returned
+    /// only the logs, as one can while a rename replaces the other names, lists a shard in this
+    /// layout and one a conversion is writing, and not a new shard with no record yet.
+    #[test]
+    fn a_shard_is_listed_through_its_log_alone() {
+        let dir = tmp_dir("list-log");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        append(&s, "done", "line-0");
+        let mid = s.files("mid").unwrap();
+        fs::write(&mid.shard_file, earlier(&["line-0"])).unwrap();
+        fs::write(&mid.log, "line-0\nline-1\n").unwrap();
+        let fresh = s.files("fresh").unwrap();
+        atomic_write_json(&fresh.shard_file, &MOVED).unwrap();
+        atomic_write_json(&fresh.head, &FileHead::EMPTY).unwrap();
+        fs::write(&fresh.log, "").unwrap();
+
+        let logs = ["done", "mid", "fresh"]
+            .map(|shard| s.files(shard).unwrap().log.file_name().unwrap().to_owned());
+        assert_eq!(s.list_named(logs.to_vec()).unwrap(), ["done", "mid"]);
         let _ = fs::remove_dir_all(&dir);
     }
 

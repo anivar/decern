@@ -521,12 +521,6 @@ impl ShardedLedger {
 /// with either its [`crate::VerifyReport`] or the tamper/read error it failed with.
 pub type ShardVerification = (String, Result<crate::VerifyReport, LedgerError>);
 
-/// Refuse to extend a shard under `kid` when the shard's latest signer is another key that
-/// `kid` may not follow. Several processes append to one shard, so one still running under
-/// the old key after another rotated would put old-key records after new-key ones, and the
-/// shard would stop verifying. The latest signer must be `kid`, or a key this process holds
-/// that `kid` has not signed before. `spans` are the shard's keys in the order each took
-/// over; an empty `kid` stands for a record no key this process holds could be attributed to.
 /// An append the store did not commit: fail-closed, never a quiet `Ok`.
 fn no_record(shard: &str) -> LedgerError {
     LedgerError::Io {
@@ -535,6 +529,12 @@ fn no_record(shard: &str) -> LedgerError {
     }
 }
 
+/// Refuse to extend a shard under `kid` when the shard's latest signer is another key that
+/// `kid` may not follow. Several processes append to one shard, so one still running under
+/// the old key after another rotated would put old-key records after new-key ones, and the
+/// shard would stop verifying. The latest signer must be `kid`, or a key this process holds
+/// that `kid` has not signed before. `spans` are the shard's keys in the order each took
+/// over; an empty `kid` stands for a record no key this process holds could be attributed to.
 fn may_extend(
     spans: &[KeySpan],
     kid: &str,
