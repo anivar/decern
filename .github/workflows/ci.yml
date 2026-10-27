@@ -204,7 +204,7 @@ jobs:
       DECERN_TEST_POSTGRES_URL: postgres://decern:decern@127.0.0.1:5432/decern_test?sslmode=disable
     services:
       postgres:
-        image: postgres:17
+        image: postgres:18
         env:
           POSTGRES_USER: decern
           POSTGRES_PASSWORD: decern
