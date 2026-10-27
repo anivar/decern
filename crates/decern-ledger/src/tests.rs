@@ -2429,6 +2429,14 @@ fn asserted_by_omits_an_issuer_nobody_verified() {
     assert_eq!(earlier.iss.as_deref(), Some("https://issuer.example/"));
 }
 
+/// Open `path` as a second writer, which must be refused, and return the refusal.
+fn second_writer_refused(path: &Path, key: &SigningKey) -> String {
+    match Ledger::open(path, key.clone()) {
+        Err(e) => e.to_string(),
+        Ok(_) => panic!("a second writer opened {}", path.display()),
+    }
+}
+
 /// A ledger has one writer. A second open is refused before it reads the log, so it cannot
 /// trim the first writer's record in flight as a torn tail; the lock follows the file under
 /// another spelling of its path and through a symbolic or, on Unix, a hard link, and is
@@ -2437,8 +2445,8 @@ fn asserted_by_omits_an_issuer_nobody_verified() {
 fn a_second_writer_is_refused_before_it_touches_the_log() {
     let path = tmp("single-writer.jsonl");
     let _ = std::fs::remove_file(&path);
-    let key = || SigningKey::from_bytes(&[11u8; 32]);
-    let mut first = Ledger::open(&path, key()).unwrap();
+    let key = decern_crypto::generate().unwrap();
+    let mut first = Ledger::open(&path, key.clone()).unwrap();
     first.append(entry("Read", true)).unwrap();
     // The first writer's next record, part-way to disk.
     {
@@ -2451,14 +2459,10 @@ fn a_second_writer_is_refused_before_it_touches_the_log() {
     }
     let before = std::fs::read(&path).unwrap();
 
-    let refused = |p: &Path| match Ledger::open(p, key()) {
-        Err(e) => e.to_string(),
-        Ok(_) => panic!("a second writer opened {}", p.display()),
-    };
-    let e = refused(&path);
+    let e = second_writer_refused(&path, &key);
     assert!(e.contains("another process has this ledger open"), "{e}");
     let parent = path.parent().unwrap();
-    refused(&parent.join(".").join("single-writer.jsonl"));
+    second_writer_refused(&parent.join(".").join("single-writer.jsonl"), &key);
     #[cfg(unix)]
     {
         let link = parent.join("single-writer-link.jsonl");
@@ -2466,9 +2470,9 @@ fn a_second_writer_is_refused_before_it_touches_the_log() {
         let _ = std::fs::remove_file(&link);
         let _ = std::fs::remove_file(&hard);
         std::os::unix::fs::symlink(&path, &link).unwrap();
-        refused(&link);
+        second_writer_refused(&link, &key);
         std::fs::hard_link(&path, &hard).unwrap();
-        refused(&hard);
+        second_writer_refused(&hard, &key);
         std::fs::remove_file(&link).unwrap();
         std::fs::remove_file(&hard).unwrap();
     }
@@ -2479,7 +2483,7 @@ fn a_second_writer_is_refused_before_it_touches_the_log() {
     );
 
     drop(first);
-    let reopened = Ledger::open(&path, key()).expect("the lock goes with the ledger");
+    let reopened = Ledger::open(&path, key).expect("the lock goes with the ledger");
     drop(reopened);
     let _ = std::fs::remove_file(&path);
 }
@@ -2495,16 +2499,14 @@ fn a_ledger_created_through_a_link_shares_the_lock_with_its_target() {
     let target = dir.join("ledger.jsonl");
     let link = dir.join("via-link.jsonl");
     std::os::unix::fs::symlink(&target, &link).unwrap();
-    let key = || SigningKey::from_bytes(&[12u8; 32]);
-    let first = Ledger::open(&link, key()).unwrap();
+    let key = decern_crypto::generate().unwrap();
+    let first = Ledger::open(&link, key.clone()).unwrap();
     assert!(
         target.exists(),
         "opening through the link created the target"
     );
-    match Ledger::open(&target, key()) {
-        Err(e) => assert!(e.to_string().contains("another process"), "{e}"),
-        Ok(_) => panic!("the target opened while the ledger was open through its link"),
-    }
+    let e = second_writer_refused(&target, &key);
+    assert!(e.contains("another process"), "{e}");
     drop(first);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2516,12 +2518,12 @@ fn a_ledger_created_through_a_link_shares_the_lock_with_its_target() {
 #[test]
 fn the_writer_lock_leaves_a_refused_file_and_an_absent_ledger_as_they_were() {
     use std::os::unix::fs::PermissionsExt;
-    let key = || SigningKey::from_bytes(&[13u8; 32]);
+    let key = decern_crypto::generate().unwrap();
 
     let not_a_ledger = tmp("not-a-ledger.txt");
     std::fs::write(&not_a_ledger, "{\"just\":\"a config\"}\n").unwrap();
     std::fs::set_permissions(&not_a_ledger, std::fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(Ledger::open(&not_a_ledger, key()).is_err());
+    assert!(Ledger::open(&not_a_ledger, key.clone()).is_err());
     let mode = std::fs::metadata(&not_a_ledger)
         .unwrap()
         .permissions()
@@ -2534,12 +2536,12 @@ fn the_writer_lock_leaves_a_refused_file_and_an_absent_ledger_as_they_were() {
     let anchor = tmp("anchored-then-gone.anchor");
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(&anchor);
-    let mut l = Ledger::open(&path, key()).unwrap();
+    let mut l = Ledger::open(&path, key.clone()).unwrap();
     l.append(entry("Read", true)).unwrap();
     l.seal_anchor(&anchor, 1).unwrap();
     drop(l);
     std::fs::remove_file(&path).unwrap();
-    let reopened = Ledger::open_anchored(&path, key(), Vec::new(), &anchor)
+    let reopened = Ledger::open_anchored(&path, key.clone(), Vec::new(), &anchor)
         .expect("an anchored open of an absent ledger starts afresh, as before the lock");
     drop(reopened);
     let _ = std::fs::remove_file(&path);

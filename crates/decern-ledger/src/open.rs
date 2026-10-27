@@ -294,39 +294,7 @@ pub(crate) fn open_append_owner_only(path: &Path) -> Result<File, LedgerError> {
 /// which another spelling or a symbolic link finds and a hard link does not. The sidecar is
 /// left in place.
 pub(crate) fn lock_single_writer(path: &Path) -> Result<WriterLock, LedgerError> {
-    #[cfg(unix)]
-    let (file, created, sidecar) = {
-        use std::os::unix::fs::OpenOptionsExt;
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)
-        {
-            Ok(f) => (f, true, None::<PathBuf>),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match File::open(path) {
-                Ok(f) => (f, false, None),
-                // A symbolic link to a ledger not created yet: create it through the link.
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    let f = OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .truncate(false)
-                        .mode(0o600)
-                        .open(path)
-                        .map_err(|e| io_err(path, e))?;
-                    (f, true, None)
-                }
-                Err(e) => return Err(io_err(path, e)),
-            },
-            Err(e) => return Err(io_err(path, e)),
-        }
-    };
-    #[cfg(not(unix))]
-    let (file, created, sidecar) = {
-        let lock_path = writer_lock_path(path)?;
-        (open_lock_file(&lock_path)?, false, Some(lock_path))
-    };
+    let (file, created, sidecar) = writer_lock_file(path)?;
     match file.try_lock() {
         Ok(()) => Ok(WriterLock {
             _file: file,
@@ -344,6 +312,43 @@ pub(crate) fn lock_single_writer(path: &Path) -> Result<WriterLock, LedgerError>
         }),
         Err(fs::TryLockError::Error(e)) => Err(io_err(path, e)),
     }
+}
+
+/// The file [`lock_single_writer`] locks, whether opening it created the ledger, and the
+/// sidecar's path where the lock is one. On Unix, the ledger itself: created owner-only if
+/// absent, through a symbolic link to a ledger not created yet too, and otherwise opened
+/// read-only and left as it is.
+#[cfg(unix)]
+fn writer_lock_file(path: &Path) -> Result<(File, bool, Option<PathBuf>), LedgerError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+    {
+        Ok(f) => Ok((f, true, None)),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match File::open(path) {
+            Ok(f) => Ok((f, false, None)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600)
+                .open(path)
+                .map(|f| (f, true, None))
+                .map_err(|e| io_err(path, e)),
+            Err(e) => Err(io_err(path, e)),
+        },
+        Err(e) => Err(io_err(path, e)),
+    }
+}
+
+/// On Windows, the `<ledger>.lock` sidecar; the ledger itself is opened by its caller.
+#[cfg(not(unix))]
+fn writer_lock_file(path: &Path) -> Result<(File, bool, Option<PathBuf>), LedgerError> {
+    let lock_path = writer_lock_path(path)?;
+    Ok((open_lock_file(&lock_path)?, false, Some(lock_path)))
 }
 
 /// The single-file ledger's writer lock, released when dropped.
