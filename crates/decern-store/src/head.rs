@@ -18,12 +18,34 @@ use crate::fsio::{atomic_write_json, io, poisoned, with_write_lock};
 /// `__system__` shard for entries with no resolvable tenant) — the same
 /// `(prev_hash) -> hash` chaining `decern_ledger::Ledger` uses on a single node, now
 /// keyed so more than one `decern-server` replica can safely extend the SAME chain.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct HeadCursor {
     /// The next sequence number this shard will assign.
     pub next_seq: u64,
     /// The current chain head hash — the `prev` every subsequent append chains onto.
     pub last_hash: String,
+    /// The keys that have signed this shard, so an append can check that its key may
+    /// follow the last one without reading the shard's history. `None` from a writer that
+    /// does not keep them, including every release before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signers: Option<ShardSigners>,
+}
+
+/// The keys that have signed a shard, each from the first record it signed, as of
+/// `through` records. A reader trusts them only while `through` equals the cursor's
+/// `next_seq`: a writer that does not keep them advances the cursor and leaves them behind.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ShardSigners {
+    pub through: u64,
+    pub spans: Vec<KeySpan>,
+}
+
+/// One key's run in a shard: its key id, and the sequence number of the first record of
+/// the run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeySpan {
+    pub kid: String,
+    pub first_seq: u64,
 }
 
 /// One durably-stored record row in a shard's chain — the exact byte-stable
@@ -82,12 +104,17 @@ pub type ShardWrite = Option<(HeadCursor, String)>;
 pub type ShardCriticalSection<'a> =
     dyn FnMut(Option<&HeadCursor>, &[StoredRecord]) -> Result<ShardWrite, StoreError> + 'a;
 
+/// The critical-section callback [`LedgerHeadStore::with_shard_head`] runs: the shard's
+/// cursor alone, under the same exclusive lock.
+pub type HeadCriticalSection<'a> =
+    dyn FnMut(Option<&HeadCursor>) -> Result<ShardWrite, StoreError> + 'a;
+
 pub trait LedgerHeadStore: Send + Sync {
     /// Run `f` with EXCLUSIVE access to `shard`: no other `with_shard` call on
     /// the SAME shard, from any replica, can proceed until this returns. `f`
     /// sees the shard's current cursor (`None` = genesis) and its full record
-    /// history (seq order — what `net_spend`-style accumulation scans over),
-    /// and returns what to write, if anything:
+    /// history in seq order, for a caller that decides from it, and returns what
+    /// to write, if anything:
     /// - `Some((new_cursor, record_json))` — append `record_json` (the exact
     ///   byte-stable line to store), advancing the shard to `new_cursor`.
     /// - `None` — nothing to write (a pure read, or a decision that appends
@@ -99,6 +126,18 @@ pub trait LedgerHeadStore: Send + Sync {
     /// needs via the closure's environment (a `let mut` in the enclosing
     /// scope) — this trait carries no opinion about what callers return.
     fn with_shard(&self, shard: &str, f: &mut ShardCriticalSection<'_>) -> Result<(), StoreError>;
+
+    /// [`with_shard`](LedgerHeadStore::with_shard) for a caller that decides from the
+    /// cursor alone, as an append does: the same exclusive lock and the same write, without
+    /// the history. A backend overrides it to skip reading the records; the default reads
+    /// the history and passes over it.
+    fn with_shard_head(
+        &self,
+        shard: &str,
+        f: &mut HeadCriticalSection<'_>,
+    ) -> Result<(), StoreError> {
+        self.with_shard(shard, &mut |cursor, _records| f(cursor))
+    }
 
     /// Every shard with any committed history, sorted for a deterministic
     /// iteration order (callers building a Merkle tree or any other
@@ -238,54 +277,82 @@ fn shard_from_hex(stem: &str) -> Result<String, StoreError> {
     })
 }
 
-/// The persisted state of one shard: its cursor and full record history, in one
-/// JSON object per shard file.
+/// A shard as releases before the cursor-and-log layout stored it: its cursor and full
+/// record history, in one JSON object per `<hex-shard>.shard` file. Read as it is, and
+/// converted on the shard's next append.
 #[derive(Default, Serialize, Deserialize)]
-struct ShardState {
+struct LegacyShard {
     cursor: Option<HeadCursor>,
     records: Vec<StoredRecord>,
+}
+
+/// What every shard in this layout keeps at its `.shard` path, written before its first
+/// record and when an earlier-layout shard is converted: a file a release that reads only the
+/// old layout fails to parse, so it refuses the store rather than read the shard as empty.
+#[derive(Serialize)]
+struct MovedMarker {
+    records: &'static str,
+}
+
+const MOVED: MovedMarker = MovedMarker {
+    records: "moved to the .head and .log files beside this one; read by decern 0.7.0 or later",
+};
+
+/// One shard's commit record in the file backend: its cursor, and how many bytes of its
+/// log hold the cursor's records. Rewritten atomically after each append, it is the commit
+/// point: log bytes past `log_len` were never committed. A head with no cursor is a shard
+/// created and not yet appended to.
+#[derive(Serialize, Deserialize)]
+struct FileHead {
+    cursor: Option<HeadCursor>,
+    log_len: u64,
 }
 
 /// **Single-host, multi-process** persistent `LedgerHeadStore` — the durable
 /// reference backend for the sharded ledger on ONE machine.
 ///
-/// Over the in-memory store this backend adds persistence and a cross-process lock. [`with_shard`](FileLedgerHeadStore::with_shard)
-/// holds an **exclusive file lock (`File::lock`) on a per-shard
-/// sidecar for the ENTIRE critical section** — acquire → read the shard's
-/// cursor+records FRESH from disk → run `f` → durably write → release. That
-/// gives cross-process exclusion on one host: two `decern-server` processes (or
-/// an operator CLI) each open their OWN lock fd and genuinely mutually exclude,
-/// so a hash chain can never fork and a read-total-then-append critical section
-/// can never both-read-the-same-total. This is a HELD lock across the read, not
-/// a last-writer-wins rename (two writers each read head=N, both write N+1, one
-/// silently clobbered → forked ledger — the exact failure this trait prevents).
+/// Over the in-memory store this backend adds persistence and a cross-process lock.
+/// [`with_shard`](FileLedgerHeadStore::with_shard) holds an **exclusive file lock
+/// (`File::lock`) on a per-shard sidecar for the ENTIRE critical section** — acquire →
+/// read the shard FRESH from disk → run `f` → durably write → release. That gives
+/// cross-process exclusion on one host: two `decern-server` processes (or an operator CLI)
+/// each open their OWN lock fd and genuinely mutually exclude, so a hash chain can never
+/// fork and a read-total-then-append critical section can never both-read-the-same-total.
+/// This is a HELD lock across the read, not a last-writer-wins rename.
 ///
-/// **Scope.** The lock is host-local, so this backend is single-host
-/// multi-process. It is NOT a multi-*host* distributed store: a second machine's
-/// lock on its own filesystem does not see this one's. Multi-host coordination is
-/// `decern-store-postgres`, behind this same trait, which serializes a shard with
-/// `pg_advisory_xact_lock`. `File::lock` is `flock` on Unix and `LockFileEx` on
-/// Windows; CI exercises the exclusion, between two handles in one process, on
-/// Linux only.
+/// **Scope.** The lock is host-local, so this backend is single-host multi-process. It is
+/// NOT a multi-*host* distributed store: a second machine's lock on its own filesystem does
+/// not see this one's. Multi-host coordination is `decern-store-postgres`, behind this same
+/// trait, which serializes a shard with `pg_advisory_xact_lock`. `File::lock` is `flock` on
+/// Unix and `LockFileEx` on Windows; CI exercises the exclusion, between two handles in one
+/// process, on Linux only.
 ///
-/// **On-disk layout** (all inside `root`, shard ids hex-encoded — see
-/// `shard_to_hex` — so an untrusted tenant id can never traverse out):
-/// - `<root>/<hex-shard>.shard` — the shard's `{cursor, records}` as one JSON
-///   object, rewritten wholesale on each append via `atomic_write_json`
-///   (temp-file + fsync + atomic rename + parent-dir fsync).
-/// - `<root>/<hex-shard>.lock` — the stable per-shard advisory-lock sidecar
-///   (never renamed, so the lock stays on one inode); its content is unused.
-/// - `<root>/<hex-shard>.tmp` — `atomic_write_json`'s transient sibling.
+/// **On-disk layout** (all inside `root`, shard ids hex-encoded — see `shard_to_hex` — so
+/// an untrusted tenant id can never traverse out):
+/// - `<root>/<hex-shard>.log` — the shard's records, one byte-stable JSON line each,
+///   appended in place and synced before the head moves.
+/// - `<root>/<hex-shard>.head` — the cursor and the committed length of the log, rewritten
+///   via `atomic_write_json` (temp file, fsync, atomic rename, parent-directory fsync). A
+///   crash between the two leaves a log tail past the committed length, which the next
+///   append discards; a log shorter than it is refused, since committed records went missing.
+/// - `<root>/<hex-shard>.lock` — the stable per-shard advisory-lock sidecar (never renamed,
+///   so the lock stays on one inode); its content is unused.
+/// - `<root>/<hex-shard>.shard` — the earlier layout, the whole shard in one JSON object.
+///   Read as it is until the shard's next append, which writes the log and head and leaves
+///   a marker here that an earlier release refuses to read.
 ///
-/// **Whole-file rewrite is a deliberate choice for a terse reference backend,
-/// not an oversight.** An append re-serializes the shard's whole record vector,
-/// O(n) per append. The defense is durability integrity: atomic rename is never
-/// torn, whereas an in-place `.jsonl` append can leave a half-written final line
-/// after a crash. A high-write production deployment uses the Postgres backend
-/// (append-a-row, no rewrite); this file backend is sized for a sovereign single
-/// host, matching the rest of this crate's File* backends.
+/// An append writes one line and one small file, so its cost does not grow with the shard.
+/// Reading the history (verification, an evidence snapshot) reads the log.
 pub struct FileLedgerHeadStore {
     root: PathBuf,
+}
+
+/// The files that hold one shard: its lock key (the earlier `.shard` path, whose `.lock`
+/// sibling an earlier release locks too), head, and log.
+struct ShardFiles {
+    legacy: PathBuf,
+    head: PathBuf,
+    log: PathBuf,
 }
 
 impl FileLedgerHeadStore {
@@ -301,100 +368,407 @@ impl FileLedgerHeadStore {
         Ok(FileLedgerHeadStore { root })
     }
 
-    /// The `<root>/<hex-shard>.shard` data path. Rejects an empty shard id
-    /// (its hex is `""`, giving `<root>/.shard` — a dotfile with no extension
-    /// that `list_shards` would miss and `with_extension` would mangle), so the
-    /// stem is always a non-empty hex string with a real `.shard` extension.
-    fn shard_path(&self, shard: &str) -> Result<PathBuf, StoreError> {
+    /// The files of `shard`. Rejects an empty shard id (its hex is `""`, giving
+    /// `<root>/.shard` — a dotfile with no extension that `list_shards` would miss and
+    /// `with_extension` would mangle), so the stem is always a non-empty hex string.
+    fn files(&self, shard: &str) -> Result<ShardFiles, StoreError> {
         if shard.is_empty() {
             return Err(StoreError::Invalid(
                 "ledger shard id must not be empty".into(),
             ));
         }
-        Ok(self.root.join(format!("{}.shard", shard_to_hex(shard))))
+        let stem = self.root.join(shard_to_hex(shard));
+        Ok(ShardFiles {
+            legacy: stem.with_extension("shard"),
+            head: stem.with_extension("head"),
+            log: stem.with_extension("log"),
+        })
     }
 }
 
-/// Read a shard's persisted state fresh from disk. A missing file is genesis
-/// (empty state); a present-but-unparseable file fails closed.
-fn read_shard_state(path: &Path) -> Result<ShardState, StoreError> {
+/// What a shard's `.shard` path holds.
+enum Beside {
+    Missing,
+    Marker,
+    /// An earlier-layout shard: the shard itself when it has no head, or, beside a head,
+    /// what a crash between the head and the marker left, or what an earlier release wrote.
+    Earlier(LegacyShard),
+}
+
+/// Read a shard's `.shard` path. A file that is neither the marker nor an earlier-layout
+/// shard fails closed.
+fn read_beside(path: &Path) -> Result<Beside, StoreError> {
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Beside::Missing),
+        Err(e) => return Err(io(path, e)),
+    };
+    let marker = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v.get("records")?.as_str().map(|r| r == MOVED.records));
+    if marker == Some(true) {
+        return Ok(Beside::Marker);
+    }
+    let state: LegacyShard = serde_json::from_slice(&bytes)
+        .map_err(|e| StoreError::Serde(format!("shard file {}: {e}", path.display())))?;
+    // Records with no cursor is not a shard with no history but a file that was altered.
+    // Read as history-less it would be skipped by verification and extended from sequence 0
+    // again, under any key.
+    if state.cursor.is_none() && !state.records.is_empty() {
+        return Err(StoreError::Invalid(format!(
+            "shard file {} holds {} records and no cursor",
+            path.display(),
+            state.records.len()
+        )));
+    }
+    Ok(Beside::Earlier(state))
+}
+
+/// The shard's head, or `None` when it has not been written in this layout.
+fn read_head(path: &Path) -> Result<Option<FileHead>, StoreError> {
     match fs::read(path) {
-        Ok(bytes) => {
-            let state: ShardState =
-                serde_json::from_slice(&bytes).map_err(|e| StoreError::Serde(e.to_string()))?;
-            // Records with no cursor is not a shard with no history but a file that was
-            // altered. Read as history-less it would be skipped by verification and
-            // extended from sequence 0 again, under any key.
-            if state.cursor.is_none() && !state.records.is_empty() {
-                return Err(StoreError::Invalid(format!(
-                    "shard file {} holds {} records and no cursor",
-                    path.display(),
-                    state.records.len()
-                )));
-            }
-            Ok(state)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ShardState::default()),
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|e| StoreError::Serde(format!("shard head {}: {e}", path.display()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io(path, e)),
+    }
+}
+
+/// The committed records of a shard's log: its first `head.log_len` bytes, one record a
+/// line, exactly `head.cursor.next_seq` of them. Bytes past the committed length are an
+/// append that never committed and are not read.
+fn read_log(path: &Path, head: &FileHead) -> Result<Vec<StoredRecord>, StoreError> {
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(io(path, e)),
+    };
+    let committed = usize::try_from(head.log_len)
+        .ok()
+        .filter(|&n| n <= bytes.len())
+        .ok_or_else(|| {
+            StoreError::Invalid(format!(
+                "shard log {} holds {} bytes, fewer than the {} committed",
+                path.display(),
+                bytes.len(),
+                head.log_len
+            ))
+        })?;
+    let text = std::str::from_utf8(&bytes[..committed])
+        .map_err(|e| StoreError::Invalid(format!("shard log {}: {e}", path.display())))?;
+    let records: Vec<StoredRecord> = text
+        .split_terminator('\n')
+        .enumerate()
+        .map(|(seq, line)| StoredRecord {
+            seq: seq as u64,
+            record_json: line.to_owned(),
+        })
+        .collect();
+    let named = head.cursor.as_ref().map_or(0, |c| c.next_seq);
+    if (committed > 0 && !text.ends_with('\n')) || records.len() as u64 != named {
+        return Err(StoreError::Invalid(format!(
+            "shard log {} holds {} committed records where its head names {named}",
+            path.display(),
+            records.len(),
+        )));
+    }
+    Ok(records)
+}
+
+/// Append `lines` to the log after its first `committed` bytes, dropping any tail past them,
+/// and sync it. Returns the log's new committed length, for the head to record.
+fn append_log(path: &Path, committed: u64, lines: &[String]) -> Result<u64, StoreError> {
+    use std::io::{Seek, SeekFrom, Write};
+    let mut options = fs::OpenOptions::new();
+    options.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|e| io(path, e))?;
+    let len = file.metadata().map_err(|e| io(path, e))?.len();
+    if len < committed {
+        return Err(StoreError::Invalid(format!(
+            "shard log {} holds {len} bytes, fewer than the {committed} committed",
+            path.display()
+        )));
+    }
+    if len > committed {
+        file.set_len(committed).map_err(|e| io(path, e))?;
+    }
+    file.seek(SeekFrom::Start(committed))
+        .map_err(|e| io(path, e))?;
+    let mut written = committed;
+    for line in lines {
+        if line.contains('\n') {
+            return Err(StoreError::Invalid(
+                "a ledger record must be one line".into(),
+            ));
+        }
+        file.write_all(line.as_bytes())
+            .and_then(|()| file.write_all(b"\n"))
+            .map_err(|e| io(path, e))?;
+        written += line.len() as u64 + 1;
+    }
+    file.sync_all().map_err(|e| io(path, e))?;
+    Ok(written)
+}
+
+/// A log with records and no head beside it, where no earlier-layout shard holds the history
+/// a conversion was writing, is a shard whose commit record went missing: a new shard has a
+/// head before its log has a record. Read as genesis, its next append would truncate the log
+/// and restart the chain, so it is refused.
+fn refuse_orphan_log(files: &ShardFiles, beside: &Beside) -> Result<(), StoreError> {
+    if matches!(beside, Beside::Earlier(l) if l.cursor.is_some()) {
+        return Ok(());
+    }
+    match fs::metadata(&files.log) {
+        Ok(m) if m.len() > 0 => Err(StoreError::Invalid(format!(
+            "shard log {} holds records and has no head beside it",
+            files.log.display()
+        ))),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(io(&files.log, e)),
+    }
+}
+
+/// An earlier-layout shard beside a head is what a crash during conversion left, between the
+/// head and the marker, only when its records are the log's first records. Anything else an
+/// earlier release wrote after the conversion, and is refused rather than overwritten.
+fn refuse_unless_prefix(
+    files: &ShardFiles,
+    head: &FileHead,
+    old: &LegacyShard,
+) -> Result<(), StoreError> {
+    let log = read_log(&files.log, head)?;
+    let prefix = old.records.len() <= log.len()
+        && old
+            .records
+            .iter()
+            .zip(&log)
+            .all(|(a, b)| a.record_json == b.record_json);
+    if prefix {
+        return Ok(());
+    }
+    Err(StoreError::Invalid(format!(
+        "shard file {} holds records its log does not: an earlier release wrote to the shard \
+         after this one had converted it",
+        files.legacy.display()
+    )))
+}
+
+/// A shard as [`FileLedgerHeadStore::load`] found it: its head, what its `.shard` path holds,
+/// and the records a caller asked for.
+struct Loaded {
+    head: Option<FileHead>,
+    beside: Beside,
+    records: Vec<StoredRecord>,
+}
+
+impl Loaded {
+    fn cursor(&self) -> Option<HeadCursor> {
+        match (&self.head, &self.beside) {
+            (Some(h), _) => h.cursor.clone(),
+            (None, Beside::Earlier(l)) => l.cursor.clone(),
+            (None, _) => None,
+        }
+    }
+}
+
+impl FileLedgerHeadStore {
+    /// The shard's cursor and, when `history`, its committed records, under the lock the
+    /// caller holds. An earlier-layout shard with no head reads from its `.shard` file.
+    fn load(&self, files: &ShardFiles, history: bool) -> Result<Loaded, StoreError> {
+        let beside = read_beside(&files.legacy)?;
+        let head = read_head(&files.head)?;
+        let records = match &head {
+            Some(head) => {
+                if let Beside::Earlier(old) = &beside {
+                    refuse_unless_prefix(files, head, old)?;
+                }
+                if history {
+                    read_log(&files.log, head)?
+                } else {
+                    Vec::new()
+                }
+            }
+            None => {
+                refuse_orphan_log(files, &beside)?;
+                match &beside {
+                    Beside::Earlier(old) if history => old.records.clone(),
+                    _ => Vec::new(),
+                }
+            }
+        };
+        Ok(Loaded {
+            head,
+            beside,
+            records,
+        })
+    }
+
+    /// Commit `record_json` as the record before `new_cursor`. Every step is written so a
+    /// crash after it leaves a shard that reads as it did before the step or after the append:
+    ///
+    /// - a shard with a head: the line is appended past the committed length, then the head
+    ///   moves, then the marker is written if its `.shard` path does not hold it;
+    /// - an earlier-layout shard: its records and the line are written to the log, then the
+    ///   head, then the marker over the `.shard` file;
+    /// - a new shard: the marker, then a head with no cursor, then the line, then the head.
+    fn commit(
+        &self,
+        files: &ShardFiles,
+        loaded: Loaded,
+        new_cursor: HeadCursor,
+        record_json: String,
+    ) -> Result<(), StoreError> {
+        let Loaded { head, beside, .. } = loaded;
+        let marked = matches!(beside, Beside::Marker);
+        let (committed, mut lines, mark_after) = match (head, beside) {
+            (Some(h), _) => (h.log_len, Vec::new(), !marked),
+            (None, Beside::Earlier(old)) if old.cursor.is_some() => (
+                0,
+                old.records.into_iter().map(|r| r.record_json).collect(),
+                true,
+            ),
+            (None, _) => {
+                if !marked {
+                    atomic_write_json(&files.legacy, &MOVED)?;
+                }
+                atomic_write_json(
+                    &files.head,
+                    &FileHead {
+                        cursor: None,
+                        log_len: 0,
+                    },
+                )?;
+                (0, Vec::new(), false)
+            }
+        };
+        lines.push(record_json);
+        let log_len = append_log(&files.log, committed, &lines)?;
+        // Durable before the lock releases: fsync'd temp + atomic rename + parent-dir
+        // fsync, which also makes a new log file's directory entry durable.
+        atomic_write_json(
+            &files.head,
+            &FileHead {
+                cursor: Some(new_cursor),
+                log_len,
+            },
+        )?;
+        if mark_after {
+            atomic_write_json(&files.legacy, &MOVED)?;
+        }
+        Ok(())
+    }
+
+    fn section(
+        &self,
+        shard: &str,
+        history: bool,
+        f: &mut ShardCriticalSection<'_>,
+    ) -> Result<(), StoreError> {
+        let files = self.files(shard)?;
+        // `with_write_lock` opens `<hex-shard>.lock` FRESH on every call and holds an
+        // exclusive `flock` for the whole closure. Opening the lock fd per call is
+        // load-bearing, NOT incidental: `flock` is per-open-file-description, so a
+        // cached/re-used fd would re-lock the same OFD immediately and silently destroy
+        // same-process exclusion between two store instances — never cache the lock handle
+        // in the struct. It is the lock an earlier release takes on the same shard.
+        with_write_lock(&files.legacy, || {
+            // Read FRESH from disk under the lock — never from an in-process cache — so a
+            // commit by another process is always seen.
+            let loaded = self.load(&files, history)?;
+            let cursor = loaded.cursor();
+            if let Some((new_cursor, record_json)) = f(cursor.as_ref(), &loaded.records)? {
+                self.commit(&files, loaded, new_cursor, record_json)?;
+            }
+            Ok(())
+        })
     }
 }
 
 impl LedgerHeadStore for FileLedgerHeadStore {
     fn with_shard(&self, shard: &str, f: &mut ShardCriticalSection<'_>) -> Result<(), StoreError> {
-        let path = self.shard_path(shard)?;
-        // `with_write_lock` opens `<path>.lock` FRESH on every call and holds an
-        // exclusive `flock` for the whole closure. Opening the lock fd per call
-        // is load-bearing, NOT incidental: `flock` is per-open-file-description,
-        // so a cached/re-used fd would re-lock the same OFD immediately and
-        // silently destroy same-process exclusion between two store instances —
-        // never cache the lock handle in the struct.
-        with_write_lock(&path, || {
-            // Read FRESH from disk under the lock — never from an in-process
-            // cache — so a commit by another process/replica is always seen.
-            let mut state = read_shard_state(&path)?;
-            if let Some((new_cursor, record_json)) = f(state.cursor.as_ref(), &state.records)? {
-                state.records.push(StoredRecord {
-                    // Verbatim from MemoryLedgerHeadStore: the record's seq is
-                    // the cursor's next_seq minus one.
-                    seq: new_cursor.next_seq.saturating_sub(1),
-                    record_json,
-                });
-                state.cursor = Some(new_cursor);
-                // Durable before the lock releases: fsync'd temp + atomic rename
-                // + parent-dir fsync, so a committed cursor survives a crash.
-                atomic_write_json(&path, &state)?;
-            }
-            Ok(())
-        })
+        self.section(shard, true, f)
+    }
+
+    fn with_shard_head(
+        &self,
+        shard: &str,
+        f: &mut HeadCriticalSection<'_>,
+    ) -> Result<(), StoreError> {
+        self.section(shard, false, &mut |cursor, _| f(cursor))
     }
 
     fn list_shards(&self) -> Result<Vec<String>, StoreError> {
-        let mut out = Vec::new();
+        let mut out = std::collections::BTreeSet::new();
         let entries = match fs::read_dir(&self.root) {
             Ok(e) => e,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(io(&self.root, e)),
         };
         for entry in entries {
             let entry = entry.map_err(|e| io(&self.root, e))?;
             let file_name = entry.file_name();
             let name = file_name.to_string_lossy();
-            // Only shard DATA files; skip the `.lock`/`.tmp` sidecars.
-            let Some(stem) = name.strip_suffix(".shard") else {
+            // Shard data files only: a head, or an earlier-layout shard with no head beside
+            // it; never the `.lock`, `.tmp` or `.log` siblings.
+            let (stem, kind) = if let Some(stem) = name.strip_suffix(".head") {
+                (stem, "head")
+            } else if let Some(stem) = name.strip_suffix(".shard") {
+                (stem, "shard")
+            } else if let Some(stem) = name.strip_suffix(".log") {
+                (stem, "log")
+            } else {
                 continue;
             };
-            // Fail closed on an undecodable stem (see `shard_from_hex`): a shard
-            // whose history exists must never silently drop from the audit set.
+            // Fail closed on an undecodable stem (see `shard_from_hex`): a shard whose
+            // history exists must never silently drop from the audit set.
             let shard = shard_from_hex(stem)?;
-            // A `.shard` file exists only after an actual commit (atomic_write is
-            // reached solely on a `Some` write), but confirm committed history to
-            // exactly mirror the Memory backend's `cursor.is_some()` filter.
-            if read_shard_state(&entry.path())?.cursor.is_some() {
-                out.push(shard);
+            let files = self.files(&shard)?;
+            // A head with no cursor is a new shard a crash left before its first record. A head,
+            // or a `.shard` file with no listed head, that does not read fails the listing,
+            // naming the file.
+            let head_listed = !matches!(
+                read_head(&files.head)?,
+                None | Some(FileHead { cursor: None, .. })
+            );
+            match kind {
+                "head" => {
+                    if !head_listed {
+                        continue;
+                    }
+                }
+                // A converted shard is listed through its head, and its `.shard` file is read by
+                // its sections; an earlier-layout one is listed once it has committed history,
+                // as a listed head has.
+                "shard" => {
+                    if head_listed
+                        || !matches!(
+                            read_beside(&entry.path())?,
+                            Beside::Earlier(l) if l.cursor.is_some()
+                        )
+                    {
+                        continue;
+                    }
+                }
+                // A log is listed through its head or the shard it is converting; one with
+                // records and neither is refused, rather than dropped from the audit set.
+                _ => {
+                    if files.head.exists() {
+                        continue;
+                    }
+                    refuse_orphan_log(&files, &read_beside(&files.legacy)?)?;
+                    continue;
+                }
             }
+            out.insert(shard);
         }
-        out.sort();
-        Ok(out)
+        Ok(out.into_iter().collect())
     }
 }
 
@@ -413,6 +787,7 @@ mod tests {
                 HeadCursor {
                     next_seq: 1,
                     last_hash: "h0".into(),
+                    signers: None,
                 },
                 "line-0".into(),
             )))
@@ -432,7 +807,8 @@ mod tests {
             Some((
                 Some(HeadCursor {
                     next_seq: 1,
-                    last_hash: "h0".into()
+                    last_hash: "h0".into(),
+                    signers: None
                 }),
                 1
             ))
@@ -469,6 +845,7 @@ mod tests {
                     HeadCursor {
                         next_seq: 1,
                         last_hash: hash.into(),
+                        signers: None,
                     },
                     "line".into(),
                 )))
@@ -500,6 +877,7 @@ mod tests {
                     HeadCursor {
                         next_seq: 1,
                         last_hash: hash.into(),
+                        signers: None,
                     },
                     "line".into(),
                 )))
@@ -549,6 +927,7 @@ mod tests {
                                 HeadCursor {
                                     next_seq,
                                     last_hash: format!("h{my_index}"),
+                                    signers: None,
                                 },
                                 format!("record-{my_index}"),
                             )))
@@ -625,6 +1004,349 @@ mod tests {
         dir
     }
 
+    fn cursor(next_seq: u64, last_hash: &str) -> HeadCursor {
+        HeadCursor {
+            next_seq,
+            last_hash: last_hash.into(),
+            signers: None,
+        }
+    }
+
+    fn marked(path: &Path) -> bool {
+        matches!(read_beside(path).unwrap(), Beside::Marker)
+    }
+
+    fn append(s: &dyn LedgerHeadStore, shard: &str, line: &str) {
+        s.with_shard_head(shard, &mut |c| {
+            let next = c.map(|c| c.next_seq).unwrap_or(0) + 1;
+            Ok(Some((cursor(next, &format!("h{next}")), line.into())))
+        })
+        .unwrap();
+    }
+
+    fn history(s: &dyn LedgerHeadStore, shard: &str) -> (Option<HeadCursor>, Vec<String>) {
+        let mut out = (None, Vec::new());
+        s.with_shard(shard, &mut |c, records| {
+            out = (
+                c.cloned(),
+                records.iter().map(|r| r.record_json.clone()).collect(),
+            );
+            Ok(None)
+        })
+        .unwrap();
+        out
+    }
+
+    /// The head-only section sees the cursor `with_shard` sees and commits what it does, in
+    /// the default every backend inherits and in the file backend's own.
+    #[test]
+    fn the_head_only_section_sees_and_commits_what_with_shard_does() {
+        let dir = tmp_dir("head-only");
+        let file = FileLedgerHeadStore::new(&dir).unwrap();
+        let memory = MemoryLedgerHeadStore::new();
+        for s in [&file as &dyn LedgerHeadStore, &memory] {
+            for line in ["line-0", "line-1", "line-2"] {
+                append(s, "acme", line);
+            }
+            let mut seen = None;
+            s.with_shard_head("acme", &mut |c| {
+                seen = c.cloned();
+                Ok(None)
+            })
+            .unwrap();
+            let (c, lines) = history(s, "acme");
+            assert_eq!(seen, c);
+            assert_eq!(seen.unwrap().next_seq, 3);
+            assert_eq!(lines, ["line-0", "line-1", "line-2"]);
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// An append writes one line to the log and a head of fixed size, whatever the shard
+    /// already holds.
+    #[test]
+    fn an_append_writes_one_line_and_a_head_that_does_not_grow() {
+        let dir = tmp_dir("append-is-a-line");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        append(&s, "acme", "line-0");
+        let first_head = fs::metadata(&files.head).unwrap().len();
+        for i in 1..200 {
+            append(&s, "acme", &format!("line-{i}"));
+        }
+        let log = fs::read_to_string(&files.log).unwrap();
+        assert_eq!(log.lines().count(), 200);
+        let head = fs::metadata(&files.head).unwrap().len();
+        assert!(
+            head < first_head + 16,
+            "the head grew from {first_head} to {head} bytes"
+        );
+        assert!(marked(&files.legacy), "a new shard carries no marker");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A new shard writes the marker before its first record, so an earlier release, which
+    /// lists and parses every `.shard` file, refuses the store rather than read the shard as
+    /// empty and extend it from sequence 0.
+    #[test]
+    fn a_new_shard_is_marked_so_an_earlier_release_refuses_the_store() {
+        let dir = tmp_dir("new-marked");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        append(&s, "acme", "line-0");
+        let left = fs::read(&files.legacy).expect("a new shard left no .shard file");
+        assert!(
+            serde_json::from_slice::<LegacyShard>(&left).is_err(),
+            "an earlier release could read a new shard as an earlier-layout one"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A crash before a new shard's first record commits leaves a shard that reads as empty
+    /// and takes the record again, rather than one refused for a log with no head.
+    #[test]
+    fn a_new_shard_a_crash_left_before_its_first_record_reads_as_empty() {
+        let dir = tmp_dir("new-crash");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        // After the marker; then after the head with no cursor and part of the line.
+        atomic_write_json(&files.legacy, &MOVED).unwrap();
+        assert_eq!(history(&s, "acme"), (None, Vec::new()));
+        atomic_write_json(
+            &files.head,
+            &FileHead {
+                cursor: None,
+                log_len: 0,
+            },
+        )
+        .unwrap();
+        fs::write(&files.log, "line-").unwrap();
+        assert_eq!(history(&s, "acme"), (None, Vec::new()));
+        assert!(
+            s.list_shards().unwrap().is_empty(),
+            "a shard with no committed record is listed"
+        );
+        append(&s, "acme", "line-0");
+        assert_eq!(s.list_shards().unwrap(), ["acme"]);
+        assert_eq!(fs::read_to_string(&files.log).unwrap(), "line-0\n");
+        assert_eq!(history(&s, "acme").1, ["line-0"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A shard file that does not read fails the listing, naming the file, as an altered
+    /// earlier-layout shard does. A `.shard` file beside a head is read by the shard's
+    /// sections, which refuse it by name, and a head with no cursor beside an earlier-layout
+    /// file holding history is listed and refused.
+    #[test]
+    fn a_shard_file_that_does_not_read_is_refused_by_name() {
+        let dir = tmp_dir("unreadable");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        append(&s, "good", "line-0");
+        append(&s, "other", "line-0");
+        let other = s.files("other").unwrap();
+        fs::write(&other.legacy, "{not json").unwrap();
+        let crafted = s.files("crafted").unwrap();
+        atomic_write_json(
+            &crafted.head,
+            &FileHead {
+                cursor: None,
+                log_len: 0,
+            },
+        )
+        .unwrap();
+        fs::write(
+            &crafted.legacy,
+            serde_json::to_vec(&serde_json::json!({
+                "cursor": {"next_seq": 1, "last_hash": "h1"},
+                "records": [{"seq": 0, "record_json": "old-0"}],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(s.list_shards().unwrap(), ["crafted", "good", "other"]);
+        let e = s
+            .with_shard("other", &mut |_, _| Ok(None))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains(&other.legacy.display().to_string()), "{e}");
+        assert!(s.with_shard("crafted", &mut |_, _| Ok(None)).is_err());
+        assert_eq!(history(&s, "good").1, ["line-0"]);
+
+        append(&s, "broken", "line-0");
+        let broken = s.files("broken").unwrap();
+        fs::write(&broken.head, "{not json").unwrap();
+        let e = s.list_shards().unwrap_err().to_string();
+        assert!(e.contains(&broken.head.display().to_string()), "{e}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// An earlier-layout file beside a head whose records the log does not hold was written
+    /// by an earlier release after the conversion. Both sections refuse the shard, and the
+    /// file is left as it is rather than replaced by the marker.
+    #[test]
+    fn an_earlier_release_write_beside_a_head_is_refused_not_overwritten() {
+        let dir = tmp_dir("rolled-back");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        append(&s, "acme", "new-0");
+        append(&s, "acme", "new-1");
+        let written = serde_json::to_vec(&serde_json::json!({
+            "cursor": {"next_seq": 1, "last_hash": "h1"},
+            "records": [{"seq": 0, "record_json": "old-0"}],
+        }))
+        .unwrap();
+        fs::write(&files.legacy, &written).unwrap();
+        assert!(s.with_shard("acme", &mut |_, _| Ok(None)).is_err());
+        let mut ran = false;
+        let r = s.with_shard_head("acme", &mut |_| {
+            ran = true;
+            Ok(Some((cursor(3, "h3"), "new-2".into())))
+        });
+        assert!(
+            r.is_err() && !ran,
+            "an append ran on a shard an earlier release wrote to"
+        );
+        assert_eq!(fs::read(&files.legacy).unwrap(), written);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A shard as an earlier release stored it is read as it is, by both sections and the
+    /// listing, without being rewritten by a read; its next append converts it, keeping every
+    /// record, and leaves at its old path a file the earlier release cannot read.
+    #[test]
+    fn an_earlier_layout_shard_is_read_as_it_is_and_converted_on_its_next_append() {
+        let dir = tmp_dir("convert");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        fs::write(
+            &files.legacy,
+            serde_json::to_vec(&serde_json::json!({
+                "cursor": {"next_seq": 2, "last_hash": "h2"},
+                "records": [
+                    {"seq": 0, "record_json": "line-0"},
+                    {"seq": 1, "record_json": "line-1"},
+                ],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            history(&s, "acme"),
+            (
+                Some(cursor(2, "h2")),
+                vec!["line-0".into(), "line-1".into()]
+            )
+        );
+        assert_eq!(s.list_shards().unwrap(), ["acme"]);
+        assert!(
+            !files.head.exists() && !files.log.exists(),
+            "a read converted the shard"
+        );
+
+        append(&s, "acme", "line-2");
+        let (c, lines) = history(&s, "acme");
+        assert_eq!(c.unwrap().next_seq, 3);
+        assert_eq!(lines, ["line-0", "line-1", "line-2"]);
+        assert_eq!(s.list_shards().unwrap(), ["acme"]);
+        let marker = fs::read(&files.legacy).unwrap();
+        assert!(
+            serde_json::from_slice::<LegacyShard>(&marker).is_err(),
+            "an earlier release could still read the converted shard's old file"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// An append to a converted shard leaves its marker as it is. An earlier-layout file a
+    /// crash left beside the head, between writing the head and the marker, is replaced by
+    /// the marker at the next append, and its stale records are never read.
+    #[test]
+    fn a_converted_shard_keeps_its_marker_and_a_crash_left_file_gets_one() {
+        let dir = tmp_dir("marker");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        let earlier = serde_json::to_vec(&serde_json::json!({
+            "cursor": {"next_seq": 1, "last_hash": "h1"},
+            "records": [{"seq": 0, "record_json": "line-0"}],
+        }))
+        .unwrap();
+        fs::write(&files.legacy, &earlier).unwrap();
+        append(&s, "acme", "line-1");
+        assert!(marked(&files.legacy));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let before = fs::metadata(&files.legacy).unwrap().ino();
+            append(&s, "acme", "line-2");
+            let after = fs::metadata(&files.legacy).unwrap().ino();
+            assert_eq!(before, after, "an append rewrote the marker");
+        }
+        #[cfg(not(unix))]
+        append(&s, "acme", "line-2");
+
+        fs::write(&files.legacy, &earlier).unwrap();
+        assert!(!marked(&files.legacy));
+        append(&s, "acme", "line-3");
+        assert!(marked(&files.legacy));
+        let (c, lines) = history(&s, "acme");
+        assert_eq!(c.unwrap().next_seq, 4);
+        assert_eq!(lines, ["line-0", "line-1", "line-2", "line-3"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Log bytes past the committed length are an append that never committed: not read,
+    /// and dropped by the next append.
+    #[test]
+    fn a_log_tail_past_the_committed_length_is_not_read_and_is_dropped() {
+        let dir = tmp_dir("uncommitted-tail");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        append(&s, "acme", "line-0");
+        let mut log = fs::OpenOptions::new()
+            .append(true)
+            .open(&files.log)
+            .unwrap();
+        std::io::Write::write_all(&mut log, b"line-uncommitted\npartial").unwrap();
+        drop(log);
+        assert_eq!(history(&s, "acme").1, ["line-0"]);
+        append(&s, "acme", "line-1");
+        assert_eq!(fs::read_to_string(&files.log).unwrap(), "line-0\nline-1\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A log shorter than its head's committed length has lost committed records, and is
+    /// refused rather than extended.
+    #[test]
+    fn a_log_shorter_than_its_committed_length_is_refused() {
+        let dir = tmp_dir("short-log");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        let files = s.files("acme").unwrap();
+        append(&s, "acme", "line-0");
+        append(&s, "acme", "line-1");
+        fs::write(&files.log, "line-0\n").unwrap();
+        assert!(s.with_shard("acme", &mut |_, _| Ok(None)).is_err());
+        let mut ran = false;
+        let r = s.with_shard_head("acme", &mut |c| {
+            ran = true;
+            Ok(Some((
+                cursor(c.map(|c| c.next_seq).unwrap_or(0) + 1, "h"),
+                "x".into(),
+            )))
+        });
+        assert!(
+            r.is_err() && ran,
+            "the head-only section reads the head alone, and an append onto the short log is \
+             refused"
+        );
+        assert!(
+            s.with_shard("acme", &mut |_, _| Ok(None)).is_err(),
+            "a refused log stays refused"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn file_ledger_head_store_roundtrips_and_persists_across_a_fresh_handle() {
         let root = tmp_dir("fhs-roundtrip");
@@ -637,6 +1359,7 @@ mod tests {
                     HeadCursor {
                         next_seq: 1,
                         last_hash: "h0".into(),
+                        signers: None,
                     },
                     "line-0".into(),
                 )))
@@ -656,7 +1379,8 @@ mod tests {
                 Some((
                     Some(HeadCursor {
                         next_seq: 1,
-                        last_hash: "h0".into()
+                        last_hash: "h0".into(),
+                        signers: None
                     }),
                     1,
                     0
@@ -676,7 +1400,8 @@ mod tests {
             cursor,
             Some(HeadCursor {
                 next_seq: 1,
-                last_hash: "h0".into()
+                last_hash: "h0".into(),
+                signers: None
             })
         );
         assert_eq!(records.len(), 1);
@@ -715,6 +1440,7 @@ mod tests {
                     HeadCursor {
                         next_seq: 1,
                         last_hash: hash.into(),
+                        signers: None,
                     },
                     "line".into(),
                 )))
@@ -762,6 +1488,7 @@ mod tests {
                                     HeadCursor {
                                         next_seq,
                                         last_hash: format!("h{my_index}"),
+                                        signers: None,
                                     },
                                     format!("record-{my_index}"),
                                 )))
@@ -845,6 +1572,7 @@ mod tests {
                     HeadCursor {
                         next_seq: 1,
                         last_hash: "h".into(),
+                        signers: None,
                     },
                     "line".into(),
                 )))
@@ -856,7 +1584,7 @@ mod tests {
         for entry in std::fs::read_dir(&root).unwrap() {
             let entry = entry.unwrap();
             let name = entry.file_name().to_string_lossy().into_owned();
-            if let Some(stem) = name.strip_suffix(".shard") {
+            if let Some(stem) = name.strip_suffix(".head") {
                 assert!(
                     stem.bytes().all(|b| b.is_ascii_hexdigit()),
                     "shard stem must be pure hex, got {stem:?}"
@@ -891,40 +1619,50 @@ mod tests {
         assert!(shard_from_hex("zz").is_err());
     }
 
-    /// A shard file holding records but no cursor is an altered store, not a shard with no
-    /// history: it is refused wherever it is read, so no key extends it from sequence 0 again.
+    /// An earlier-layout shard file holding records but no cursor, or a log holding records
+    /// with no head beside it, is an altered store, not a shard with no history: it is
+    /// refused wherever it is read, so no key extends it from sequence 0 again.
     #[test]
-    fn a_shard_file_with_records_and_no_cursor_is_refused() {
-        let dir = tmp_dir("records-no-cursor");
+    fn a_shard_with_records_and_no_cursor_is_refused_in_either_layout() {
+        fn refused(s: &FileLedgerHeadStore, layout: &str) {
+            assert!(
+                s.list_shards().is_err(),
+                "{layout}: a shard with records and no cursor was listed or skipped"
+            );
+            let mut ran = false;
+            let r = s.with_shard_head("acme", &mut |_| {
+                ran = true;
+                Ok(None)
+            });
+            assert!(
+                r.is_err() && !ran,
+                "{layout}: the altered shard was opened for appending"
+            );
+        }
+
+        let dir = tmp_dir("records-no-cursor-legacy");
         let s = FileLedgerHeadStore::new(&dir).unwrap();
-        s.with_shard("acme", &mut |_, _| {
-            Ok(Some((
-                HeadCursor {
-                    next_seq: 1,
-                    last_hash: "h0".into(),
-                },
-                "line-0".into(),
-            )))
+        let legacy = s.files("acme").unwrap().legacy;
+        fs::write(
+            &legacy,
+            serde_json::to_vec(&serde_json::json!({
+                "cursor": null,
+                "records": [{"seq": 0, "record_json": "line-0"}],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        refused(&s, "earlier layout");
+        let _ = fs::remove_dir_all(&dir);
+
+        let dir = tmp_dir("records-no-cursor-log");
+        let s = FileLedgerHeadStore::new(&dir).unwrap();
+        s.with_shard_head("acme", &mut |_| {
+            Ok(Some((cursor(1, "h0"), "line-0".into())))
         })
         .unwrap();
-        let path = s.shard_path("acme").unwrap();
-        let mut state: serde_json::Value =
-            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        state["cursor"] = serde_json::Value::Null;
-        fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
-        assert!(
-            s.list_shards().is_err(),
-            "a shard with records and no cursor was listed or skipped"
-        );
-        let mut ran = false;
-        let r = s.with_shard("acme", &mut |_, _| {
-            ran = true;
-            Ok(None)
-        });
-        assert!(
-            r.is_err() && !ran,
-            "the altered shard was opened for appending"
-        );
+        fs::remove_file(s.files("acme").unwrap().head).unwrap();
+        refused(&s, "log and head");
         let _ = fs::remove_dir_all(&dir);
     }
 }

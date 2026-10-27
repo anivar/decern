@@ -26,7 +26,7 @@ use std::sync::Arc;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use decern_crypto::{Signer, SigningKey, VerifyingKey};
-use decern_store::{HeadCursor, LedgerHeadStore, StoreError};
+use decern_store::{HeadCursor, KeySpan, LedgerHeadStore, ShardSigners, StoreError};
 use serde::Serialize;
 
 use crate::{
@@ -102,9 +102,8 @@ impl ShardedLedger {
 
     /// Every shard the underlying store has ever seen a head cursor for —
     /// store ground truth (never derived from the live Directory) — a
-    /// distinction that matters for shard verification. Public so callers outside this crate (the
-    /// event forwarder — "which shards exist to sweep") can enumerate shards
-    /// without reaching into the private `store` field themselves.
+    /// distinction that matters for shard verification. Public so a caller outside this
+    /// crate can enumerate shards without reaching into the private `store` field.
     pub fn list_shards(&self) -> Result<Vec<String>, LedgerError> {
         self.store.list_shards().map_err(store_to_ledger_err)
     }
@@ -116,7 +115,44 @@ impl ShardedLedger {
 
     /// Append `entry` to `shard`'s chain — the sharded analog of
     /// `Ledger::append`, held under `shard`'s exclusive lock for the write.
+    ///
+    /// Reads the shard's cursor alone, not its records: the key spans the cursor carries are
+    /// what the rotation guard checks. A cursor
+    /// without current spans, from an earlier release or a writer that does not keep them,
+    /// sends this one append through [`Self::critical_section`], which reads the history
+    /// once and writes spans for the appends after it.
     pub fn append(&self, shard: &str, entry: Entry) -> Result<Record, LedgerError> {
+        let mut entry = Some(entry);
+        let mut sealed: Option<Result<Record, LedgerError>> = None;
+        self.store
+            .with_shard_head(shard, &mut |cursor| {
+                let Some(spans) = current_spans(cursor) else {
+                    return Ok(None);
+                };
+                let Some(entry) = entry.take() else {
+                    return Ok(None);
+                };
+                match self.seal(shard, cursor, spans, entry) {
+                    Ok((record, new_cursor, line)) => {
+                        sealed = Some(Ok(record));
+                        Ok(Some((new_cursor, line)))
+                    }
+                    Err(e) => {
+                        sealed = Some(Err(e));
+                        Ok(None)
+                    }
+                }
+            })
+            .map_err(store_to_ledger_err)?;
+        if let Some(outcome) = sealed {
+            return outcome;
+        }
+        let Some(entry) = entry else {
+            return Err(LedgerError::Io {
+                path: format!("<sharded ledger, shard {shard}>"),
+                err: "append produced no record (store did not commit)".into(),
+            });
+        };
         let (record, _) = self.critical_section(shard, move |_existing| Ok((Some(entry), ())))?;
         // `critical_section`'s closure above always returns `Some(entry)`, so
         // `append` never legitimately produces `None` — a `None` here would
@@ -184,69 +220,20 @@ impl ShardedLedger {
                 };
                 out_value = value;
 
-                let Some(mut entry) = maybe_entry else {
+                let Some(entry) = maybe_entry else {
                     return Ok(None); // f decided nothing appends (e.g. a deny).
                 };
-                let kid = key_fingerprint(&self.key.verifying_key());
-                if let Err(e) = may_extend(&parsed, &kid, &self.verifiers, shard) {
-                    inner_err = Some(e);
-                    return Ok(None);
+                let spans = spans_of(&parsed, &self.verifiers);
+                match self.seal(shard, cursor, spans, entry) {
+                    Ok((record, new_cursor, line)) => {
+                        out_record = Some(record);
+                        Ok(Some((new_cursor, line)))
+                    }
+                    Err(e) => {
+                        inner_err = Some(e);
+                        Ok(None)
+                    }
                 }
-
-                let next_seq = cursor.map(|c| c.next_seq).unwrap_or(0);
-                let prev_hash = cursor
-                    .map(|c| c.last_hash.clone())
-                    .unwrap_or_else(|| GENESIS.to_owned());
-                entry.seq = next_seq;
-
-                let entry_json = match serde_json::to_string(&entry) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        inner_err = Some(LedgerError::Serde(e.to_string()));
-                        return Ok(None);
-                    }
-                };
-                let hash = chain_hash(entry_json.as_bytes(), &prev_hash);
-                let sig = self.key.sign(&hash);
-                let hash_hex = hex::encode(hash);
-                let sig_b64 = B64.encode(sig.to_bytes());
-
-                let raw_entry = match serde_json::value::RawValue::from_string(entry_json) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        inner_err = Some(LedgerError::Serde(e.to_string()));
-                        return Ok(None);
-                    }
-                };
-                let line = match serde_json::to_string(&ShardRecordOut {
-                    entry: &raw_entry,
-                    prev: &prev_hash,
-                    hash: &hash_hex,
-                    sig_b64: &sig_b64,
-                    kid: Some(&kid),
-                }) {
-                    Ok(l) => l,
-                    Err(e) => {
-                        inner_err = Some(LedgerError::Serde(e.to_string()));
-                        return Ok(None);
-                    }
-                };
-
-                out_record = Some(Record {
-                    entry,
-                    prev: prev_hash,
-                    hash: hash_hex.clone(),
-                    sig_b64,
-                    kid: Some(kid),
-                });
-
-                Ok(Some((
-                    HeadCursor {
-                        next_seq: next_seq + 1,
-                        last_hash: hash_hex,
-                    },
-                    line,
-                )))
             })
             .map_err(store_to_ledger_err)?;
 
@@ -256,20 +243,77 @@ impl ShardedLedger {
         Ok((out_record, out_value))
     }
 
+    /// Check that this process's key may extend a shard whose keys took over at `spans`,
+    /// then chain and sign `entry` onto `cursor`: the record, the cursor after it, carrying
+    /// the spans through the new record, and the stored line.
+    fn seal(
+        &self,
+        shard: &str,
+        cursor: Option<&HeadCursor>,
+        mut spans: Vec<KeySpan>,
+        mut entry: Entry,
+    ) -> Result<(Record, HeadCursor, String), LedgerError> {
+        let kid = key_fingerprint(&self.key.verifying_key());
+        may_extend(&spans, &kid, &self.verifiers, shard)?;
+
+        let next_seq = cursor.map(|c| c.next_seq).unwrap_or(0);
+        let prev_hash = cursor
+            .map(|c| c.last_hash.clone())
+            .unwrap_or_else(|| GENESIS.to_owned());
+        entry.seq = next_seq;
+        let entry_json =
+            serde_json::to_string(&entry).map_err(|e| LedgerError::Serde(e.to_string()))?;
+        let hash = chain_hash(entry_json.as_bytes(), &prev_hash);
+        let sig = self.key.sign(&hash);
+        let hash_hex = hex::encode(hash);
+        let sig_b64 = B64.encode(sig.to_bytes());
+        let raw_entry = serde_json::value::RawValue::from_string(entry_json)
+            .map_err(|e| LedgerError::Serde(e.to_string()))?;
+        let line = serde_json::to_string(&ShardRecordOut {
+            entry: &raw_entry,
+            prev: &prev_hash,
+            hash: &hash_hex,
+            sig_b64: &sig_b64,
+            kid: Some(&kid),
+        })
+        .map_err(|e| LedgerError::Serde(e.to_string()))?;
+
+        if spans.last().map(|s| s.kid.as_str()) != Some(kid.as_str()) {
+            spans.push(KeySpan {
+                kid: kid.clone(),
+                first_seq: next_seq,
+            });
+        }
+        let new_cursor = HeadCursor {
+            next_seq: next_seq + 1,
+            last_hash: hash_hex.clone(),
+            signers: Some(ShardSigners {
+                through: next_seq + 1,
+                spans,
+            }),
+        };
+        let record = Record {
+            entry,
+            prev: prev_hash,
+            hash: hash_hex,
+            sig_b64,
+            kid: Some(kid),
+        };
+        Ok((record, new_cursor, line))
+    }
+
     /// A per-shard analog of `Ledger::checkpoint`: the shard's current head
     /// (root = last_hash, count = next_seq), signed with this ledger's key.
     /// A never-written shard checkpoints at genesis (root =
     /// `GENESIS`, count = 0) — the same "shard exists with zero history"
     /// state `append`'s first call on it would extend, not an error.
     ///
-    /// Reads the cursor directly via `LedgerHeadStore::with_shard` rather
-    /// than going through `critical_section` (which also parses every
-    /// record's JSON to hand the caller a full read) — a checkpoint only
-    /// needs the cursor, so this skips that work entirely.
+    /// Reads the cursor alone, through `LedgerHeadStore::with_shard_head` — a checkpoint
+    /// needs nothing else, so its cost does not grow with the shard.
     pub fn checkpoint(&self, shard: &str, ts_ms: u64) -> Result<Checkpoint, LedgerError> {
         let mut cursor_out: Option<HeadCursor> = None;
         self.store
-            .with_shard(shard, &mut |cursor, _existing| {
+            .with_shard_head(shard, &mut |cursor| {
                 cursor_out = cursor.cloned();
                 Ok(None)
             })
@@ -487,14 +531,15 @@ pub type ShardVerification = (String, Result<crate::VerifyReport, LedgerError>);
 /// `kid` may not follow. Several processes append to one shard, so one still running under
 /// the old key after another rotated would put old-key records after new-key ones, and the
 /// shard would stop verifying. The latest signer must be `kid`, or a key this process holds
-/// that `kid` has not signed before.
+/// that `kid` has not signed before. `spans` are the shard's keys in the order each took
+/// over; an empty `kid` stands for a record no key this process holds could be attributed to.
 fn may_extend(
-    existing: &[serde_json::Value],
+    spans: &[KeySpan],
     kid: &str,
     verifiers: &[VerifyingKey],
     shard: &str,
 ) -> Result<(), LedgerError> {
-    let Some(tail) = existing.last() else {
+    let Some(last) = spans.last() else {
         return Ok(());
     };
     let refuse = |why: String| {
@@ -503,38 +548,60 @@ fn may_extend(
             why,
         })
     };
-    let Some(last) = signer_of(tail, verifiers) else {
+    if last.kid.is_empty() {
         return refuse(format!(
             "shard {shard}'s last record is signed by no key this process holds; another \
              process may have rotated to one"
         ));
-    };
-    if last == kid {
+    }
+    if last.kid == kid {
         return Ok(());
     }
-    let signers: Vec<Option<String>> = existing.iter().map(|r| signer_of(r, verifiers)).collect();
-    if let Some(mine) = signers.iter().rposition(|s| s.as_deref() == Some(kid)) {
-        let (seq, next) = signers
-            .iter()
-            .enumerate()
-            .skip(mine + 1)
-            .find_map(|(i, s)| {
-                s.as_deref()
-                    .filter(|k| *k != kid)
-                    .map(|k| (i, k.to_owned()))
-            })
-            .unwrap_or((existing.len(), last));
+    if let Some(mine) = spans.iter().rposition(|s| s.kid == kid) {
+        let next = &spans[mine + 1];
         return refuse(format!(
-            "key {next} signed shard {shard} after it, from seq {seq}"
+            "key {} signed shard {shard} after it, from seq {}",
+            next.kid, next.first_seq
         ));
     }
-    if !verifiers.iter().any(|v| key_fingerprint(v) == last) {
+    if !verifiers.iter().any(|v| key_fingerprint(v) == last.kid) {
         return refuse(format!(
-            "shard {shard} was last signed by key {last}, which this process does not hold; \
-             another process may have rotated to it"
+            "shard {shard} was last signed by key {}, which this process does not hold; \
+             another process may have rotated to it",
+            last.kid
         ));
     }
     Ok(())
+}
+
+/// The spans a cursor carries, when they cover every record it counts; `None` when they do
+/// not, so the history is read instead. A shard with no cursor has no records and no spans.
+fn current_spans(cursor: Option<&HeadCursor>) -> Option<Vec<KeySpan>> {
+    match cursor {
+        None => Some(Vec::new()),
+        Some(c) => c
+            .signers
+            .as_ref()
+            .filter(|s| s.through == c.next_seq)
+            .map(|s| s.spans.clone()),
+    }
+}
+
+/// A shard's key spans read from its records: each record attributed by [`signer_of`], and
+/// a run of records under one key one span. A record no key can be attributed to opens a
+/// span with an empty key id.
+fn spans_of(records: &[serde_json::Value], verifiers: &[VerifyingKey]) -> Vec<KeySpan> {
+    let mut spans: Vec<KeySpan> = Vec::new();
+    for (seq, record) in records.iter().enumerate() {
+        let kid = signer_of(record, verifiers).unwrap_or_default();
+        if spans.last().map(|s| &s.kid) != Some(&kid) {
+            spans.push(KeySpan {
+                kid,
+                first_seq: seq as u64,
+            });
+        }
+    }
+    spans
 }
 
 /// The key a stored record is attributed to: the one its `kid` names, taken as written, or for a
@@ -676,15 +743,86 @@ mod tests {
                     r#"{{"entry":{entry_json},"prev":"{prev}","hash":"{}","sig_b64":"{sig}"{kid}}}"#,
                     hex::encode(hash)
                 );
+                // A writer that does not keep key spans, as an earlier release, leaves them
+                // as they were.
                 Ok(Some((
                     HeadCursor {
                         next_seq: next_seq + 1,
                         last_hash: hex::encode(hash),
+                        signers: cursor.and_then(|c| c.signers.clone()),
                     },
                     line,
                 )))
             })
             .unwrap();
+    }
+
+    fn signers(store: &dyn LedgerHeadStore, shard: &str) -> Option<ShardSigners> {
+        let mut out = None;
+        store
+            .with_shard_head(shard, &mut |c| {
+                out = c.and_then(|c| c.signers.clone());
+                Ok(None)
+            })
+            .unwrap();
+        out
+    }
+
+    /// An append keeps in the shard's cursor the keys that have signed it, each from its
+    /// first record, so the next append's guard reads no history. A cursor without them, as
+    /// an earlier release writes, gets them from the history on its next append.
+    #[test]
+    fn an_append_records_in_the_cursor_the_keys_that_signed_the_shard() {
+        let store: Arc<dyn LedgerHeadStore> = Arc::new(MemoryLedgerHeadStore::new());
+        let old = decern_crypto::generate().unwrap();
+        let new = decern_crypto::generate().unwrap();
+        let span = |key: &SigningKey, first_seq| KeySpan {
+            kid: key_fingerprint(&key.verifying_key()),
+            first_seq,
+        };
+        append_crafted(&*store, "acme", &old, true);
+        assert_eq!(signers(&*store, "acme"), None);
+        let first = ShardedLedger::new(store.clone(), old.clone(), Vec::new());
+        first.append("acme", entry("Read", "r1")).unwrap();
+        first.append("acme", entry("Read", "r2")).unwrap();
+        let rotated = ShardedLedger::new(store.clone(), new.clone(), vec![old.verifying_key()]);
+        rotated.append("acme", entry("Read", "r3")).unwrap();
+        assert_eq!(
+            signers(&*store, "acme"),
+            Some(ShardSigners {
+                through: 4,
+                spans: vec![span(&old, 0), span(&new, 3)],
+            })
+        );
+        assert_eq!(rotated.self_verify("acme").unwrap().entries, 4);
+    }
+
+    /// Spans a writer that does not keep them has left behind the cursor are not trusted:
+    /// the history decides, so a key superseded by a record the spans do not show still may
+    /// not extend the shard.
+    #[test]
+    fn spans_a_writer_left_behind_are_not_trusted() {
+        let store: Arc<dyn LedgerHeadStore> = Arc::new(MemoryLedgerHeadStore::new());
+        let old = decern_crypto::generate().unwrap();
+        let new = decern_crypto::generate().unwrap();
+        let behind = ShardedLedger::new(store.clone(), old.clone(), Vec::new());
+        behind.append("acme", entry("Read", "r1")).unwrap();
+        append_crafted(&*store, "acme", &new, true);
+        assert_eq!(
+            signers(&*store, "acme").unwrap().through,
+            1,
+            "left behind at seq 1"
+        );
+        match behind.append("acme", entry("Read", "r2")).unwrap_err() {
+            LedgerError::KeySuperseded { why, .. } => {
+                assert!(
+                    why.contains(&key_fingerprint(&new.verifying_key())),
+                    "{why}"
+                );
+                assert!(why.contains("seq 1"), "{why}");
+            }
+            e => panic!("expected KeySuperseded: {e}"),
+        }
     }
 
     #[test]
@@ -971,6 +1109,7 @@ mod tests {
                     HeadCursor {
                         next_seq: c.next_seq + 1,
                         last_hash: wrong_hash.clone(),
+                        signers: None,
                     },
                     line.clone(),
                 )))
@@ -1043,19 +1182,19 @@ mod tests {
         );
 
         // Flip a byte INSIDE acme's stored record (resource id text, kept the same
-        // length so the outer `{cursor,records}` JSON still parses) — the store reads
-        // it back fine; the hash recompute is what must fire.
+        // length so the log's committed length still holds) — the store reads it back
+        // fine; the hash recompute is what must fire.
         let shard_file = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(Result::ok)
             .map(|e| e.path())
             .find(|p| {
-                p.extension().and_then(|e| e.to_str()) == Some("shard")
+                p.extension().and_then(|e| e.to_str()) == Some("log")
                     && std::fs::read_to_string(p)
                         .map(|s| s.contains("acme-r1"))
                         .unwrap_or(false)
             })
-            .expect("acme's .shard file");
+            .expect("acme's .log file");
         let corrupted = std::fs::read_to_string(&shard_file)
             .unwrap()
             .replace("acme-r1", "acme-rX");

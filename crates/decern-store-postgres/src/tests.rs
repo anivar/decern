@@ -82,6 +82,7 @@ fn roundtrip_append_advances_cursor_and_persists_across_a_fresh_handle() {
                     HeadCursor {
                         next_seq: 1,
                         last_hash: "h0".into(),
+                        signers: None,
                     },
                     "line-0".into(),
                 )))
@@ -102,7 +103,8 @@ fn roundtrip_append_advances_cursor_and_persists_across_a_fresh_handle() {
             Some((
                 Some(HeadCursor {
                     next_seq: 1,
-                    last_hash: "h0".into()
+                    last_hash: "h0".into(),
+                    signers: None
                 }),
                 1,
                 0
@@ -124,7 +126,8 @@ fn roundtrip_append_advances_cursor_and_persists_across_a_fresh_handle() {
         cursor,
         Some(HeadCursor {
             next_seq: 1,
-            last_hash: "h0".into()
+            last_hash: "h0".into(),
+            signers: None
         })
     );
     assert_eq!(records.len(), 1);
@@ -180,6 +183,7 @@ fn list_shards_is_sorted_and_only_committed() {
                     HeadCursor {
                         next_seq: 1,
                         last_hash: hash.into(),
+                        signers: None,
                     },
                     "line".into(),
                 )))
@@ -237,6 +241,7 @@ fn two_instances_two_connections_serialize_the_critical_section() {
                                 HeadCursor {
                                     next_seq,
                                     last_hash: format!("h{my_index}"),
+                                    signers: None,
                                 },
                                 format!("record-{my_index}"),
                             )))
@@ -318,6 +323,7 @@ fn weird_shard_ids_round_trip_and_list_in_byte_order() {
                     HeadCursor {
                         next_seq: 1,
                         last_hash: "h".into(),
+                        signers: None,
                     },
                     "line".into(),
                 )))
@@ -478,4 +484,132 @@ fn a_store_whose_worker_has_stopped_has_failed() {
         section_within(&store, &uniq("after")),
         Some(Err(_))
     ));
+}
+
+/// The cursor's key spans survive the head row, and the head-only section sees the cursor
+/// `with_shard` sees and commits as it does (DB-gated).
+#[test]
+fn key_spans_round_trip_and_the_head_only_section_matches_with_shard() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    let shard = uniq("headonly");
+    let store = PostgresLedgerHeadStore::new(&url).unwrap();
+    let spans = decern_store::ShardSigners {
+        through: 1,
+        spans: vec![decern_store::KeySpan {
+            kid: "k1".into(),
+            first_seq: 0,
+        }],
+    };
+    store
+        .with_shard_head(&shard, &mut |c| {
+            assert!(c.is_none());
+            Ok(Some((
+                HeadCursor {
+                    next_seq: 1,
+                    last_hash: "h1".into(),
+                    signers: Some(spans.clone()),
+                },
+                "line-0".into(),
+            )))
+        })
+        .unwrap();
+    let mut head_only = None;
+    store
+        .with_shard_head(&shard, &mut |c| {
+            head_only = c.cloned();
+            Ok(None)
+        })
+        .unwrap();
+    let mut full = None;
+    store
+        .with_shard(&shard, &mut |c, records| {
+            full = Some((c.cloned(), records.len()));
+            Ok(None)
+        })
+        .unwrap();
+    assert_eq!(head_only.as_ref().unwrap().signers, Some(spans));
+    assert_eq!(full, Some((head_only, 1)));
+}
+
+/// Open a store on its own thread and give up after `secs` rather than wait with it.
+fn open_within(url: &str, secs: u64) -> Option<Result<(), StoreError>> {
+    let url = url.to_owned();
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(PostgresLedgerHeadStore::new(&url).map(drop));
+    });
+    rx.recv_timeout(Duration::from_secs(secs)).ok()
+}
+
+/// A boot that finds the `signers` column takes no lock on the head table, so a reader
+/// holding the table open, a long query or a dump, does not hold the boot (DB-gated).
+#[test]
+fn a_boot_that_finds_the_column_waits_on_no_reader() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    drop(PostgresLedgerHeadStore::new(&url).unwrap());
+    let mut reader = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    let mut open = reader.transaction().unwrap();
+    open.query("SELECT 1 FROM decern_ledger_head LIMIT 1", &[])
+        .unwrap();
+    let booted = open_within(&url, 10);
+    open.rollback().unwrap();
+    assert!(
+        matches!(booted, Some(Ok(()))),
+        "a boot waited on a reader of the head table: {booted:?}"
+    );
+}
+
+/// A boot that has to add the `signers` column gives up behind a reader and says what to
+/// run, rather than wait with every append queued behind it; once the reader is gone it
+/// adds the column (DB-gated). Run in a schema of its own, through the URL's search path.
+#[test]
+fn a_boot_that_must_add_the_column_gives_up_behind_a_reader() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let schema = format!("decern_upgrade_{nanos}");
+    let mut raw = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    raw.batch_execute(&format!(
+        "CREATE SCHEMA {schema}; \
+         CREATE TABLE {schema}.decern_ledger_head (\
+             shard TEXT PRIMARY KEY, next_seq BIGINT NOT NULL, last_hash TEXT NOT NULL);"
+    ))
+    .unwrap();
+    let sep = if url.contains('?') { '&' } else { '?' };
+    let scoped = format!("{url}{sep}options=-c%20search_path%3D{schema}");
+
+    let mut reader = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    let mut open = reader.transaction().unwrap();
+    open.query(&format!("SELECT 1 FROM {schema}.decern_ledger_head"), &[])
+        .unwrap();
+    let refused = open_within(&scoped, 30);
+    open.rollback().unwrap();
+    let added = open_within(&scoped, 30);
+    let column: bool = raw
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = $1 AND table_name = 'decern_ledger_head' \
+             AND column_name = 'signers')",
+            &[&schema],
+        )
+        .unwrap()
+        .get(0);
+    raw.batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+        .unwrap();
+
+    assert!(
+        matches!(&refused, Some(Err(StoreError::Io { err, .. }))
+            if err.contains("ALTER TABLE decern_ledger_head ADD COLUMN signers TEXT")),
+        "{refused:?}"
+    );
+    assert!(matches!(added, Some(Ok(()))), "{added:?}");
+    assert!(column, "the boot did not add the column");
 }

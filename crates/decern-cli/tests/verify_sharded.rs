@@ -26,19 +26,19 @@ fn entry(resource_id: &str) -> Entry {
     }
 }
 
-/// Find the on-disk `.shard` file whose stored records mention `marker`.
+/// Find the on-disk shard log whose stored records mention `marker`.
 fn shard_file_containing(dir: &std::path::Path, marker: &str) -> std::path::PathBuf {
     std::fs::read_dir(dir)
         .unwrap()
         .filter_map(Result::ok)
         .map(|e| e.path())
         .find(|p| {
-            p.extension().and_then(|e| e.to_str()) == Some("shard")
+            p.extension().and_then(|e| e.to_str()) == Some("log")
                 && std::fs::read_to_string(p)
                     .map(|s| s.contains(marker))
                     .unwrap_or(false)
         })
-        .unwrap_or_else(|| panic!("no .shard file containing {marker:?}"))
+        .unwrap_or_else(|| panic!("no shard log containing {marker:?}"))
 }
 
 #[test]
