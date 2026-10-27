@@ -15,7 +15,7 @@ use decern_kernel::{EntityRef, Kernel, Model};
 #[command(
     name = "decern",
     version,
-    about = "Proven authorization: prove, decide, verify"
+    about = "Proven authorization: prove, decide, explain, verify"
 )]
 struct Cli {
     #[command(subcommand)]

@@ -44,8 +44,9 @@ pub(crate) struct Args {
     /// with `--features postgres`). Mutually exclusive with `--ledger`; requires `--key`.
     #[arg(long, value_name = "DIR_OR_POSTGRES_URL")]
     pub(crate) sharded: Option<String>,
-    /// 32-byte hex signing seed file; created if absent, required with `--sharded`. Omit for
-    /// an ephemeral key, which a ledger that already exists refuses.
+    /// 32-byte hex signing seed file, required with `--sharded`. When a missing one is
+    /// created and when it is refused is in docs/CLI.md. Omit for an ephemeral key, which a
+    /// ledger that already exists refuses.
     #[arg(long, value_name = "PATH")]
     pub(crate) key: Option<PathBuf>,
     /// Hex Ed25519 public key of a ledger signing key this deployment rotated away from.

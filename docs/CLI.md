@@ -289,7 +289,7 @@ names one posture:
   RFC 9421 signature over the request by the key the token's `cnf` confirms, which must name
   its `alg` too. The token is the `Signature-Key` member under the signature's own label, scheme
   `jwt`. The signature must cover `@method`, `@authority`, `@path` and `signature-key`, and
-  `content-digest` on a request with a body, in any order and beside any other header field;
+  `content-digest` on a POST or any request with a body, in any order and beside any other header field;
   an `alg` parameter is not read, `nonce` and `tag` are refused, `expires` is honoured, and
   `created` may be up to 60 seconds either side of this clock. A second `jwt` member in
   `Signature-Key` is refused. An agent token carries no `aud`, so the request's authority must

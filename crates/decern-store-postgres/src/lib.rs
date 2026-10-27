@@ -19,8 +19,8 @@
 //! (via `cedar-policy` → `stacker`) compiles a small assembly routine in every
 //! build. This crate is the ONE documented exception for TLS: multi-host Postgres
 //! needs it, and TLS providers link compiled C/assembly. The exception is contained
-//! here: the default build of the binaries does not depend on this crate, and a build
-//! with `--features postgres` does. We use `rustls`
+//! here: the default build of the binaries does not depend on this crate, and
+//! `decern-serve` built with `--features postgres` does. We use `rustls`
 //! with the `ring` provider (not `aws-lc-rs`, which needs a `cmake` toolchain),
 //! keeping the exception a single, audit-scoped stack. See this crate's README.
 //!

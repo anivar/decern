@@ -73,8 +73,8 @@ pub(crate) fn reserved_tenant_collision(dir: &Directory) -> Option<String> {
     from_principals.or_else(from_resources).or_else(from_orgs)
 }
 
-/// AuthZEN Access Evaluation response: a boolean `decision`, with any reasons (on allow)
-/// or errors (on deny) under `context`.
+/// AuthZEN Access Evaluation response: a boolean `decision`, with the kernel's `reasons` and
+/// `errors`, when there are any, under `context`.
 pub(crate) fn evaluation_body(decision: bool, reasons: &[String], errors: &[String]) -> Value {
     let mut body = json!({ "decision": decision });
     let mut ctx = serde_json::Map::new();

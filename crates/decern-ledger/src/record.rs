@@ -68,7 +68,8 @@ pub struct Entry {
     /// The caller the server verified when it took this request — who ASSERTED the
     /// subject, distinct from the subject itself and from the accountable sponsor.
     /// Present under every credential posture, where it is what that posture verified, on
-    /// decision records and mission lifecycle records (`Mission.Approve`, `Mission.Terminate`).
+    /// decision and search records and on mission lifecycle records (`Mission.Approve`,
+    /// `Mission.Terminate`).
     /// Absent under a trusted front: an assertion the server did not verify itself does not
     /// belong on a permanent record. Descriptive, never a decision input.
     ///
