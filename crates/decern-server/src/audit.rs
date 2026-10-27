@@ -342,15 +342,15 @@ pub(crate) async fn subject_side_disclosure(State(st): State<AppState>) -> Json<
             .collect::<Vec<_>>(),
         "standing_token_formats": ["compact-jws-eddsa"],
         "standing_issuer_discovery": "configured",
-        "outcomes_supported": ["affirm_prior_decision", "reevaluate_with_subject_context"],
+        "outcomes_supported": crate::challenge::Outcome::NAMES,
+        // Said here, beside the names, so no reader takes an outcome for a second decision.
+        "outcomes_describe": "whether a challenge whose standing names a party the decision's \
+                              record is about bears on the facts the decision was made from; \
+                              the decision is not evaluated again and stands as recorded",
         "outcomes_not_supported": {
             "escalate_to_approver": "no approver service is configured for this deployment",
         },
-        "challenge_bases_that_reopen_a_decision": [
-            "factual-error",
-            "category-mismatch",
-            "change-in-circumstances",
-        ],
+        "challenge_bases_that_bear_on_the_facts": crate::challenge::BASES_ON_THE_FACTS,
         "notice": {
             "emitted_by_this_server": false,
             "recorded_by_this_server": true,

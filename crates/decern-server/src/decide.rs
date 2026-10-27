@@ -612,18 +612,22 @@ fn answer_challenge(
     };
     let c = challenge::parse(raw, &st.standing_issuers, p.now_s)
         .map_err(|e| Refusal::unprocessable(e.kind(), e.detail()))?;
-    let subject_matches = p
-        .decision_subject
-        .as_ref()
-        .is_some_and(|ds| ds.handle == c.standing.decision_subject);
-    let (outcome, outcome_basis) = match challenge::answer(&c, subject_matches) {
-        challenge::Outcome::AffirmPriorDecision { affirm_basis } => {
-            ("affirm_prior_decision", affirm_basis)
-        }
-        challenge::Outcome::ReevaluateWithSubjectContext { reevaluation_basis } => {
-            ("reevaluate_with_subject_context", reevaluation_basis)
-        }
+    // The parties the record is about: the third party it keeps, or, when it keeps none, the
+    // requester and the resource's owner, which it names already. A handle the request sent
+    // and the record dropped changes nothing.
+    let owner = st
+        .kernel
+        .directory()
+        .resources
+        .get(&p.resource.id)
+        .map(|r| r.owner.as_str());
+    let about: Vec<&str> = match &p.decision_subject {
+        Some(ds) => vec![ds.handle.as_str()],
+        None => std::iter::once(p.subject.id.as_str())
+            .chain(owner)
+            .collect(),
     };
+    let (outcome, outcome_basis) = challenge::answer(&c, &about).into_record();
     Ok(Some(decern_ledger::ChallengeRecord {
         decision_ref: c.decision_ref,
         decision_subject: c.standing.decision_subject,
@@ -1263,8 +1267,8 @@ mod tests {
             decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
         let last = records.last().expect("recorded");
         assert_eq!(
-            last["entry"]["challenge"]["outcome"], "reevaluate_with_subject_context",
-            "a basis bearing on the facts reopens the decision: {last}"
+            last["entry"]["challenge"]["outcome"], "challenge_classified",
+            "a basis bearing on the facts is classified as such: {last}"
         );
         assert_eq!(last["entry"]["challenge"]["decision_ref"], "dec-1");
         assert!(
@@ -1283,6 +1287,93 @@ mod tests {
         );
         // A decision naming an affected party is one they should hear about.
         assert_eq!(last["entry"]["notice_required"], true, "{last}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A challenge is classified when its standing names a party the decision's record is
+    /// about: the third party it keeps, or, when it keeps none, the requester or the resource's
+    /// owner. A handle the record drops changes nothing, so a requester or owner that names
+    /// itself is answered as one that names nobody. A kept third party is the only party; a
+    /// handle sent as an object is the same handle; anyone else is affirmed.
+    #[tokio::test]
+    async fn a_challenge_is_classified_only_for_a_party_the_record_is_about() {
+        let base = mission_base();
+        let (mut st, pubkey) = mission_state_at(&base);
+        let issuer = decern_crypto::generate().unwrap();
+        st.standing_issuers = Arc::new(vec![issuer.verifying_key()]);
+        let exp = now_secs().unwrap() + 3600;
+
+        // claim1 is owned by corp; unlisted is in no directory and so has no owner.
+        for (named, standing, resource) in [
+            (Some(json!("agent1")), "agent1", "claim1"),
+            (Some(json!("corp")), "corp", "claim1"),
+            (
+                Some(json!({"handle": "ppid:carol"})),
+                "ppid:carol",
+                "claim1",
+            ),
+            (Some(json!("ppid:carol")), "ppid:dave", "claim1"),
+            (Some(json!("agent1")), "ppid:dave", "claim1"),
+            (Some(json!("ppid:carol")), "agent1", "claim1"),
+            (Some(json!("ppid:carol")), "corp", "claim1"),
+            (None, "ppid:dave", "claim1"),
+            (None, "agent1", "claim1"),
+            (None, "corp", "claim1"),
+            (None, "agent1", "unlisted"),
+            (None, "corp", "unlisted"),
+        ] {
+            let mut context = json!({"subject_side_challenge": {
+                "standing_token": standing_token(&issuer, "dec-1", standing, exp),
+                "decision_ref": "dec-1",
+                "challenge_basis": ["factual-error"],
+                "requested_effect": "reverse",
+            }});
+            if let Some(named) = &named {
+                context["decision_subject"] = named.clone();
+            }
+            let req: DecideReq = serde_json::from_value(json!({
+                "subject": {"type": "Principal", "id": "agent1"},
+                "action": {"name": "Read"},
+                "resource": {"type": "Resource", "id": resource},
+                "context": context,
+            }))
+            .unwrap();
+            let (status, body) =
+                body_json(decide(State(st.clone()), None, Ok(Json(req))).await).await;
+            assert_eq!(status, StatusCode::OK, "{named:?}: {body}");
+        }
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
+        let outcomes: Vec<_> = records
+            .iter()
+            .map(|r| r["entry"]["challenge"]["outcome"].clone())
+            .collect();
+        assert_eq!(
+            outcomes,
+            [
+                "challenge_classified",
+                "challenge_classified",
+                "challenge_classified",
+                "affirm_prior_decision",
+                "affirm_prior_decision",
+                "affirm_prior_decision",
+                "affirm_prior_decision",
+                "affirm_prior_decision",
+                "challenge_classified",
+                "challenge_classified",
+                "challenge_classified",
+                "affirm_prior_decision",
+            ],
+            "{records:?}"
+        );
+        for rec in &records[..2] {
+            assert!(
+                rec["entry"].get("decision_subject").is_none(),
+                "the handle is still dropped from the record: {rec}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 

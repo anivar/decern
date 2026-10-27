@@ -58,7 +58,8 @@ impl ChallengeError {
 pub(crate) struct Standing {
     /// The decision this standing is for. A token is good for one decision, not for a role.
     pub(crate) decision_ref: String,
-    /// The pseudonymous handle of the party, matched against what the record already says.
+    /// The pseudonymous handle of the party, matched against the parties the decision's record
+    /// is about.
     pub(crate) decision_subject: String,
     /// Expiry in whole epoch seconds. The check uses `exp` as sent, fraction included; what is
     /// kept is truncated, and an `exp` past `u64::MAX` is kept as `u64::MAX`.
@@ -78,21 +79,51 @@ pub(crate) struct Challenge {
     pub(crate) requested_effect: String,
 }
 
-/// How the challenge was answered.
+/// How the challenge was answered. Neither outcome evaluates the decision again: the
+/// kernel ran once, without the challenge, and the decision stands as recorded. A challenge
+/// is classified only when its standing names a party the decision's record is about and a
+/// basis it gives bears on the facts the decision was made from; any other is affirmed, with
+/// the reason. The record `decision_ref` names is not read.
 ///
 /// Two of these are produced here. Handing a challenge to a human approver is the third
 /// shape the surface can take, and it needs an approver service this server does not have;
 /// a deployment that has one says so in its disclosure. Claiming it while routing nowhere
 /// would be worse than not offering it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Outcome {
-    /// The decision stands, and the reason it stands is stated.
+    /// The standing names no party the decision's record is about, or no basis given bears
+    /// on the facts the decision was made from; which of the two is stated.
     AffirmPriorDecision { affirm_basis: String },
-    /// The decision was made again with the challenge in front of it, and the answer that
-    /// came back governs — whether or not it changed.
-    ReevaluateWithSubjectContext { reevaluation_basis: String },
+    /// The standing names a party the decision's record is about, and a basis given bears on
+    /// the facts the decision was made from; that basis is named. The decision is not
+    /// made again here; acting on the challenge falls to whoever reads it.
+    ChallengeClassified { classified_basis: String },
 }
+
+impl Outcome {
+    const AFFIRM: &'static str = "affirm_prior_decision";
+    const CLASSIFIED: &'static str = "challenge_classified";
+    /// Every outcome's name as its record carries it, for the disclosure to list.
+    pub(crate) const NAMES: [&'static str; 2] = [Self::AFFIRM, Self::CLASSIFIED];
+
+    /// The outcome's name as its record carries it, and the basis it states.
+    pub(crate) fn into_record(self) -> (&'static str, String) {
+        match self {
+            Outcome::AffirmPriorDecision { affirm_basis } => (Self::AFFIRM, affirm_basis),
+            Outcome::ChallengeClassified { classified_basis } => {
+                (Self::CLASSIFIED, classified_basis)
+            }
+        }
+    }
+}
+
+/// The challenge bases that bear on the facts a decision was made from. Any other basis
+/// disagrees with the outcome rather than with what it was made from.
+pub(crate) const BASES_ON_THE_FACTS: [&str; 3] = [
+    "factual-error",
+    "category-mismatch",
+    "change-in-circumstances",
+];
 
 /// Take the challenge out of the context, if one is there.
 ///
@@ -282,36 +313,31 @@ fn string_claim(claims: &BTreeMap<String, Value>, name: &str) -> Result<String, 
         .ok_or_else(|| ChallengeError::StandingNotProved(format!("standing_token has no {name}")))
 }
 
-/// Answer a challenge against the decision it names.
+/// Answer a challenge against the decision it names, by classifying its basis.
 ///
-/// A challenge that offers something the decision could be made differently on gets the
-/// decision made again; one that does not gets the prior answer and the reason it stands.
-/// Both are answers. Neither is a promise that the outcome will change, and re-evaluation
-/// governs whether or not it does.
+/// A challenge whose basis bears on the facts the decision was made from is classified as
+/// such; one whose basis does not gets the prior answer and the reason it stands. Both are
+/// answers, and neither changes the decision.
 ///
-/// `subject_matches` is whether the record's own decision subject is the party the standing
-/// names. A challenge from someone the record was not about is answered, not obeyed: it
-/// affirms, because there is nothing here to reconsider on their behalf.
-pub(crate) fn answer(challenge: &Challenge, subject_matches: bool) -> Outcome {
-    if !subject_matches {
+/// `about` is the parties the decision's record is about: the third party it keeps as its
+/// decision subject, or, when it keeps none, its requester and its resource's owner. A
+/// challenge from anyone else is answered, not obeyed: it affirms, because there is nothing
+/// here to reconsider on their behalf.
+pub(crate) fn answer(challenge: &Challenge, about: &[&str]) -> Outcome {
+    if !about.contains(&challenge.standing.decision_subject.as_str()) {
         return Outcome::AffirmPriorDecision {
-            affirm_basis: "the challenged decision does not name this party as its subject".into(),
+            affirm_basis: "the challenge's standing names no party the decision's record is \
+                           about"
+                .into(),
         };
     }
-    // Only a basis that puts something new in front of the decision can change it. The
-    // rest are disagreements with the outcome rather than with what it was made from.
-    let reconsiderable = [
-        "factual-error",
-        "category-mismatch",
-        "change-in-circumstances",
-    ];
     match challenge
         .basis
         .iter()
-        .find(|b| reconsiderable.contains(&b.as_str()))
+        .find(|b| BASES_ON_THE_FACTS.contains(&b.as_str()))
     {
-        Some(b) => Outcome::ReevaluateWithSubjectContext {
-            reevaluation_basis: b.clone(),
+        Some(b) => Outcome::ChallengeClassified {
+            classified_basis: b.clone(),
         },
         None => Outcome::AffirmPriorDecision {
             affirm_basis: format!(
@@ -588,20 +614,32 @@ mod tests {
         assert_eq!(err.kind(), "standing_not_proved");
     }
 
+    /// Each basis that bears on the facts is classified as such, under its own name; the
+    /// disclosure lists the same set.
     #[test]
-    fn a_basis_bearing_on_the_facts_reopens_the_decision() {
+    fn a_basis_bearing_on_the_facts_is_classified_as_such() {
         let key = generate().unwrap();
         let token = sign(claims("dec-1", 2_000), &key);
-        let c = parse(
-            &challenge_json(&token, "dec-1", "factual-error"),
-            &[key.verifying_key()],
-            1_000,
-        )
-        .unwrap();
-        assert!(matches!(
-            answer(&c, true),
-            Outcome::ReevaluateWithSubjectContext { .. }
-        ));
+        let bases = [
+            "factual-error",
+            "category-mismatch",
+            "change-in-circumstances",
+        ];
+        for basis in bases {
+            let c = parse(
+                &challenge_json(&token, "dec-1", basis),
+                &[key.verifying_key()],
+                1_000,
+            )
+            .unwrap();
+            match answer(&c, &["ppid:carol"]) {
+                Outcome::ChallengeClassified { classified_basis } => {
+                    assert_eq!(classified_basis, basis);
+                }
+                other => panic!("{basis} was not classified: {}", other.into_record().0),
+            }
+        }
+        assert_eq!(BASES_ON_THE_FACTS.as_slice(), bases.as_slice());
     }
 
     #[test]
@@ -615,7 +653,7 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            answer(&c, true),
+            answer(&c, &["ppid:carol"]),
             Outcome::AffirmPriorDecision { .. }
         ));
     }
@@ -632,10 +670,15 @@ mod tests {
             1_000,
         )
         .unwrap();
-        assert!(matches!(
-            answer(&c, false),
-            Outcome::AffirmPriorDecision { .. }
-        ));
+        match answer(&c, &["agent1", "corp"]) {
+            Outcome::AffirmPriorDecision { affirm_basis } => {
+                assert!(
+                    affirm_basis.contains("names no party the decision's record is about"),
+                    "{affirm_basis}"
+                );
+            }
+            other => panic!("classified: {}", other.into_record().0),
+        }
     }
 
     #[test]
