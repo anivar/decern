@@ -50,6 +50,12 @@ jobs:
       - name: Verify (build · test · cvc5 proofs · clippy · fmt · docs · deny · no-lineage · doc links)
         run: ./scripts/verify.sh
 
+      - name: Run the built binaries end to end (decide · serve · verify · restart · verify)
+        timeout-minutes: 10
+        run: |
+          cargo build -q -p decern-cli -p decern-server
+          ./scripts/smoke.sh target/debug "$RUNNER_TEMP"
+
   # A change a user would notice ships with its own changelog entry, written while the author
   # still has the context. See changelog.d/README.md.
   changelog:
