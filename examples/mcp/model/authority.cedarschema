@@ -6,17 +6,20 @@
 // membership, and consent-gated access to a customer's protected data. Every
 // v3 attribute is optional, so a v2 graph loads and proves unchanged.
 
-// A customer organization — the CIAM tenancy anchor. `parent` models B2B
-// sub-organizations (a hierarchy inside one isolation tenant).
+// A customer organization, a CIAM grouping. `parent` models B2B
+// sub-organizations (a hierarchy inside one isolation tenant). Membership and
+// parentage are validated at load and read by no built-in policy: an
+// organization is not an authorization boundary; `tenant` is.
 entity Organization {
   tenant: String,           // the hard isolation domain this org lives in
-  parent?: Organization,    // sub-org edge; child org ⊆ parent (same tenant, acyclic)
+  parent?: Organization,    // sub-org edge: child org inside parent (same tenant, acyclic)
 };
 
 entity Principal {
   kind: String,             // "Human" | "Agent" | "Machine"
   tenant: String,           // hard isolation boundary
-  org?: Organization,       // CIAM: which customer org this identity belongs to
+  org?: Organization,       // CIAM: which customer org this identity belongs to;
+                            // validated at load, read by no built-in policy
   expiry: Long,             // epoch seconds; authority decays past this
   scopes: Set<String>,      // capability attenuation surface
   roles?: Set<String>,      // CIAM RBAC labels; delegate.roles ⊆ delegator.roles
@@ -40,7 +43,8 @@ entity Principal {
 entity Resource {
   owner: Principal,
   tenant: String,
-  org?: Organization,       // CIAM: the org that owns this resource
+  org?: Organization,       // CIAM: the org that owns this resource; validated at
+                            // load, read by no built-in policy
   sensitivity?: String,     // CIAM: e.g. "pii" — triggers the consent gate
   residency?: String,       // data-residency label (e.g. "EU"): this data may
                             // only be accessed by a principal cleared for that

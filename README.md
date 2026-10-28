@@ -89,7 +89,9 @@ proof never claims more than the machine verified — two invariants reason over
 the kernel derives in Rust before the prover runs, and say so:
 
 - **money-gate** — no `MoveMoney` allow unless the context carries `human_approved = true`
-- **isolation** — no allow ever crosses a tenant boundary
+- **isolation** — no allow ever crosses a tenant boundary; an organization is not one: `org` and
+  `Organization.parent` are validated at load and read by no built-in policy, so membership grants and
+  denies nothing
 - **decay** — no allow once authority has expired
 - **attenuation-edge** — no access without ownership, a delegation ancestor, or an explicit grant
 - **scope-gate** — `Read`, `MoveMoney` and `AccessPII` require their scope; an action a custom

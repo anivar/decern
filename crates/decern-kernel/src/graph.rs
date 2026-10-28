@@ -57,8 +57,8 @@ pub struct ResourceRec {
 /// not only `decern-serve`.
 pub const RESERVED_TENANT: &str = "__system__";
 
-/// CIAM v3: a customer organization — a tenancy anchor with an optional
-/// sub-organization parent edge (a hierarchy inside one isolation tenant).
+/// CIAM v3: a customer organization — a grouping with an optional sub-organization
+/// parent edge (a hierarchy inside one isolation tenant); no built-in policy reads it.
 #[derive(Debug, Clone, Serialize)]
 pub struct OrgRec {
     pub id: String,
