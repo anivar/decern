@@ -144,8 +144,10 @@ pub(crate) async fn mission_approve(
                 .into_response();
         }
     };
-    crate::record::off_the_executor("approval_unavailable", move || approve_now(st, caller, req))
-        .await
+    crate::blocking::off_the_executor(&st.blocking.clone(), "approval_unavailable", move || {
+        approve_now(st, caller, req)
+    })
+    .await
 }
 
 fn approve_now(
@@ -291,7 +293,7 @@ pub(crate) async fn mission_terminate(
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
     UrlPath(s256): UrlPath<String>,
 ) -> Response {
-    crate::record::off_the_executor("termination_unavailable", move || {
+    crate::blocking::off_the_executor(&st.blocking.clone(), "termination_unavailable", move || {
         terminate_now(st, caller, s256)
     })
     .await

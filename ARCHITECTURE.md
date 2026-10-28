@@ -45,7 +45,8 @@ only), `sig.rs` (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), 
 (AAuth agent tokens verified against provider keys pinned at startup), `spiffe.rs` (SPIFFE
 JWT-SVID validation against pinned trust bundles), `httpsig.rs` (the RFC 9421 verifier `sig.rs`
 and `aauth.rs` share: structured-field parsing and the signature base), `jose.rs` (compact-JWS
-decoding every token reader shares), `record.rs` (the fail-closed append path), `decide.rs` (the
+decoding every token reader shares), `blocking.rs` (the places on the blocking pool every
+decision, search, record and audit takes first), `record.rs` (the fail-closed append path), `decide.rs` (the
 decision handler and its derivations), `batch.rs` (AuthZEN batch evaluation), `search.rs`
 (AuthZEN subject, resource and action search), `discovery.rs` (AuthZEN PDP metadata),
 `deployment.rs` (the type aliases and public URL a deployment declares, checked at boot),

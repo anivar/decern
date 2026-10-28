@@ -122,25 +122,6 @@ pub(crate) async fn healthz(
     }
 }
 
-/// Run a handler's work on a blocking thread and answer with what it returns. Evaluation, the
-/// append and its fsync are synchronous; on an executor worker they would hold it, and every
-/// request queued behind it, for their whole length, and the request deadline could not fire
-/// while they ran. A panic in the work is answered `503` under `error`; whatever it had already
-/// recorded stays recorded, and nothing unrecorded is served.
-pub(crate) async fn off_the_executor(
-    error: &'static str,
-    work: impl FnOnce() -> Response + Send + 'static,
-) -> Response {
-    match tokio::task::spawn_blocking(work).await {
-        Ok(response) => response,
-        Err(_) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "error": error, "detail": "the request did not complete" })),
-        )
-            .into_response(),
-    }
-}
-
 /// Write the audit record, or hand back the fail-closed 503 the whole service rests on.
 /// `None` = the record is durable, so the caller builds its own success response;
 /// `Some(resp)` = it could not be written, so this 503 must be returned instead. No
@@ -269,12 +250,6 @@ pub(crate) fn shard_for(backend: &LedgerBackend, dir: &Directory, subject_id: &s
 mod tests {
     use super::*;
 
-    /// Work that panics on its blocking thread is answered 503, never a dropped connection.
-    #[tokio::test]
-    async fn work_that_panics_off_the_executor_is_answered_503() {
-        let response = off_the_executor("decision_unavailable", || panic!("work failed")).await;
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    }
     use decern_kernel::{Kernel, Model};
 
     use crate::testutil::test_dir;

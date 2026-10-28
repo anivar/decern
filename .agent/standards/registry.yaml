@@ -20,6 +20,7 @@ non_surface:
   - crates/decern-server/src/state.rs
   - crates/decern-server/src/mission.rs
   - crates/decern-server/src/record.rs
+  - crates/decern-server/src/blocking.rs
   - crates/decern-server/src/audit.rs
   - crates/decern-server/src/testutil.rs
   - crates/decern-server/src/serve.rs

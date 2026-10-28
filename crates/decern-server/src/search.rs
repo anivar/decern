@@ -105,7 +105,7 @@ pub(crate) async fn search_subject(
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
     req: Result<Json<SearchReq>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    off_the_executor(move || search(&st, &caller, req, For::Subject)).await
+    searched(st, caller, req, For::Subject).await
 }
 
 pub(crate) async fn search_resource(
@@ -113,7 +113,7 @@ pub(crate) async fn search_resource(
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
     req: Result<Json<SearchReq>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    off_the_executor(move || search(&st, &caller, req, For::Resource)).await
+    searched(st, caller, req, For::Resource).await
 }
 
 pub(crate) async fn search_action(
@@ -121,13 +121,29 @@ pub(crate) async fn search_action(
     caller: Option<axum::Extension<crate::caller::Authenticated>>,
     req: Result<Json<SearchReq>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    off_the_executor(move || search(&st, &caller, req, For::Action)).await
+    searched(st, caller, req, For::Action).await
 }
 
 /// A search decides once per directory entry, so it runs on a blocking thread rather than
-/// holding an executor worker for the length of the directory.
-async fn off_the_executor(work: impl FnOnce() -> Response + Send + 'static) -> Response {
-    crate::record::off_the_executor("search_failed", work).await
+/// holding an executor worker for the length of the directory. A request refused before it
+/// is decided, malformed or missing what its kind requires, takes no place on that pool.
+async fn searched(
+    st: AppState,
+    caller: Option<axum::Extension<crate::caller::Authenticated>>,
+    req: Result<Json<SearchReq>, axum::extract::rejection::JsonRejection>,
+    what: For,
+) -> Response {
+    let req = match req {
+        Ok(Json(req)) => req,
+        Err(rejection) => return Refusal::invalid_request(rejection.body_text()).into_response(),
+    };
+    if let Err(refusal) = checked(&req, what) {
+        return refusal.into_response();
+    }
+    crate::blocking::off_the_executor(&st.blocking.clone(), "search_failed", move || {
+        search(&st, &caller, req, what)
+    })
+    .await
 }
 
 /// One search, start to finish: the request checked for what its kind requires, the
@@ -137,16 +153,9 @@ async fn off_the_executor(work: impl FnOnce() -> Response + Send + 'static) -> R
 fn search(
     st: &AppState,
     caller: &Option<axum::Extension<crate::caller::Authenticated>>,
-    req: Result<Json<SearchReq>, axum::extract::rejection::JsonRejection>,
+    mut req: SearchReq,
     what: For,
 ) -> Response {
-    let Json(mut req) = match req {
-        Ok(req) => req,
-        Err(rejection) => return Refusal::invalid_request(rejection.body_text()).into_response(),
-    };
-    if let Err(refusal) = checked(&req, what) {
-        return refusal.into_response();
-    }
     // The searched side's id is ignored: it names nothing the search decides, and it
     // must not name whose act the record is, nor whose shard it lands in.
     match what {

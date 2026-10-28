@@ -89,7 +89,7 @@ decern verify --ledger /tmp/decern.jsonl --pubkey <retired-kid> --pubkey <kid>
 | Option | Meaning |
 |---|---|
 | `--ledger <PATH>` | A single file or a segmented directory. Required unless `--sharded`. |
-| `--sharded <DIR>` | A `flock` head-store directory: every shard is verified, and any failing shard fails the run. |
+| `--sharded <DIR>` | A `flock` head-store directory: every shard is verified, and any failing shard fails the run. The shards are those listed when the run starts, each read as of its own turn, so a shard created after the listing is read next time. For one point in time across shards, stop the writers first. |
 | `--pubkey <HEX>` | Ed25519 public key. Repeatable, once per key that signed the log. A record naming a `kid` is checked against that key and one without against each key given, and a record is refused when its key had already been followed by another key in the same file, segmented ledger or shard. With `--ledger` the output lists each key with the record it started at. Without one, signatures are **not** checked. |
 | `--anchor <FILE>` | A tree head published earlier. Also proves nothing at or below the anchored size was rewritten, reordered or dropped. Not for `--sharded`. |
 
@@ -364,10 +364,11 @@ waiting:
 | Bound | Value | Past it |
 |---|---|---|
 | A request's headers to arrive | 10 seconds, the idle wait on a kept-alive connection included | the connection is closed |
-| One request, headers to answer | 30 seconds | `503`, `request timed out`; an append already under way still lands, unserved |
+| One request, headers to answer | 30 seconds | `503`, `request timed out`; work already on a thread goes on, and an append already under way still lands, unserved. The outcome is unknown to the caller, who checks the Mission's state, or the ledger where a route reads it, before retrying |
 | Connections at once | 1,024; HTTP/1 serves one request at a time on each | the next waits in the listen queue |
+| Requests being decided, searched, recorded or audited at once | 512, one per blocking thread; a request that ran out of time keeps its thread until its work ends | the next is answered `503`, `server_busy`, at once |
 | Subject audits at once | 1, each reading the whole log into memory; tree-head recomputes run one at a time beside it | the next waits, within the request deadline |
-| Shutdown after SIGINT or SIGTERM | 30 seconds for requests in progress | the process exits |
+| Shutdown after SIGINT or SIGTERM | 30 seconds for requests in progress, then the listener closes | the process exits once every blocking thread has returned; one a stalled database holds is waited for |
 | Request body | 2 MiB | `413` |
 | A context, properties included | 64 KiB | `413`, `context_too_large` |
 | An entity type, entity id or action name | 1 KiB | `413`, `name_too_large` |
@@ -408,7 +409,8 @@ back, such as an unknown action's name, is cut to 512 characters in the answer.
   decision after the database restarts answers `ok` until one does. A database that stops
   answering without closing the connection, behind a network partition for example, holds the
   store until TCP gives up: each decision meanwhile is answered `503` at the 30-second request
-  deadline, `/healthz` answers `ok`, and `SIGTERM` waits. decern sets no
+  deadline, and holds its thread until TCP gives up; once 512 are held, every later request is
+  answered `503`, `server_busy`, at once. `/healthz` answers `ok`, and `SIGTERM` waits. decern sets no
   connection or query timeout of its own, and the URL goes to the Postgres client as given:
   `connect_timeout` bounds only the socket connect. A database that accepts the connection and
   then stops answering, a stalled server or a proxy with no backend, holds startup with no
