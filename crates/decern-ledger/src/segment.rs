@@ -38,11 +38,12 @@
 //! segment BYTES, never from any count cached in the manifest.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Lines, Read, Take, Write};
+use std::io::{BufRead, BufReader, Lines, Read, Take};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::fsync::{AtomicWrite, write_atomic};
 use crate::{LedgerError, io_err};
 
 const MANIFEST_FILE: &str = "manifest.json";
@@ -280,29 +281,43 @@ pub(crate) fn load_manifest(dir: &Path) -> Result<Option<Manifest>, LedgerError>
     }
 }
 
-/// Persist the manifest atomically (temp file + fsync + rename + parent-dir
-/// fsync — the SAME durability discipline [`crate::save_anchor`] already
-/// uses). This rename is the single commit point for a rollover: creating the
+/// Persist the manifest atomically: a temp file, fsynced, renamed over the manifest, and on
+/// Unix the directory synced, the same write [`crate::save_anchor`] uses; a failed directory
+/// sync is this function's error, reported as landed, since the rename stands. This rename is
+/// the single commit point for a rollover: creating the
 /// new segment file (before this call) is safely re-doable if a crash lands
 /// before the rename lands (the new file is just an orphan, ignored on
 /// reopen — see [`max_index`]); sealing the old segment's file permissions
 /// (after this call) is safely re-appliable on every open regardless of when
 /// a crash lands relative to it.
-pub(crate) fn save_manifest(dir: &Path, manifest: &Manifest) -> Result<(), LedgerError> {
+pub(crate) fn save_manifest(dir: &Path, manifest: &Manifest) -> Result<(), AtomicWrite> {
     let path = dir.join(MANIFEST_FILE);
     let tmp = dir.join("manifest.json.tmp");
-    let bytes =
-        serde_json::to_vec_pretty(manifest).map_err(|e| LedgerError::Serde(e.to_string()))?;
-    {
-        let mut f = File::create(&tmp).map_err(|e| io_err(&tmp, e))?;
-        f.write_all(&bytes).map_err(|e| io_err(&tmp, e))?;
-        f.sync_all().map_err(|e| io_err(&tmp, e))?;
+    let bytes = serde_json::to_vec_pretty(manifest)
+        .map_err(|e| AtomicWrite::NotLanded(LedgerError::Serde(e.to_string())))?;
+    write_atomic(&path, &tmp, &bytes)
+}
+
+/// A rollover that failed, and whether its manifest, the commit point, landed first.
+#[derive(Debug)]
+pub(crate) struct RollOverFailed {
+    pub landed: bool,
+    pub err: LedgerError,
+}
+
+impl From<LedgerError> for RollOverFailed {
+    fn from(err: LedgerError) -> Self {
+        RollOverFailed { landed: false, err }
     }
-    fs::rename(&tmp, &path).map_err(|e| io_err(&path, e))?;
-    if let Ok(dirf) = File::open(dir) {
-        let _ = dirf.sync_all();
+}
+
+impl From<AtomicWrite> for RollOverFailed {
+    fn from(e: AtomicWrite) -> Self {
+        match e {
+            AtomicWrite::NotLanded(err) => RollOverFailed { landed: false, err },
+            AtomicWrite::Landed(err) => RollOverFailed { landed: true, err },
+        }
     }
-    Ok(())
 }
 
 /// Create a segment file owner-only (0600 on Unix). A segment collects records from its
@@ -408,18 +423,35 @@ pub(crate) fn initialize(dir: &Path) -> Result<Manifest, LedgerError> {
     Ok(manifest)
 }
 
-/// Roll the active segment over: seal it (in a cloned, not-yet-committed
-/// manifest) at `current_seq`, create the fresh active segment, atomically
-/// commit the new manifest, then chmod the now-sealed old segment. Returns
-/// the new manifest and the newly active segment's path — the caller
-/// (`Ledger::roll_over`) swaps its open file handle to it and keeps the
-/// returned manifest as its new in-memory state.
+/// Seal the active segment and open a new one. Everything before the manifest rename is
+/// prepared first and fails before the commit point, leaving at most an orphan segment file
+/// the next rollover skips; the rename is the commit point, and a failure after it (its
+/// directory sync) is reported as landed, so the caller knows disk is ahead of its memory.
 pub(crate) fn roll_over(
     dir: &Path,
     manifest: &Manifest,
     current_seq: u64,
     next_ts_ms: u64,
-) -> Result<(Manifest, PathBuf), LedgerError> {
+) -> Result<(Manifest, PathBuf), RollOverFailed> {
+    let (new_manifest, new_path, old_active_file) =
+        roll_over_prepared(dir, manifest, current_seq, next_ts_ms)?;
+    save_manifest(dir, &new_manifest)?; // <- the crash-atomic commit point
+    seal_file_permissions(&dir.join(&old_active_file)); // best-effort, after commit
+    Ok((new_manifest, new_path))
+}
+
+/// The steps of a rollover before its commit point: pick the next index, create the fresh
+/// segment file, seal the active segment at `current_seq` in a cloned, not-yet-committed
+/// manifest, and sync the old segment's tail so the manifest never claims records that did
+/// not reach disk. Returns the manifest to commit, the new segment's path and the old
+/// segment's file name; nothing here is visible to a reopen until [`roll_over`] saves the
+/// manifest.
+fn roll_over_prepared(
+    dir: &Path,
+    manifest: &Manifest,
+    current_seq: u64,
+    next_ts_ms: u64,
+) -> Result<(Manifest, PathBuf, String), LedgerError> {
     // checked_add rather than a plain `+ 1` that would silently wrap in a
     // release build (matching this codebase's own established practice of
     // checked/saturating arithmetic on untrusted-input-derived sizes, e.g.
@@ -481,10 +513,7 @@ pub(crate) fn roll_over(
         f.sync_all().map_err(|e| io_err(&old_path, e))?;
     }
 
-    save_manifest(dir, &new_manifest)?; // <- the crash-atomic commit point
-    seal_file_permissions(&dir.join(&old_active_file)); // best-effort, after commit
-
-    Ok((new_manifest, new_path))
+    Ok((new_manifest, new_path, old_active_file))
 }
 
 /// A lazily-opened, seamlessly chained line source across `paths`, in

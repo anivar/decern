@@ -34,6 +34,7 @@ mod anchor;
 mod bundle;
 mod checkpoint;
 mod error;
+mod fsync;
 mod ledger;
 mod open;
 mod record;
