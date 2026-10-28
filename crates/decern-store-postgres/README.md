@@ -14,7 +14,8 @@ chain without forking it.
 It holds the ledger and nothing else. Under `--sharded postgres://…` the Mission registry is
 still a file, `decern-missions.json` in each host's working directory unless `--missions`
 names another path, so a Mission approved or terminated through one replica is unknown to, or
-still live on, the others. The release binaries are built without this crate: build
+still live on, the others; a start says it knows that with `--missions-per-host`, the deployment's word
+the server cannot check. The release binaries are built without this crate: build
 `decern-serve` with `--features postgres`. The connection URL is a command-line argument, so
 any password in it is visible in the process list to other users of the host. `--sharded`
 requires `--key`, the key every replica signs with, and `--retired-key` names each key it

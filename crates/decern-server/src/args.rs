@@ -41,7 +41,8 @@ pub(crate) struct Args {
     /// Hosted mode. Target is either a directory (per-shard `flock` head store —
     /// several `decern-serve` processes on ONE host share one tamper-evident
     /// ledger) or a `postgres://` URL (multi-HOST head store, requires building
-    /// with `--features postgres`). Mutually exclusive with `--ledger`; requires `--key`.
+    /// with `--features postgres`). Mutually exclusive with `--ledger`; requires `--key`, and a
+    /// `postgres://` URL also `--missions-per-host`.
     #[arg(long, value_name = "DIR_OR_POSTGRES_URL")]
     pub(crate) sharded: Option<String>,
     /// 32-byte hex signing seed file, required with `--sharded`. When a missing one is
@@ -59,6 +60,12 @@ pub(crate) struct Args {
     /// checks (`decern-identity`). Default: `decern-missions.json` alongside the ledger.
     #[arg(long, value_name = "PATH")]
     pub(crate) missions: Option<PathBuf>,
+    /// Required under `--sharded postgres://…`, refused with any other ledger: the deployment's
+    /// word, which this server cannot check, that it keeps a Mission's requests and its
+    /// termination on the host whose registry holds it. What one host's registry means is
+    /// under `--missions`.
+    #[arg(long = "missions-per-host")]
+    pub(crate) missions_per_host: bool,
     /// Require every decision to name a live Mission in `context.mission`.
     /// When set, client-supplied `human_approved` and `consent` are stripped (or the
     /// decision is Denied). `human_approved` is then re-derived from the verified

@@ -104,8 +104,29 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
             );
         }
     }
+    // The head store spans hosts; the Mission registry is a file on this one. A deployment
+    // says it knows that before the server connects to anything. The flag means something
+    // only there; given with a single-file or directory ledger it would be ignored, so it is
+    // refused, as a stray audience is. Checked before the feature refusal below, so a build
+    // without the feature still checks it and the test can see it.
+    let postgres = matches!(sharded, Some(ShardedTarget::Postgres(_)));
+    if postgres && !args.missions_per_host {
+        anyhow::bail!(
+            "--sharded postgres://… needs --missions-per-host: the Mission registry is a file on \
+             this host alone, so a Mission approved or terminated here is unknown to, or still \
+             live on, every other host; the flag is the deployment's word, which this server \
+             cannot check, that a Mission's requests and its termination go to the host that \
+             holds it"
+        );
+    }
+    if args.missions_per_host && !postgres {
+        anyhow::bail!(
+            "--missions-per-host applies only under --sharded postgres://…; a single-file or \
+             directory ledger is one host's already, so the flag would be ignored"
+        );
+    }
     #[cfg(not(feature = "postgres"))]
-    if matches!(sharded, Some(ShardedTarget::Postgres(_))) {
+    if postgres {
         anyhow::bail!(POSTGRES_FEATURE);
     }
     // A key that cannot be read is a startup failure, never a challenge that quietly fails to
@@ -1032,6 +1053,81 @@ mod tests {
             serde_json::from_slice(&std::fs::read(&head).unwrap()).unwrap();
         state["log_len"] = serde_json::json!(text.len());
         std::fs::write(&head, serde_json::to_vec(&state).unwrap()).unwrap();
+    }
+
+    /// A Postgres head store spans hosts; the Mission registry does not. A sharded start over
+    /// Postgres says so with `--missions-per-host`, or does not start before the key file is
+    /// created, which precedes every connection; given anywhere else the flag would be ignored,
+    /// so it is refused, and given where it belongs it passes.
+    #[tokio::test]
+    async fn a_postgres_sharded_start_needs_missions_per_host_acknowledged() {
+        let dir = fresh_dir("sharded-postgres-missions");
+        let k = dir.join("k");
+        let e = prepare(Args::parse_from([
+            "decern-serve",
+            "--trust-proxy",
+            "--addr",
+            "127.0.0.1:0",
+            "--sharded",
+            "postgres://decern@127.0.0.1:1/decern?sslmode=disable",
+            "--key",
+            k.to_str().unwrap(),
+        ]))
+        .await
+        .err()
+        .expect("a Postgres-sharded start without --missions-per-host should have been refused");
+        assert!(e.to_string().contains("--missions-per-host"), "{e}");
+        assert!(
+            !k.exists(),
+            "the refusal came after the key file was created"
+        );
+        // With the flag, both checks pass and the start goes on to the next refusal: on this
+        // build, the one for a Postgres URL without the feature, before any key file or
+        // connection. A check that refused every Postgres start would stop here instead.
+        let e = prepare(Args::parse_from([
+            "decern-serve",
+            "--trust-proxy",
+            "--addr",
+            "127.0.0.1:0",
+            "--sharded",
+            "postgres://decern@127.0.0.1:1/decern?sslmode=disable",
+            "--key",
+            k.to_str().unwrap(),
+            "--missions-per-host",
+        ]))
+        .await
+        .err()
+        .expect("a Postgres start is refused on a build without the feature");
+        assert!(
+            !e.to_string().contains("--missions-per-host"),
+            "the flag given should pass both checks: {e}"
+        );
+        assert!(
+            !k.exists(),
+            "the key file was created before the feature refusal"
+        );
+        for store in [
+            vec!["--ledger", dir.join("l.jsonl").to_str().unwrap()],
+            vec![
+                "--sharded",
+                dir.join("heads").to_str().unwrap(),
+                "--key",
+                k.to_str().unwrap(),
+            ],
+        ] {
+            let mut argv = vec!["decern-serve", "--trust-proxy", "--addr", "127.0.0.1:0"];
+            argv.extend(store.iter().copied());
+            argv.push("--missions-per-host");
+            let e = prepare(Args::parse_from(argv))
+                .await
+                .err()
+                .expect("--missions-per-host outside a Postgres store should have been refused");
+            assert!(
+                e.to_string().contains("--missions-per-host applies only"),
+                "{store:?}: {e}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The Mission registry defaults into the shard directory. The boot-time key check lists
