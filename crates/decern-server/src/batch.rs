@@ -16,7 +16,7 @@ use crate::AppState;
 use crate::decide::{
     CONTEXT_TOO_LARGE, DecideReq, Refusal, admit_named, context_too_large, decide_one, evaluate_one,
 };
-use crate::record::{Shard, append_all_to_backend, evaluation_body, record_or_503};
+use crate::record::{Shard, evaluation_body, not_recorded, record_decisions};
 
 /// The most evaluations one exchange may carry. Each is a recorded decision, so a batch
 /// is bounded the way a single request's body is, and says so rather than timing out.
@@ -190,6 +190,8 @@ fn undecided(status: StatusCode, code: &str, message: String) -> Value {
 struct Answer {
     decision: bool,
     body: Value,
+    /// The evaluation's errors, served beside the decision as recorded.
+    errors: Vec<String>,
     record: Option<(Shard, Entry)>,
 }
 
@@ -197,6 +199,7 @@ fn undecided_answer(status: StatusCode, code: &str, message: String) -> Answer {
     Answer {
         decision: false,
         body: undecided(status, code, message),
+        errors: Vec::new(),
         record: None,
     }
 }
@@ -224,6 +227,7 @@ fn answer(
             Ok(e) => Answer {
                 decision: e.decision,
                 body: evaluation_body(e.decision, &e.reasons, &e.errors),
+                errors: e.errors,
                 record: Some((e.shard, e.entry)),
             },
         },
@@ -308,13 +312,17 @@ fn evaluate_all(
     }
     let mut results = Vec::with_capacity(items.len());
     let mut decided = Vec::new();
+    let mut decided_items = Vec::new();
     for (i, item) in items.iter().enumerate() {
         let inherits_an_oversize_default =
             KEYS.iter().zip(oversize_default).any(|(key, oversize)| {
                 oversize && !item.as_object().is_some_and(|o| o.contains_key(*key))
             });
         let a = answer(st, caller, &top, i, item, inherits_an_oversize_default);
-        decided.extend(a.record);
+        if let Some(record) = a.record {
+            decided.push(record);
+            decided_items.push((results.len(), a.errors));
+        }
         results.push(a.body);
         match semantic {
             Semantic::DenyOnFirstDeny if !a.decision => break,
@@ -322,9 +330,15 @@ fn evaluate_all(
             _ => {}
         }
     }
-    // Every decision made lands before any is served.
-    if let Some(unavailable) = record_or_503(|| append_all_to_backend(&st.backend, decided)) {
-        return unavailable;
+    // Every decision made lands before any is served, and each is served as recorded: a
+    // decision settled to a Deny at the record is answered as one, where the semantic was
+    // applied to the decision as evaluated.
+    let recorded = match record_decisions(st, decided) {
+        Ok(recorded) => recorded,
+        Err(e) => return not_recorded(e),
+    };
+    for ((at, errors), entry) in decided_items.into_iter().zip(recorded) {
+        results[at] = evaluation_body(entry.decision, &entry.reasons, &errors);
     }
     (StatusCode::OK, Json(json!({ "evaluations": results }))).into_response()
 }

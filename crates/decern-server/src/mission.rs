@@ -12,7 +12,7 @@ use axum::response::{IntoResponse, Response};
 use decern_identity::{IdentityError, mission, mission::Mission};
 use decern_kernel::Directory;
 use decern_ledger::Entry;
-use decern_store::{MissionRegistry, StoreError};
+use decern_store::StoreError;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
