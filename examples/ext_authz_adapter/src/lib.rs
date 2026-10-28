@@ -26,7 +26,7 @@ use axum::{
 };
 use bytes::Bytes;
 use clap::Parser;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use serde::Deserialize;
@@ -68,7 +68,7 @@ pub struct Args {
     #[arg(long, value_name = "TYPE", default_value = "Resource")]
     pub resource_type: String,
 
-    /// Timeout for upstream PDP evaluation requests in seconds.
+    /// Deadline, in seconds, for the whole PDP exchange, response body included.
     #[arg(long, value_name = "SECS", default_value = "5")]
     pub pdp_timeout_secs: u64,
 
@@ -98,7 +98,14 @@ pub enum PdpError {
 
     #[error("PDP returned malformed JSON body: {0}")]
     MalformedBody(String),
+
+    #[error("PDP response body over {0} bytes")]
+    ResponseTooLarge(usize),
 }
+
+/// The most a PDP response body may carry. A decision is a few hundred bytes; a PDP that
+/// streams more than this is refused at the bound rather than read into memory whole.
+pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
 /// Upstream decern-serve client wrapping a pure-Rust HTTP connection pool.
 pub struct PdpClient {
@@ -195,23 +202,34 @@ impl PdpClient {
             .body(Full::new(Bytes::from(body_bytes)))
             .map_err(|e| PdpError::Network(e.to_string()))?;
 
-        let fut = self.client.request(req);
-        let resp = timeout(self.timeout_duration, fut)
+        // One deadline over the whole exchange: a PDP that sends its headers at once and then
+        // stalls on the body is answered at the deadline, not when its body ends. The body is
+        // read through a bound, so one past it is refused, not collected.
+        let exchange = async {
+            let resp = self
+                .client
+                .request(req)
+                .await
+                .map_err(|e| PdpError::Network(e.to_string()))?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(PdpError::HttpStatus(status));
+            }
+            Limited::new(resp.into_body(), MAX_RESPONSE_BYTES)
+                .collect()
+                .await
+                .map(|collected| collected.to_bytes())
+                .map_err(|e| {
+                    if e.is::<http_body_util::LengthLimitError>() {
+                        PdpError::ResponseTooLarge(MAX_RESPONSE_BYTES)
+                    } else {
+                        PdpError::Network(format!("reading response body: {e}"))
+                    }
+                })
+        };
+        let body = timeout(self.timeout_duration, exchange)
             .await
-            .map_err(|_| PdpError::Timeout(self.timeout_duration))?
-            .map_err(|e| PdpError::Network(e.to_string()))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(PdpError::HttpStatus(status));
-        }
-
-        let body = resp
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| PdpError::Network(format!("reading response body: {e}")))?
-            .to_bytes();
+            .map_err(|_| PdpError::Timeout(self.timeout_duration))??;
 
         let parsed: AuthZenEvalResponse = serde_json::from_slice(&body).map_err(|e| {
             PdpError::MalformedBody(format!(
