@@ -153,7 +153,10 @@ rather than getting a tidy explanation of a forgery.
 What it is not: a re-derivation. It does not re-run policy, and it does not tell you what today's
 directory would decide. It is a faithful reading of what was written down, which is a different and
 narrower thing — and the record says which authority it was decided against (`digests.authority`),
-so you can tell whether that authority is still the one in force.
+so you can tell whether that authority is still the one in force. That digest covers the model
+`decern-serve` loaded, policy, schema and entities, and not `--require-mission` or the type
+aliases, which also shape a decision, nor the caller posture, which shapes admission and
+`asserted_by`: two servers can share it and differ on those.
 
 The `bound to:` block prints every digest the entry binds. `digests.parameters` is a JCS SHA-256
 over exactly `{subject, action, resource, context, mission, decision_subject}` as the server
@@ -173,7 +176,7 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | Option | Meaning |
 |---|---|
 | `--model <DIR>` | Model directory. Omit for the built-in model. |
-| `--authzen-type-alias <REQUEST=MODEL>` | A request entity type and the model entity type it names (`user=Principal`). Repeatable. A PEP spells types in its own terms; the record carries the model's. A type with no alias passes through unchanged. The model type must be one the model's schema declares, or the server does not start. |
+| `--authzen-type-alias <REQUEST=MODEL>` | A request entity type and the model entity type it names (`user=Principal`). Repeatable. A PEP spells types in its own terms; the record carries the model's. A type with no alias passes through unchanged. The model type must be one the model's schema declares, or the server does not start. A workload caller bound to itself is matched by id alone; the trust boundary below says what that means for a custom model. |
 | `--public-url <URL>` | This deployment's public base URL, advertised as the policy decision point by `GET /.well-known/authzen-configuration`. `https://`, or `http://` on loopback for a local walkthrough; an origin only. Omit and the document is not served. |
 | `--ledger <PATH>` | Single-file ledger. The default backend. Mutually exclusive with `--sharded`. One process writes it, and a second process opening the same file is refused at startup. On Unix the lock is on the ledger file itself, so it holds by any path, link or mount that reaches the file, and readers such as `decern verify` are not blocked; on Windows it is a `<PATH>.lock` file beside the ledger's canonical path, which a hard link to the ledger, or a link made before the ledger existed, does not share, and the ledger's directory must be writable. On a network filesystem it holds only where the filesystem honours the lock. |
 | `--sharded <DIR_OR_POSTGRES_URL>` | Hosted; requires `--key`, and a `postgres://` URL also `--missions-per-host`. A directory gives a per-shard `flock` head store (several processes, one host). A `postgres://` URL gives a multi-host head store and needs `--features postgres`, which the release binaries are not built with; the scheme is matched regardless of case, any other scheme is refused, and no message repeats the URL. The URL, any password in it included, is visible in the process list to other users of the host. An append reads the shard's head, not its records. A directory store written by 0.6.0 or earlier is read as it is and converted one shard at a time, at that shard's next append. An earlier release refuses a store holding a shard this release created or finished converting, so stop every replica before upgrading; there is no way back. The first boot against a Postgres store adds a column to `decern_ledger_head`, which needs the role that owns the table, and gives up after 5 seconds behind another session holding it. |
@@ -218,7 +221,7 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 | `POST` | `/mission/v1/approve` | guarded | Grant a scoped, fail-closed-attenuated Mission. Refused (422, nothing recorded) when it exceeds the approver's scopes or expiry, when the approver is revoked, directly or through a delegator, or is the agent itself, or when the agent is not a principal in the approver's tenant. A body that is not an approval request is refused in the same JSON shape, with 400, 413, 415 or 422. A Mission backs a decision only about a subject the model names, approved by another principal the model names (compared by id only), in the same tenant, and only while that approver is unrevoked, unexpired and holds the decision's scope in the model the server runs. The approval is recorded, then registered: a write the registry cannot complete is answered `503`, one it refuses because the Mission was terminated meanwhile is `409`, both with the approval recorded and not live, and a retry records it again when the registry reads the Mission as not terminated. |
 | `GET` | `/mission/v1/{s256}` | guarded | Its approver, state and expiry, to every established caller — a workload bound to itself included, so a reference a caller can compute or obtain answers who approved what and until when. `active` is the registry's state: whether the Mission backs a given decision is settled when that decision is taken, against the approver's standing then. Unbound because a PEP consults mission state before honoring a grant, and binding the read to the approver would refuse the agent a Mission authorizes. The registry is read on a blocking thread, one of the places the limits below count. |
 | `POST` | `/mission/v1/{s256}/terminate` | guarded | End it. A terminated Mission never revives, and no Allow under it is recorded after its termination on this host: a decision bound to it before and recorded after is recorded, and answered, as a Deny saying so, whose record may precede the termination's own, written after the registry. |
-| `GET` | `/.well-known/decern-subject-side-disclosure` | open | What this deployment does about challenges and callers, read from its running configuration. |
+| `GET` | `/.well-known/decern-subject-side-disclosure` | open | What this deployment does about challenges and callers, read from its running configuration. A challenge is classified and answered; it is not a re-evaluation or an appeal, and nothing in it changes a decision or reaches the kernel. A challenge that cannot be parsed, or whose standing is not proved, refuses the whole request with `422` and records nothing. |
 | `GET` | `/.well-known/authzen-configuration` | open | AuthZEN 1.0 PDP metadata: the decision point and its evaluation endpoint, when `--public-url` is set; 404 otherwise. |
 | `GET` | `/healthz` | open | `ok`, or `503` once the single-file ledger has stopped after a write error or its lock was poisoned by a panic, or once a Postgres head store has found its connection closed or the thread that holds it has stopped; a restart recovers. |
 
@@ -314,8 +317,9 @@ enforcement point asking about other parties is the entire job. `--trust-proxy` 
 identity to bind in the first place.
 
 The workload postures are the opposite. A signed-request, SPIFFE or AAuth caller may only
-name itself as subject, decision subject, approver, stored approver on terminate, and directory principal, and
-may neither describe a party with `properties` nor search for subjects; a mismatch is
+name itself as subject, decision subject, approver, stored approver on terminate, and directory principal,
+each matched by id, so a custom model with several principal types shares the binding across them;
+it may neither describe a party with `properties` nor search for subjects; a mismatch is
 `403 caller_mismatch`. `--pep` is the way out for a workload that genuinely is a gateway.
 
 The corollary is easy to miss: a bearer token issued to a workload is a PEP credential, and
@@ -351,7 +355,10 @@ records to anyone holding a decision-subject handle on one of them.
 Every decision record keeps, verbatim and permanently: the subject and resource ids, the
 action, the context attributes the model's schema declares for that action, the server's
 clock, the deciding policy ids, the accountable owner, the Mission named, any decision-subject
-handle, and under a credential posture the caller's `sub`, `client_id` and `iss`. A Mission
+handle, a challenge with the decision it names, the handle the challenger proved standing as, its
+basis, its requested effect, its answer and the answer's basis, and a digest of any evidence sent,
+and under a credential posture the caller's
+`sub`, `client_id` and `iss`. A Mission
 approval record keeps the approver, the agent, the approved scopes and capabilities, the
 expiry and the `description` as sent. The ledger cannot be edited, so none of these can be
 erased later. Use pseudonymous ids, keep personal data out of Mission descriptions, and
@@ -397,7 +404,10 @@ back, such as an unknown action's name, is cut to 512 characters in the answer.
   (`503`) leaves a trace in the server. `/healthz` reports only the conditions the route
   table lists, and probes neither the disk nor the database.
 - **Ledger retention.** The single-file ledger is one file that grows without bound; nothing
-  rolls it over or archives it.
+  rolls it over or archives it. Nothing in this binary redacts, prunes or partially exports a
+  record, so what a record keeps (see [What a record keeps](#what-a-record-keeps)) stays for as
+  long as the ledger does, and an export or a backup carries all of it for as long as the copy
+  is kept; a record a writer removes is detectable only against an anchor held elsewhere.
 - **Recovery after a write error.** A write, flush or sync error on the single-file ledger,
   on a full disk for example, leaves it refusing every later append: every decision is answered
   `503`, and `/healthz` answers `503` so a liveness probe restarts the server. The restart trims
