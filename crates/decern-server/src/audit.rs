@@ -272,16 +272,18 @@ fn project(
     let mut matched = Vec::new();
     let mut truncated = false;
     for (seq, line) in lines.iter().enumerate() {
-        if matched.len() >= MAX_PROJECTED_DECISIONS {
-            truncated = true;
-            break;
-        }
         let recorded = serde_json::from_str::<Probe>(line)
             .ok()
             .and_then(|p| p.entry.decision_subject)
             .and_then(|ds| ds.handle);
         if recorded.as_deref() != Some(handle.as_str()) {
             continue;
+        }
+        // Cut only at a record under this handle that will not be served: a list the bound
+        // fits exactly is complete, whatever strangers' records follow it.
+        if matched.len() >= MAX_PROJECTED_DECISIONS {
+            truncated = true;
+            break;
         }
         // Only a match is parsed in full — the page is bounded, so this is too.
         match serde_json::from_str::<Value>(line) {

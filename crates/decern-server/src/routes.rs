@@ -1395,6 +1395,78 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A list cut at the bound is one with a record left out, not one followed by records
+    /// about someone else: exactly the bound's worth of records, then strangers' records,
+    /// is complete, and one more record under the handle makes it cut.
+    #[tokio::test]
+    async fn the_subject_projection_says_cut_only_when_a_record_under_the_handle_was_left_out() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let decide_about = |handle: &str| {
+            let st = st.clone();
+            let req: DecideReq = serde_json::from_str(&format!(
+                r#"{{"subject":{{"type":"Principal","id":"agent1"}},
+                    "action":{{"name":"Read"}},
+                    "resource":{{"type":"Resource","id":"claim1"}},
+                    "context":{{"decision_subject":"{handle}"}}}}"#
+            ))
+            .unwrap();
+            async move {
+                let (status, _) = body_json(decide(State(st), None, Ok(Json(req))).await).await;
+                assert_eq!(status, StatusCode::OK);
+            }
+        };
+        for _ in 0..MAX_PROJECTED_DECISIONS {
+            decide_about("ppid:edge").await;
+        }
+        for _ in 0..3 {
+            decide_about("ppid:other").await;
+        }
+        let projection = || async {
+            body_json(
+                app(st.clone(), open())
+                    .oneshot(
+                        Request::builder()
+                            .method("GET")
+                            .uri("/audit/v1/subject?handle=ppid:edge")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap(),
+            )
+            .await
+        };
+
+        let (status, body) = projection().await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["decisions"].as_array().unwrap().len(),
+            MAX_PROJECTED_DECISIONS
+        );
+        assert_eq!(
+            body["truncated"], false,
+            "records about someone else do not make the list cut: {body}"
+        );
+
+        decide_about("ppid:edge").await;
+        let (status, body) = projection().await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["decisions"].as_array().unwrap().len(),
+            MAX_PROJECTED_DECISIONS
+        );
+        assert_eq!(
+            body["truncated"], true,
+            "one record under the handle past the bound makes the list cut: {body}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// A handle nobody has a record under gets an empty answer, not someone else's.
     #[tokio::test]
     async fn the_subject_projection_matches_a_handle_exactly() {
