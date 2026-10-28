@@ -16,7 +16,7 @@ use crate::AppState;
 use crate::decide::{
     CONTEXT_TOO_LARGE, DecideReq, Refusal, admit_named, context_too_large, decide_one, evaluate_one,
 };
-use crate::record::{Shard, evaluation_body, not_recorded, record_decisions};
+use crate::record::{Shard, evaluation_body, not_recorded, record_decision, record_decisions};
 
 /// The most evaluations one exchange may carry. Each is a recorded decision, so a batch
 /// is bounded the way a single request's body is, and says so rather than timing out.
@@ -318,10 +318,25 @@ fn evaluate_all(
             KEYS.iter().zip(oversize_default).any(|(key, oversize)| {
                 oversize && !item.as_object().is_some_and(|o| o.contains_key(*key))
             });
-        let a = answer(st, caller, &top, i, item, inherits_an_oversize_default);
-        if let Some(record) = a.record {
-            decided.push(record);
-            decided_items.push((results.len(), a.errors));
+        let mut a = answer(st, caller, &top, i, item, inherits_an_oversize_default);
+        match (&semantic, a.record.take()) {
+            // A short-circuit follows the decision as settled: the item is recorded, and its
+            // answer fixed, before the next is evaluated, so a Mission terminated since the
+            // evaluation stops a `deny_on_first_deny` batch and does not end a
+            // `permit_on_first_permit` one.
+            (Semantic::DenyOnFirstDeny | Semantic::PermitOnFirstPermit, Some((shard, entry))) => {
+                let recorded = match record_decision(st, shard, entry) {
+                    Ok(recorded) => recorded,
+                    Err(e) => return not_recorded(e),
+                };
+                a.decision = recorded.decision;
+                a.body = evaluation_body(recorded.decision, &recorded.reasons, &a.errors);
+            }
+            (Semantic::ExecuteAll, Some(record)) => {
+                decided.push(record);
+                decided_items.push((results.len(), std::mem::take(&mut a.errors)));
+            }
+            (_, None) => {}
         }
         results.push(a.body);
         match semantic {
@@ -330,15 +345,18 @@ fn evaluate_all(
             _ => {}
         }
     }
-    // Every decision made lands before any is served, and each is served as recorded: a
-    // decision settled to a Deny at the record is answered as one, where the semantic was
-    // applied to the decision as evaluated.
-    let recorded = match record_decisions(st, decided) {
-        Ok(recorded) => recorded,
-        Err(e) => return not_recorded(e),
-    };
-    for ((at, errors), entry) in decided_items.into_iter().zip(recorded) {
-        results[at] = evaluation_body(entry.decision, &entry.reasons, &errors);
+    // Under `execute_all` every decision lands before any is served, as one durable step on
+    // the single-file ledger, and each is served as recorded: a decision settled to a Deny at
+    // the record is answered as one. A batch that decided nothing, every item refused or every
+    // decision already recorded above, takes no lock and syncs nothing.
+    if !decided.is_empty() {
+        let recorded = match record_decisions(st, decided) {
+            Ok(recorded) => recorded,
+            Err(e) => return not_recorded(e),
+        };
+        for ((at, errors), entry) in decided_items.into_iter().zip(recorded) {
+            results[at] = evaluation_body(entry.decision, &entry.reasons, &errors);
+        }
     }
     (StatusCode::OK, Json(json!({ "evaluations": results }))).into_response()
 }
