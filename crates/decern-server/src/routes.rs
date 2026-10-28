@@ -1471,8 +1471,8 @@ mod tests {
     }
 
     /// Every route that runs on a blocking thread takes a place first: with none to take, a
-    /// decision, a batch, each search, an approval, a termination, a tree head and a
-    /// projection are each answered `server_busy` at once, and nothing is recorded. A search
+    /// decision, a batch, each search, an approval, a termination, a tree head, a projection
+    /// and a Mission read are each answered `server_busy` at once, and nothing is recorded. A search
     /// is checked before it takes a place, so one missing what its kind requires is refused
     /// as malformed with no place to take.
     #[tokio::test]
@@ -1506,6 +1506,7 @@ mod tests {
             ("POST", "/mission/v1/unknown/terminate", String::new()),
             ("GET", "/anchor/v1/tree-head", String::new()),
             ("GET", "/audit/v1/subject?handle=ppid:nobody", String::new()),
+            ("GET", "/mission/v1/nobody", String::new()),
         ] {
             let (status, answer) = body_json(
                 app(st.clone(), open())

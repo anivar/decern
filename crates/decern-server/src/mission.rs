@@ -256,35 +256,41 @@ fn approve_now(
         .into_response()
 }
 
-/// `GET /mission/v1/{s256}` — the mission reference + state, or 404 if unknown.
+/// `GET /mission/v1/{s256}` — the mission reference + state, or 404 if unknown. The registry
+/// is read on a blocking thread, holding a place like every route that touches durable state:
+/// the read stats its file and reloads it when changed, which no deadline can interrupt.
 pub(crate) async fn mission_get(
     State(st): State<AppState>,
     UrlPath(s256): UrlPath<String>,
 ) -> Response {
-    match st.missions.status(&s256) {
-        Ok(Some(entry)) => {
-            let state = if entry.terminated {
-                "terminated"
-            } else {
-                "active"
-            };
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "reference": mission_reference(&entry.approver, &s256),
-                    "state": state,
-                    "expiry": entry.expiry,
-                })),
+    let blocking = st.blocking.clone();
+    crate::blocking::off_the_executor(&blocking, "mission_read_failed", move || {
+        match st.missions.status(&s256) {
+            Ok(Some(entry)) => {
+                let state = if entry.terminated {
+                    "terminated"
+                } else {
+                    "active"
+                };
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "reference": mission_reference(&entry.approver, &s256),
+                        "state": state,
+                        "expiry": entry.expiry,
+                    })),
+                )
+                    .into_response()
+            }
+            Ok(None) => (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "unknown mission", "s256": s256 })),
             )
-                .into_response()
+                .into_response(),
+            Err(e) => registry_unavailable(&e),
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "unknown mission", "s256": s256 })),
-        )
-            .into_response(),
-        Err(e) => registry_unavailable(&e),
-    }
+    })
+    .await
 }
 
 /// `POST /mission/v1/{s256}/terminate` — terminate (no revival), then record it.
