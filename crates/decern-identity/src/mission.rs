@@ -73,15 +73,32 @@ pub enum MissionState {
 /// is a parsed view over those same bytes.
 #[derive(Debug, Clone)]
 pub struct ApprovedMission {
-    pub mission: Mission,
-    pub state: MissionState,
+    mission: Mission,
+    state: MissionState,
     /// base64url-no-pad SHA-256 of `blob` — the `s256` half of the mission reference.
-    pub s256: String,
+    s256: String,
     /// The exact bytes `s256` is over. The approver's approval is over these.
     blob: Vec<u8>,
 }
 
 impl ApprovedMission {
+    /// The approved blob as parsed. Read-only: the ceiling a mint applies is the one approved,
+    /// never one a holder widened afterwards.
+    pub fn mission(&self) -> &Mission {
+        &self.mission
+    }
+
+    /// Active or terminated, as this handle last saw it. A registry, when one is supplied, is
+    /// authoritative over this.
+    pub fn state(&self) -> MissionState {
+        self.state
+    }
+
+    /// The `s256` half of the mission reference.
+    pub fn s256(&self) -> &str {
+        &self.s256
+    }
+
     /// The mission reference: `(approver, s256)`.
     pub fn reference(&self) -> (&str, &str) {
         (&self.mission.approver, &self.s256)
@@ -235,7 +252,7 @@ pub fn approve(
 ///
 /// When a [`MissionRegistry`] is supplied it is the AUTHORITATIVE liveness check:
 /// the mission reference (`s256`) must resolve to a registered, non-terminated
-/// approval whose approver matches. This is what stops a forged/stale reference
+/// approval whose approver, approved tools and expiry match. This is what stops a forged/stale reference
 /// (or a mission terminated in another process) from riding into a minted token and
 /// its audit trail. Without a registry only the in-memory `state` is consulted
 /// (test/library convenience) — a live minting deployment MUST pass the registry.
@@ -272,8 +289,9 @@ pub fn issue_under_mission(
     if let Some(reg) = registry {
         // The reference must name a live registered approval. An unknown s256 is a
         // forged/never-approved reference; a terminated one is a killed mission; an
-        // approver mismatch is a reference stitched onto the wrong principal. (An
-        // expired mission has been GC'd from the registry, so it reads as unknown.)
+        // approver mismatch is a reference stitched onto the wrong principal; tools or an
+        // expiry that differ mean the entry does not carry this approval. (An expired
+        // mission has been GC'd from the registry, so it reads as unknown.)
         match reg.status(&m.s256)? {
             None => {
                 return Err(IdentityError::SubjectInvalid(format!(
@@ -291,6 +309,18 @@ pub fn issue_under_mission(
                 return Err(IdentityError::SubjectInvalid(format!(
                     "mission {} registered approver {} does not match {}",
                     m.s256, entry.approver, m.mission.approver
+                )));
+            }
+            // The registered approval is the ceiling. The handle cannot be widened outside this
+            // crate, so a difference here is an entry that does not carry this approval's tools
+            // and expiry, as a row written before they were recorded does not; it is refused.
+            Some(entry)
+                if entry.approved_tools != m.mission.approved_tools
+                    || entry.expiry != m.mission.expiry =>
+            {
+                return Err(IdentityError::SubjectInvalid(format!(
+                    "mission {} differs from the registered approval in its tools or expiry",
+                    m.s256
                 )));
             }
             Some(_) => {}
@@ -704,6 +734,57 @@ mod tests {
         assert!(
             matches!(err, IdentityError::SubjectInvalid(_)),
             "a stale active handle must not out-vote the registry: {err}"
+        );
+    }
+
+    /// The registered approval is the ceiling: a handle whose approved tools or expiry differ
+    /// from the registry's entry is refused, not minted against its own wider view. Inside
+    /// this crate the fields can be set, which is what lets the test widen one.
+    #[test]
+    fn a_mint_under_a_registry_refuses_a_handle_that_differs_from_the_registered_approval() {
+        let reg = decern_store::MemoryMissionRegistry::new();
+        // Approved to expire before the approver does, so the longer handle below is still
+        // inside the approver's authority: only the registered approval refuses it.
+        let approved = approve(
+            &Model::builtin(),
+            mission(&["read"], corp_expiry() - 10),
+            100,
+            Some(&reg),
+        )
+        .unwrap();
+
+        let mut widened = approved.clone();
+        widened.mission.approved_tools.push("move_money".into());
+        let minted = issue_under_mission(
+            &Model::builtin(),
+            &widened,
+            "sub-agent",
+            &scopes(&["read", "move_money"]),
+            100,
+            &decern_crypto::generate().unwrap(),
+            Some(&reg),
+        );
+        match minted {
+            Ok(_) => panic!("a handle widened past its registered approval minted"),
+            Err(e) => assert!(
+                e.to_string()
+                    .contains("differs from the registered approval"),
+                "{e}"
+            ),
+        }
+
+        let mut longer = approved.clone();
+        longer.mission.expiry += 5;
+        let err = mint_err(&longer, Some(&reg));
+        assert!(
+            err.to_string()
+                .contains("differs from the registered approval"),
+            "{err}"
+        );
+
+        assert!(
+            mint_once(&approved, Some(&reg)).is_ok(),
+            "the handle as approved still mints"
         );
     }
 
