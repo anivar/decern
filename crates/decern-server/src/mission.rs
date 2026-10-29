@@ -336,8 +336,9 @@ fn terminate_now(
     // a record); terminate's dangerous state is a mission that still mints, and
     // terminating makes it SAFE (mints nothing), so persisting first is the fail-closed
     // choice. A 503 on the record therefore leaves the safe state, and the record runs on
-    // every call — including a repeat of an already-terminated mission — so a 503'd
-    // termination's audit entry is guaranteed to land on retry.
+    // every call — including a repeat of an already-terminated mission — so a retry writes a
+    // 503'd termination's record once the ledger records again, while the registry still
+    // holds the mission.
     if let Err(e) = st.missions.terminate(&s256, now_s) {
         return registry_unavailable(&e);
     }
@@ -982,6 +983,115 @@ mod tests {
         assert_eq!(
             body["state"], "active",
             "a refused terminate must not kill the grant"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The registry is written, then the record. An unrecordable termination is a `503` that
+    /// leaves the Mission terminated, the safe state; a retry, here after a restart on the
+    /// same files, leaves it terminated and writes the record once.
+    #[tokio::test]
+    async fn an_unrecordable_termination_is_503_and_the_mission_stays_terminated() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                None,
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+
+        // An unwritable ledger: poison its lock, so every append fails closed. The registry
+        // has its own lock and is untouched.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let LedgerBackend::Single(m) = &*st.backend {
+                let _guard = m.lock().unwrap();
+                panic!("poison the ledger lock: nothing can be recorded");
+            }
+        }));
+        let (status, _b) =
+            body_json(mission_terminate(State(st.clone()), None, UrlPath(s256.clone())).await)
+                .await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "an unrecordable termination is a 503"
+        );
+        let entry = st
+            .missions
+            .status(&s256)
+            .unwrap()
+            .expect("the registry still holds the mission");
+        assert!(
+            entry.terminated,
+            "registry first: the mission is terminated although its record did not land"
+        );
+        let report = decern_ledger::verify(&ledger_path, Some(&pubkey)).unwrap();
+        assert_eq!(report.entries, 1, "the approval alone is recorded");
+        drop(st);
+
+        // A restart on the same files, then the retry.
+        let (st2, _pk) = mission_state_at(&base);
+        let (status, body) =
+            body_json(mission_terminate(State(st2), None, UrlPath(s256.clone())).await).await;
+        assert_eq!(status, StatusCode::OK, "the retry records the termination");
+        assert_eq!(body["state"], "terminated");
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 10).unwrap();
+        let actions: Vec<&str> = records
+            .iter()
+            .map(|r| r["entry"]["action"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            actions,
+            vec!["Mission.Approve", "Mission.Terminate"],
+            "the retry writes the record once"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The record runs on every call: a terminate repeated after a `200` is a `200` again and
+    /// writes a second record, so a client that lost the first answer knows one landed.
+    #[tokio::test]
+    async fn a_repeated_termination_is_200_and_records_again() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                None,
+                Ok(Json(approve_req(&["read"], corp_expiry()))),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let s256 = body["s256"].as_str().unwrap().to_owned();
+
+        for _ in 0..2 {
+            let (status, body) =
+                body_json(mission_terminate(State(st.clone()), None, UrlPath(s256.clone())).await)
+                    .await;
+            assert_eq!(status, StatusCode::OK, "each terminate is answered 200");
+            assert_eq!(body["state"], "terminated");
+        }
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 10).unwrap();
+        let actions: Vec<&str> = records
+            .iter()
+            .map(|r| r["entry"]["action"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            actions,
+            vec!["Mission.Approve", "Mission.Terminate", "Mission.Terminate"],
+            "a repeat writes a second record"
         );
         let _ = std::fs::remove_dir_all(&base);
     }
