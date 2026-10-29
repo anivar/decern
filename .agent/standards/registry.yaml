@@ -28,7 +28,7 @@ non_surface:
 standards:
   - name: AuthZEN Authorization API 1.0
     url: https://openid.net/specs/authorization-api-1_0.html
-    verified: 2026-10-25
+    verified: 2026-10-29
     surface:
       - crates/decern-server/src/decide.rs
       - crates/decern-server/src/routes.rs
@@ -67,7 +67,7 @@ standards:
       and Discovery run as tests against examples/authzen-certification/model. Reasons
       carry named policy ids on the builtin model, and
       the endpoint sits behind whichever caller posture the deployment names, which AuthZEN
-      leaves to the deployment. Verified against the spec 2026-10-09. §11.7 asks for protection against attacks tied to payload size: the body is bounded at 2 MiB, a context at 64 KiB, an entity type, id or action name at 1 KiB, and what one batch may record at 16 MiB, each answered `413`, which §10.1.2's open set of 4XX codes allows. §10.1.2 and §11.7 read again 2026-10-25.
+      leaves to the deployment. Verified against the spec 2026-10-09. §11.7 asks for protection against attacks tied to payload size: the body is bounded at 2 MiB, a context at 64 KiB, an entity type, id or action name at 1 KiB, and what one batch may record at 16 MiB, each answered `413`, which §10.1.2's open set of 4XX codes allows. §10.1.2 and §11.7 read again 2026-10-25; §7.1.2.1, the evaluations semantics, read again 2026-10-29: `deny_on_first_deny` and `permit_on_first_permit` are `&&` and `||` over the decisions returned, which the batch follows on the decision as recorded.
 
   - name: OAuth 2.0 Token Exchange (RFC 8693)
     url: https://www.rfc-editor.org/rfc/rfc8693

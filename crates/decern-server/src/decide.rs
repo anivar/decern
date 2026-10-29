@@ -1640,12 +1640,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// The semantic was applied to the decisions as evaluated: a `permit_on_first_permit`
-    /// batch ended on the Allow it evaluated, so it ends on the Deny settled at the record with
-    /// the items after it unanswered; a `deny_on_first_deny` batch went on past it.
+    /// The semantic follows the decision as settled: a `permit_on_first_permit` batch whose
+    /// first Allow settles to a Deny at the record goes on to the next item, and a
+    /// `deny_on_first_deny` batch stops on it, the items after it neither evaluated nor
+    /// recorded.
     #[tokio::test]
-    async fn a_batch_semantic_is_applied_to_the_decisions_as_evaluated() {
-        for (semantic, answered) in [("permit_on_first_permit", 1), ("deny_on_first_deny", 2)] {
+    async fn a_batch_short_circuit_follows_the_decision_as_settled() {
+        for (semantic, decisions) in [
+            ("permit_on_first_permit", vec![false, true]),
+            ("deny_on_first_deny", vec![false]),
+        ] {
             let base = mission_base();
             let flipping = Arc::new(Flipping::new(1));
             let st = flipping_state(&base, &flipping);
@@ -1665,10 +1669,28 @@ mod tests {
                 body_json(crate::batch::evaluations(State(st.clone()), None, Ok(Json(req))).await)
                     .await;
             assert_eq!(status, StatusCode::OK, "{semantic}: {body}");
-            let items = body["evaluations"].as_array().unwrap();
-            assert_eq!(items.len(), answered, "{semantic}: {body}");
-            assert_eq!(items[0]["decision"], false, "{semantic}: {body}");
-            assert_eq!(recorded_decisions(&st, &base).len(), answered, "{semantic}");
+            let answered: Vec<bool> = body["evaluations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["decision"].as_bool().unwrap())
+                .collect();
+            assert_eq!(answered, decisions, "{semantic}: {body}");
+            // Settled at the record, not refused at the bind: the first item's reason says so,
+            // and the registry was read twice, once to bind and once under the lock to settle.
+            assert!(
+                body["evaluations"][0]["context"]["reasons"]
+                    .to_string()
+                    .contains("terminated before this decision was recorded"),
+                "{semantic}: {body}"
+            );
+            assert_eq!(
+                flipping.reads.load(std::sync::atomic::Ordering::SeqCst),
+                2,
+                "{semantic}"
+            );
+            let recorded: Vec<bool> = recorded_decisions(&st, &base).iter().map(|d| d.0).collect();
+            assert_eq!(recorded, decisions, "{semantic}");
             let _ = std::fs::remove_dir_all(&base);
         }
     }

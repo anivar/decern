@@ -209,10 +209,11 @@ pub(crate) fn record_decision(
 
 /// Record a batch's decisions, each settled under the lock, and return them as recorded, in
 /// order. On the single-file backend the batch is one durable step under one lock — one sync
-/// for the exchange, not one per decision — so a thousand decisions cannot hold the ledger
-/// for a thousand fsyncs. On the sharded backend each entry is its own append under its
-/// shard's lock, since entries may span shards. Either way nothing is served until every
-/// entry has landed.
+/// for the exchange, not one per decision — so an `execute_all` batch of a thousand decisions
+/// cannot hold the ledger for a thousand fsyncs; the two short-circuit modes record one item
+/// per step through [`record_decision`] instead, releasing the lock between items. On the
+/// sharded backend each entry is its own append under its shard's lock, since entries may
+/// span shards. Either way nothing is served until every entry has landed.
 pub(crate) fn record_decisions(
     st: &crate::AppState,
     decided: Vec<(Shard, Entry)>,
