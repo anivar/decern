@@ -44,7 +44,7 @@ archives the source for citation, and writes the release notes from `CHANGELOG.m
 
 | Workflow | Produces |
 |---|---|
-| `release.yml` | Binaries for four targets, each with a Sigstore bundle (`<file>.sigstore.json`: signature, certificate and transparency-log entry); a combined `SHA256SUMS`, signed the same way; a CycloneDX SBOM per crate; a GitHub release whose body is the `CHANGELOG.md` section for the tag |
+| `release.yml` | Binaries for four targets, each run end to end by `scripts/smoke.sh` before anything is uploaded (on Windows, where a key file cannot be created, without the restart and the second verify), each with a Sigstore bundle (`<file>.sigstore.json`: signature, certificate and transparency-log entry); a combined `SHA256SUMS`, signed the same way; a CycloneDX SBOM per crate; a GitHub release whose body is the `CHANGELOG.md` section for the tag |
 | `publish-sdks.yml` | `decern` on PyPI and on npm |
 | `publish-crates.yml` | The nine workspace crates on crates.io, in dependency order |
 | Zenodo | An archived copy and a DOI, from the GitHub integration |

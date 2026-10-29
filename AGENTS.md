@@ -44,7 +44,9 @@ Run the canonical script (the same gates CI runs) and keep it green:
 ```
 
 Needs the pinned toolchain, `cargo-deny`, `python3` for the standards check, and **cvc5**
-for the proofs. See [CONTRIBUTING.md](CONTRIBUTING.md).
+for the proofs. See [CONTRIBUTING.md](CONTRIBUTING.md). After the gate, CI runs
+`scripts/smoke.sh target/debug <scratch-dir>` against the debug binaries, end to end; run it
+when a change touches a binary's startup, flags or wiring.
 
 `--skip-proofs` runs every gate except the proofs, for iterating on a change that cannot reach
 authorization semantics. It exits non-zero regardless, so it can never stand in for a passing

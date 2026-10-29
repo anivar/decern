@@ -36,24 +36,27 @@ Two binaries over seven library crates. The stock build is pure Rust; the one ex
 | `decern-server` | bin → `decern-serve` | The fail-closed AuthZEN PDP: evaluate, record, serve. Also serves the Mission lifecycle over `decern-identity` (`POST /mission/v1/approve`, `GET`/`terminate`), recording each transition to the ledger. |
 
 `decern-server` is split by layer, one seam per file: `main.rs` (the module tree, and the entry
-point that runs the server on a thread with the stack Cedar needs), `args.rs` (flags, the
-default ledger and Mission registry paths, the caller-posture refusal), `boot.rs` (startup and
-shutdown), `state.rs` (the state every handler shares), `routes.rs` (the router and the guarded/open split), `caller.rs` (how the
-caller is established: the posture enum, the `CallerAuth` trait every posture implements, and
-the one guard layer over the protected routes), `bearer.rs` (RFC 9068 token validation, `EdDSA`
-only), `sig.rs` (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), `aauth.rs`
-(AAuth agent tokens verified against provider keys pinned at startup), `spiffe.rs` (SPIFFE
-JWT-SVID validation against pinned trust bundles), `httpsig.rs` (the RFC 9421 verifier `sig.rs`
-and `aauth.rs` share: structured-field parsing and the signature base), `jose.rs` (compact-JWS
-decoding every token reader shares), `blocking.rs` (the places on the blocking pool every
-decision, search, record and audit takes first), `record.rs` (the fail-closed append path), `decide.rs` (the
-decision handler and its derivations), `batch.rs` (AuthZEN batch evaluation), `search.rs`
-(AuthZEN subject, resource and action search), `discovery.rs` (AuthZEN PDP metadata),
-`deployment.rs` (the type aliases and public URL a deployment declares, checked at boot),
-`audit.rs` (the published reads: pubkey, tree head, subject projection, descendants,
-disclosure), `mission.rs` (the lifecycle), `challenge.rs` (the subject-side challenge),
-`testutil.rs` (shared fixtures), and `authzen_certification/` (the OpenID AuthZEN certification
-scenario, run under `cargo test`).
+point that runs the server on a thread with the stack Cedar needs), `args.rs` (flags, the default
+ledger and Mission registry paths, the caller-posture refusal), `boot.rs` (startup and shutdown),
+`serve.rs` (the listener, with the header deadline, the request deadline, the connection cap and
+the shutdown grace `axum::serve` does not set), `state.rs` (the state every handler shares),
+`routes.rs` (the router and the guarded/open split), `caller.rs` (how the caller is established:
+the posture enum, the `CallerAuth` trait every posture implements, and the one guard layer over
+the protected routes), `bearer.rs` (RFC 9068 token validation, `EdDSA` only), `sig.rs` (RFC 9421
+message signatures bound to an RFC 7800 `cnf` claim), `aauth.rs` (AAuth agent tokens verified
+against provider keys pinned at startup), `spiffe.rs` (SPIFFE JWT-SVID validation against pinned
+trust bundles), `httpsig.rs` (the RFC 9421 verifier `sig.rs` and `aauth.rs` share:
+structured-field parsing and the signature base), `jose.rs` (compact-JWS decoding every token
+reader shares), `jwk.rs` (the JSON Web Key an AAuth signature or agent token is verified with,
+held to the fully-specified-algorithm rules the draft adopts, Ed25519 only), `blocking.rs` (the
+places on the blocking pool every decision, search, record, audit and Mission read takes first),
+`record.rs` (the fail-closed append path), `decide.rs` (the decision handler and its
+derivations), `batch.rs` (AuthZEN batch evaluation), `search.rs` (AuthZEN subject, resource and
+action search), `discovery.rs` (AuthZEN PDP metadata), `deployment.rs` (the type aliases and
+public URL a deployment declares, checked at boot), `audit.rs` (the published reads: pubkey, tree
+head, subject projection, descendants, disclosure), `mission.rs` (the lifecycle), `challenge.rs`
+(the subject-side challenge), `testutil.rs` (shared fixtures), and `authzen_certification/` (the
+OpenID AuthZEN certification scenario, run under `cargo test`).
 
 The credential postures sit under `caller.rs` and know nothing of each other: each
 owns one spec's rules and implements the same trait, so the guard dispatches once and a
