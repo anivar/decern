@@ -184,7 +184,7 @@ bound to the Mission before and recorded after is recorded, and answered, as a D
 and the processes that open one file share it; under `--sharded postgres://…` a replica on
 another host has its own, so a Mission approved or terminated on one host is unknown to, or
 still live on, the others: send a Mission's requests and its termination to the host that holds
-it. A Mission binds only the built-in
+it, which a Postgres-sharded start says it does with `--missions-per-host`. A Mission binds only the built-in
 actions `Read`, `MoveMoney` and `AccessPII`; under a Mission any other action is denied. The
 self-approval refusal compares ids only: an approver in the agent's own delegation chain, or one
 the model does not mark `Human`, may approve, so `human_approved` means another principal
@@ -236,7 +236,7 @@ processes on one host extend safely (`flock` head store); `--sharded postgres://
 same across hosts (`--features postgres` — the one optional TLS dependency, not built into
 the release binaries). `--sharded` requires `--key`, the key every replica signs with, and
 `--retired-key` names each key it replaced; a store whose records a key in neither signed refuses
-to start. Audit a directory store with `decern verify --sharded <dir>`; a Postgres head store has
+to start. A `postgres://` URL also needs `--missions-per-host`, the deployment's word, which the server cannot check, that a Mission's requests and its termination go to the host that holds it. Audit a directory store with `decern verify --sharded <dir>`; a Postgres head store has
 no `decern verify` path. What a deployment has to supply around the server — TLS, key rollover, logging,
 retention, high availability — is in [docs/CLI.md](docs/CLI.md#what-a-deployment-supplies).
 
