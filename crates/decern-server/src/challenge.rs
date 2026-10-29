@@ -165,8 +165,11 @@ pub(crate) fn parse(
         Some(Value::String(s)) => vec![s.clone()],
         Some(Value::Array(a)) => a
             .iter()
-            .filter_map(|v| v.as_str().map(str::to_owned))
-            .collect(),
+            .map(|v| v.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                ChallengeError::Malformed("challenge_basis items must be strings".into())
+            })?,
         _ => {
             return Err(ChallengeError::Malformed(
                 "challenge_basis is required".into(),
@@ -393,6 +396,22 @@ mod tests {
             "challenge_basis": [basis],
             "requested_effect": "mark-for-human-review",
         })
+    }
+
+    /// A `challenge_basis` array with an item that is not a string is malformed, not a shorter
+    /// list: a challenge that is not well formed is refused as such, never classified.
+    #[test]
+    fn a_basis_array_with_a_non_string_item_is_malformed() {
+        let key = generate().unwrap();
+        let token = sign(claims("dec-1", 2_000), &key);
+        let mut raw = challenge_json(&token, "dec-1", "factual-error");
+        raw["challenge_basis"] = serde_json::json!(["factual-error", 5]);
+        let e = parse(&raw, &[key.verifying_key()], 1_000).unwrap_err();
+        assert!(
+            matches!(e, ChallengeError::Malformed(_)) && e.detail().contains("challenge_basis"),
+            "{}",
+            e.detail()
+        );
     }
 
     /// Same key, same algorithm, different contract: a bearer access token replayed as a
