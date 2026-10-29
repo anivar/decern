@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
 //! The blocking pool's places. Evaluation, the append and its fsync, a search over the
-//! directory and an audit over the log are synchronous and run on blocking threads; the pool
+//! directory, an audit over the log and a Mission status read are synchronous and run on
+//! blocking threads; the pool
 //! has as many threads as there are places, every such request takes a place first, and a
 //! request that finds none is answered `503` at once rather than waiting in the pool's queue
 //! behind a stalled one.
@@ -42,9 +43,9 @@ pub(crate) async fn off_the_executor(
 
 /// How many requests may be on blocking threads at once: the runtime's blocking pool is built
 /// this size, every request that runs on it takes a place first, so a request never waits in
-/// that pool's queue behind a stalled one, and the next is answered `503` at once. A Mission
-/// read (`GET /mission/v1/{s256}`) reads the registry on the executor and takes no place. A stalled store therefore holds at most this many requests'
-/// threads, and every request past them is refused now rather than at its deadline.
+/// that pool's queue behind a stalled one, and the next is answered `503` at once. A stalled
+/// store therefore holds at most this many requests' threads, and every request past them is
+/// refused now rather than at its deadline.
 pub(crate) const MAX_BLOCKING: usize = 512;
 
 /// The places on the blocking pool, each taken for the length of the work it runs: a request
@@ -78,7 +79,7 @@ impl Blocking {
             Json(json!({
                 "error": "server_busy",
                 "detail": format!(
-                    "{} requests are already being decided, searched, recorded or audited; \
+                    "{} requests are already being decided, searched, recorded, audited or read as a Mission; \
                      try again",
                     self.cap
                 ),
