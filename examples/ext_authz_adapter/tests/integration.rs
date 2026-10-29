@@ -49,11 +49,38 @@ async fn mock_pdp_handler(
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             (StatusCode::OK, Json(json!({ "decision": true }))).into_response()
         }
+        // Headers at once, then a body that never ends.
+        5 => axum::http::Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::new(Stall))
+            .unwrap(),
+        // A well-formed decision inside a body far past what one needs.
+        6 => (
+            StatusCode::OK,
+            Json(json!({ "decision": true, "pad": "x".repeat(1 << 20) })),
+        )
+            .into_response(),
         _ => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({ "error": "ledger record failed" })),
         )
             .into_response(),
+    }
+}
+
+/// A body that sends nothing and never ends: a PDP that answered its headers and then stalled.
+struct Stall;
+
+impl http_body::Body for Stall {
+    type Data = bytes::Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        std::task::Poll::Pending
     }
 }
 
@@ -89,19 +116,22 @@ async fn spawn_mock_pdp() -> (
 }
 
 fn build_adapter_router(pdp_url: &str) -> Router {
-    build_adapter_router_full(pdp_url, "x-forwarded-subject", None)
+    build_adapter_router_full(pdp_url, "x-forwarded-subject", None, 5)
 }
 
 fn build_adapter_router_with_subject_header(pdp_url: &str, subject_header_name: &str) -> Router {
-    build_adapter_router_full(pdp_url, subject_header_name, None)
+    build_adapter_router_full(pdp_url, subject_header_name, None, 5)
 }
 
+/// The one way every test builds the adapter; `timeout_secs` is the PDP deadline.
 fn build_adapter_router_full(
     pdp_url: &str,
     subject_header_name: &str,
     bearer_token: Option<&str>,
+    timeout_secs: u64,
 ) -> Router {
-    let pdp_client = Arc::new(PdpClient::new(pdp_url, 5, bearer_token.map(String::from)).unwrap());
+    let pdp_client =
+        Arc::new(PdpClient::new(pdp_url, timeout_secs, bearer_token.map(String::from)).unwrap());
     let state = AppState {
         pdp_client,
         subject_header: HeaderName::from_str(subject_header_name).unwrap(),
@@ -345,6 +375,7 @@ async fn test_bearer_token_forwarded_to_pdp() {
         &pdp_url,
         "x-forwarded-subject",
         Some("secret_access_token_123"),
+        5,
     );
     let req = axum::http::Request::builder()
         .method("POST")
@@ -480,27 +511,70 @@ async fn test_pdp_timeout_fails_closed_503() {
     let (pdp_url, mode, _) = spawn_mock_pdp().await;
     mode.store(4, Ordering::SeqCst);
 
-    let pdp_client = Arc::new(PdpClient::new(&pdp_url, 1, None).unwrap());
-    let state = AppState {
-        pdp_client,
-        subject_header: HeaderName::from_str("x-forwarded-subject").unwrap(),
-        method_header: HeaderName::from_str("x-forwarded-method").unwrap(),
-        uri_header: HeaderName::from_str("x-forwarded-uri").unwrap(),
-        subject_type: "Principal".to_string(),
-        resource_type: "Resource".to_string(),
-    };
-    let app = create_router(state);
+    let app = adapter_with_timeout(&pdp_url, 1);
 
-    let req = axum::http::Request::builder()
+    let resp = app.oneshot(forwarded_check()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        resp.headers()
+            .get("x-decern-decision")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "unavailable"
+    );
+}
+
+fn adapter_with_timeout(pdp_url: &str, timeout_secs: u64) -> Router {
+    build_adapter_router_full(pdp_url, "x-forwarded-subject", None, timeout_secs)
+}
+
+fn forwarded_check() -> axum::http::Request<axum::body::Body> {
+    axum::http::Request::builder()
         .method("POST")
         .uri("/check")
         .header("x-forwarded-subject", "corp")
         .header("x-forwarded-method", "Read")
         .header("x-forwarded-uri", "claim1")
         .body(axum::body::Body::empty())
-        .unwrap();
+        .unwrap()
+}
 
-    let resp = app.oneshot(req).await.unwrap();
+/// The deadline covers the whole exchange: a PDP that answers its headers at once and then
+/// stalls on the body holds the adapter until `--pdp-timeout-secs`, not forever.
+#[tokio::test]
+async fn test_pdp_body_stall_fails_closed_503_at_the_deadline() {
+    let (pdp_url, mode, _) = spawn_mock_pdp().await;
+    mode.store(5, Ordering::SeqCst);
+    let app = adapter_with_timeout(&pdp_url, 1);
+
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        app.oneshot(forwarded_check()),
+    )
+    .await
+    .expect("the adapter answers by its deadline, it does not hang on the body")
+    .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        resp.headers()
+            .get("x-decern-decision")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "unavailable"
+    );
+}
+
+/// A body past the bound is refused, not read into memory whole, however well formed the
+/// decision inside it.
+#[tokio::test]
+async fn test_pdp_oversized_body_fails_closed_503() {
+    let (pdp_url, mode, _) = spawn_mock_pdp().await;
+    mode.store(6, Ordering::SeqCst);
+    let app = adapter_with_timeout(&pdp_url, 5);
+
+    let resp = app.oneshot(forwarded_check()).await.unwrap();
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(
         resp.headers()
@@ -524,6 +598,7 @@ async fn test_duplicated_subject_header_refused() {
         &pdp_url,
         "x-forwarded-subject",
         Some("secret_access_token_123"),
+        5,
     );
     let req = axum::http::Request::builder()
         .method("POST")
@@ -632,6 +707,7 @@ async fn test_duplicated_method_header_refused() {
         &pdp_url,
         "x-forwarded-subject",
         Some("secret_access_token_123"),
+        5,
     );
     let req = axum::http::Request::builder()
         .method("POST")
@@ -670,6 +746,7 @@ async fn test_duplicated_uri_header_refused() {
         &pdp_url,
         "x-forwarded-subject",
         Some("secret_access_token_123"),
+        5,
     );
     let req = axum::http::Request::builder()
         .method("POST")

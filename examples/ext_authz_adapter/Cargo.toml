@@ -31,3 +31,4 @@ thiserror = "2"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+http-body = "1"

@@ -41,7 +41,7 @@ cargo build --release
 | `--uri-header` | `x-forwarded-uri` | Header carrying the original URI path (`/claims/1`). |
 | `--subject-type` | `Principal` | Cedar subject entity type passed to AuthZEN evaluation. |
 | `--resource-type` | `Resource` | Cedar resource entity type passed to AuthZEN evaluation. |
-| `--pdp-timeout-secs` | `5` | Upstream PDP evaluation request timeout in seconds. |
+| `--pdp-timeout-secs` | `5` | Deadline, in seconds, for the whole PDP exchange, response body included. |
 | `--pdp-bearer-token` | *(none)* | Optional access token for `decern-serve` bearer validation. Prefer `PDP_BEARER_TOKEN` in the environment: an argv value is visible to every user on the host. |
 
 ---
@@ -206,6 +206,7 @@ The adapter enforces a strict fail-closed contract on every request path:
 | PDP returns `{"decision": false}` | `403 Forbidden` | `x-decern-decision: deny` | Request denied by policy. |
 | Missing/empty subject, method, or URI header | `403 Forbidden` | `x-decern-decision: deny` | An incomplete forward is refused, never evaluated under a default. |
 | Subject, method, or URI header present more than once | `403 Forbidden` | `x-decern-decision: deny` | No copy can be trusted over another. |
-| PDP unreachable / timeout | `503 Service Unavailable` | `x-decern-decision: unavailable` | Fail-closed on network failure. |
+| PDP unreachable / timeout | `503 Service Unavailable` | `x-decern-decision: unavailable` | Fail-closed on network failure. The deadline covers the body: a PDP that sends its headers and then stalls is answered at the deadline. |
+| PDP body over 64 KiB | `503 Service Unavailable` | `x-decern-decision: unavailable` | Refused at the bound, not read into memory whole. |
 | PDP non-2xx (e.g. ledger fail) | `503 Service Unavailable` | `x-decern-decision: unavailable` | Fail-closed on PDP internal error. |
 | Malformed JSON body from PDP | `503 Service Unavailable` | `x-decern-decision: unavailable` | Malformed response is never an allow. |

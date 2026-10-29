@@ -191,6 +191,7 @@ dependencies = [
  "axum",
  "bytes",
  "clap",
+ "http-body",
  "http-body-util",
  "hyper-util",
  "serde",
