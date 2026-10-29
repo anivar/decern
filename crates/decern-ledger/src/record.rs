@@ -26,10 +26,6 @@ pub struct Entry {
     pub context: serde_json::Value,
     pub decision: bool,
     pub reasons: Vec<String>,
-    /// RFC 8785 SHA-256 digest of the parameters a decision was made over — binds a
-    /// record to the EXACT arguments, closing the TOCTOU gap between "authorized"
-    /// and "executed". Set by `decern-serve` on decide / mission transitions.
-
     /// The authority-graph edge type: `Attenuate` (default, omitted) = offline
     /// narrowing WITHIN the delegator's namespace (a decern tenant); `Mint` = a
     /// trusted-issuer crossing that no offline delegate can produce. Reserved and
@@ -113,8 +109,8 @@ pub struct Entry {
 }
 
 /// The exact arguments a decision authorized — what it was asked, not what it knew.
-/// Binding them means a later reading can tell that the thing authorized is the thing
-/// that was requested, rather than something substituted after the check.
+/// Binding them means a later reading, given the arguments an execution used, can tell
+/// whether they are the ones authorized; the record holds only the authorized half.
 pub const DIGEST_PARAMETERS: &str = "parameters";
 
 /// The authority a decision was taken against — policy, schema and entity graph.

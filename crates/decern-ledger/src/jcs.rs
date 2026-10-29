@@ -4,12 +4,13 @@
 //!
 //! `digest` binds a decision to the EXACT value it was taken against — SHA-256 over
 //! the RFC 8785 canonical form of that value. Recording one under
-//! [`crate::DIGEST_PARAMETERS`] in a decision [`crate::Entry`] closes the TOCTOU gap
-//! between "authorized" and "executed": the anchored record proves WHICH arguments
-//! were authorized, so a later execution against different arguments is detectably
-//! off-record. Two callers that canonicalize the same JSON — whatever the key order,
-//! whitespace, or spelling of a number — get byte-identical output, and so the same
-//! digest, as does any other conformant JCS implementation.
+//! [`crate::DIGEST_PARAMETERS`] in a decision [`crate::Entry`] binds the record to the
+//! arguments decided: the anchored record proves WHICH arguments were authorized, so
+//! whoever holds the arguments an execution used can tell whether they are the ones on
+//! record. The ledger does not see the execution; a PEP that acts on other arguments is
+//! caught only by that comparison. Two callers that canonicalize the same JSON — whatever
+//! the key order, whitespace, or spelling of a number — get byte-identical output, and so
+//! the same digest, as does any other conformant JCS implementation.
 //!
 //! Faithfulness: object keys are sorted by UTF-16 code unit (§3.2.3), array order is
 //! preserved, no insignificant whitespace is emitted, numbers are serialized as
