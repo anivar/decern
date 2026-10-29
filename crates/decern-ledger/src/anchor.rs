@@ -9,8 +9,6 @@ use crate::checkpoint::Checkpoint;
 use crate::error::{LedgerError, io_err};
 use crate::open::Location;
 use crate::record::{GENESIS, RecordIn, chain_hash};
-use std::fs::File;
-use std::io::Write;
 use std::path::Path;
 
 /// The operator-independent tamper check: does the ledger at `path` still extend a
@@ -32,25 +30,15 @@ pub(crate) fn ledger_extends_checkpoint_at(
 }
 
 /// Persist a checkpoint as the ledger's anchor file, atomically (temp + fsync +
-/// rename + parent-dir fsync) so a crash cannot leave a half-written or non-durable
-/// anchor — a lost anchor write would silently lower the height truncation is checked
-/// against. See [`Ledger::seal_anchor`].
+/// rename, and on Unix a parent-dir fsync) so a crash cannot leave a half-written anchor,
+/// nor on Unix a non-durable one — a lost anchor write would silently lower the height
+/// truncation is checked against. A parent-dir fsync that fails is this function's error,
+/// never an `Ok`; on a target that cannot open a directory the rename is not made durable.
+/// See [`Ledger::seal_anchor`].
 pub fn save_anchor(anchor_path: &Path, cp: &Checkpoint) -> Result<(), LedgerError> {
     let bytes = serde_json::to_vec_pretty(cp).map_err(|e| LedgerError::Serde(e.to_string()))?;
     let tmp = anchor_path.with_extension("anchor-tmp");
-    {
-        let mut f = File::create(&tmp).map_err(|e| io_err(&tmp, e))?;
-        f.write_all(&bytes).map_err(|e| io_err(&tmp, e))?;
-        f.sync_all().map_err(|e| io_err(&tmp, e))?;
-    }
-    std::fs::rename(&tmp, anchor_path).map_err(|e| io_err(anchor_path, e))?;
-    // fsync the parent dir so the rename (the anchor's new directory entry) is durable.
-    if let Some(parent) = anchor_path.parent().filter(|p| !p.as_os_str().is_empty())
-        && let Ok(dir) = File::open(parent)
-    {
-        let _ = dir.sync_all();
-    }
-    Ok(())
+    crate::fsync::write_atomic(anchor_path, &tmp, &bytes).map_err(LedgerError::from)
 }
 
 /// Load the persisted anchor, or `None` if no anchor file exists yet. A present but

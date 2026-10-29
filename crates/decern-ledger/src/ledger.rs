@@ -59,7 +59,9 @@ pub struct Ledger {
     /// Set once a write failed after bytes may have reached the file. The file can then
     /// end in part of a record, and a record appended after it would be unreadable
     /// behind it, so every later append is refused until the ledger is reopened, which
-    /// trims an unterminated tail.
+    /// trims an unterminated tail. Also set when a rollover's manifest landed and a later
+    /// step failed: disk then names a new active segment while this handle still writes
+    /// the old one, and a reopen reads the manifest as it is on disk.
     failed: bool,
     /// The single-file ledger's writer lock, released when the ledger is dropped. `None` for
     /// a segmented ledger, which takes no lock: neither binary writes one.
@@ -404,7 +406,9 @@ impl Ledger {
                 // blip) must not leave the in-memory manifest disagreeing with
                 // what's actually on disk, which would otherwise let a
                 // same-timestamp retry see `opened_ms` already "correct" in
-                // memory and silently skip persisting it forever.
+                // memory and silently skip persisting it forever. A failure after the
+                // rename leaves disk ahead of memory by this one field, and the retry
+                // re-persists the same value.
                 let mut rebased = state.manifest.clone();
                 if let Some(active) = rebased.active_mut() {
                     active.opened_ms = entry.ts_ms;
@@ -521,11 +525,13 @@ impl Ledger {
         io_err(&self.active_path, e)
     }
 
-    /// The refusal every append returns once a write has failed part-way.
+    /// The refusal every append returns once a write failed after it may have reached disk, or
+    /// a rollover's manifest landed and a later step failed.
     fn failed_err(&self) -> LedgerError {
         io_err(
             &self.active_path,
-            "an earlier write to this ledger failed part-way; reopen it before appending",
+            "an earlier write to this ledger failed after it may have reached disk; reopen it \
+             before appending",
         )
     }
 
@@ -591,12 +597,28 @@ impl Ledger {
             path: dir.display().to_string(),
             err: "internal error: roll_over called with no rollover state".into(),
         })?;
-        let (new_manifest, new_path) =
-            segment::roll_over(&dir, &state.manifest, self.next_seq, next_ts_ms)?;
-        self.file = OpenOptions::new()
-            .append(true)
-            .open(&new_path)
-            .map_err(|e| io_err(&new_path, e))?;
+        let rolled = segment::roll_over(&dir, &state.manifest, self.next_seq, next_ts_ms)
+            .map_err(|failed| (failed.landed, failed.err))
+            .and_then(|(new_manifest, new_path)| {
+                match OpenOptions::new().append(true).open(&new_path) {
+                    Ok(file) => Ok((new_manifest, new_path, file)),
+                    Err(e) => Err((true, io_err(&new_path, e))),
+                }
+            });
+        let (new_manifest, new_path, file) = match rolled {
+            Ok(rolled) => rolled,
+            Err((landed, e)) => {
+                // Before the manifest rename the manifest on disk is unchanged, and the next
+                // append retries the rollover. After it, disk says the old segment is sealed while
+                // this handle still writes to it: stop, as a half-written record stops the
+                // ledger; a reopen reads the manifest as it is on disk.
+                if landed {
+                    self.failed = true;
+                }
+                return Err(e);
+            }
+        };
+        self.file = file;
         self.active_path = new_path;
         if let Some(state) = self.rollover.as_mut() {
             state.manifest = new_manifest;

@@ -1317,6 +1317,152 @@ fn segmented_epoch_rollover_triggers_on_a_bucket_change() {
     assert_eq!(segs.len(), 2, "epoch bucket change must trigger a rollover");
 }
 
+/// A directory at mode `0o300` for as long as the guard lives: the process can create, rename
+/// and open files in it by name, but cannot list it, open it, or sync it. The mode comes back
+/// when the guard drops, on a panic too, so a failed run leaves nothing a rerun cannot remove.
+/// `None` for a process the mode does not bind, root, whose test then has nothing to show.
+#[cfg(unix)]
+struct Unreadable(PathBuf);
+
+#[cfg(unix)]
+impl Unreadable {
+    fn new(dir: &Path) -> Option<Self> {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o300)).unwrap();
+        let guard = Unreadable(dir.to_path_buf());
+        if std::fs::File::open(dir).is_ok() {
+            drop(guard);
+            return None;
+        }
+        Some(guard)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Unreadable {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+    }
+}
+
+/// A directory the process can rename into but not open for reading, mode `0o300`: the bytes
+/// land and the rename lands, and the directory sync that makes the rename durable cannot run.
+/// That is an error, not an `Ok` over an anchor or a manifest a crash may lose.
+#[cfg(unix)]
+#[test]
+fn an_anchor_or_manifest_whose_directory_cannot_be_synced_is_refused() {
+    let dir = tmp_dir("dir-sync-refused");
+    std::fs::create_dir_all(&dir).unwrap();
+    let Some(unreadable) = Unreadable::new(&dir) else {
+        return;
+    };
+    let cp = Checkpoint {
+        root: "00".repeat(32),
+        count: 1,
+        ts_ms: 1,
+        pubkey_hex: String::new(),
+        sig_b64: String::new(),
+    };
+    let anchor = save_anchor(&dir.join("anchor.json"), &cp);
+    let manifest = crate::segment::save_manifest(
+        &dir,
+        &crate::segment::Manifest {
+            version: 1,
+            segments: vec![],
+        },
+    );
+    drop(unreadable);
+    let landed = matches!(manifest, Err(crate::fsync::AtomicWrite::Landed(_)));
+    let manifest = manifest.map_err(LedgerError::from);
+    assert!(
+        landed,
+        "the manifest write reports that its rename landed before the sync failed"
+    );
+    for (what, result) in [("anchor", anchor), ("manifest", manifest)] {
+        let err = match result {
+            Ok(()) => panic!("the {what} write answered Ok with its directory unsynced"),
+            Err(e) => e,
+        };
+        // Only the directory sync reports the directory itself; the temp file and the
+        // rename report their own paths.
+        assert!(
+            matches!(&err, LedgerError::Io { path, .. } if *path == dir.display().to_string()),
+            "{what}: {err}"
+        );
+    }
+    assert!(
+        dir.join("anchor.json").exists() && dir.join("manifest.json").exists(),
+        "the renames landed before the sync was refused"
+    );
+}
+
+/// A manifest write that fails before its rename says so, and one whose directory sync fails
+/// after the rename says it landed: the caller's memory may then be behind the disk.
+#[cfg(unix)]
+#[test]
+fn a_manifest_write_says_whether_its_rename_landed() {
+    use crate::fsync::AtomicWrite;
+    use crate::segment::{Manifest, save_manifest};
+    let manifest = Manifest {
+        version: 1,
+        segments: vec![],
+    };
+    let missing = tmp_dir("manifest-missing-dir");
+    assert!(
+        matches!(
+            save_manifest(&missing, &manifest),
+            Err(AtomicWrite::NotLanded(_))
+        ),
+        "a directory that does not exist refuses the temp file, before any rename"
+    );
+    let dir = tmp_dir("manifest-landed");
+    std::fs::create_dir_all(&dir).unwrap();
+    let Some(unreadable) = Unreadable::new(&dir) else {
+        return;
+    };
+    let written = save_manifest(&dir, &manifest);
+    drop(unreadable);
+    assert!(
+        matches!(written, Err(AtomicWrite::Landed(_))),
+        "a directory sync that fails after the rename reports the manifest as landed"
+    );
+    assert!(dir.join("manifest.json").exists());
+}
+
+/// A rollover that fails before its manifest lands leaves disk as it was, so the next append
+/// retries it on the same handle. A failure after the manifest landed stops the ledger instead;
+/// permission bits cannot reach that case, since reading the directory and syncing it need the
+/// same bit, so a rollover in a `0o300` directory fails at its first step and that branch is
+/// reasoned, not tested here.
+#[cfg(unix)]
+#[test]
+fn an_append_whose_rollover_fails_before_its_manifest_lands_is_retried_on_the_next_append() {
+    let dir = tmp_dir("rollover-retried");
+    let key = decern_crypto::generate().unwrap();
+    let mut l = Ledger::open_segmented(&dir, key.clone(), Vec::new(), RolloverPolicy::max_bytes(1))
+        .unwrap();
+    l.append(entry("first", true)).unwrap();
+    let Some(unreadable) = Unreadable::new(&dir) else {
+        return;
+    };
+    assert!(
+        l.append(entry("second", true)).is_err(),
+        "a rollover in a directory it cannot read fails"
+    );
+    drop(unreadable);
+    assert!(
+        !l.has_failed(),
+        "nothing landed, so the ledger is not stopped"
+    );
+    l.append(entry("third", true))
+        .expect("the next append retries the rollover");
+    drop(l);
+    let mut l =
+        Ledger::open_segmented(&dir, key, Vec::new(), RolloverPolicy::max_bytes(1)).unwrap();
+    l.append(entry("after", true)).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn segmented_sealed_segment_is_chmod_read_only() {
