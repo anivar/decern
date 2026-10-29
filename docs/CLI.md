@@ -421,12 +421,17 @@ back, such as an unknown action's name, is cut to 512 characters in the answer.
   answering without closing the connection, behind a network partition for example, holds the
   store until TCP gives up: each decision meanwhile is answered `503` at the 30-second request
   deadline, and holds its thread until TCP gives up; once 512 are held, every later request is
-  answered `503`, `server_busy`, at once. `/healthz` answers `ok`, and `SIGTERM` waits. decern sets no
-  connection or query timeout of its own, and the URL goes to the Postgres client as given:
-  `connect_timeout` bounds only the socket connect. A database that accepts the connection and
-  then stops answering, a stalled server or a proxy with no backend, holds startup with no
-  deadline: nothing is served yet, `SIGTERM` is not yet handled, and while its host still
-  acknowledges, nothing in TCP ends the wait. Over TCP, how soon a lost database is found is
+  answered `503`, `server_busy`, at once. `/healthz` answers `ok`, and `SIGTERM` waits. decern
+  sets two bounds of its own here, beside the 5 seconds the first boot's column add waits: a
+  start fails after 30 seconds without a ready database, whether it did not accept the
+  connection, accepted it and then stopped answering, a stalled server or a proxy with no
+  backend, or did not finish the schema check, instead of holding the start with nothing served
+  and no signal handled; and a section waits at most 10 seconds for any lock, its shard's first,
+  so a host paused mid-section costs each other host `503`s on that shard and, its store serving
+  one section at a time, a wait of up to 10 seconds for the sections queued behind, not a hang
+  until it resumes. It sets no statement timeout, which a stalled server could not deliver, and
+  the URL goes to the Postgres
+  client as given: `connect_timeout` bounds only the socket connect. Over TCP, how soon a lost database is found is
   left to keepalives (`keepalives_idle`, `keepalives_interval`, `keepalives_retries`; on by
   default, after two idle hours), the operating system's retransmission limit, and, on Linux,
   `tcp_user_timeout`; a Unix-socket URL has none of these.
