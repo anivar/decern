@@ -229,6 +229,16 @@ impl Directory {
                             continue;
                         }
                     };
+                    // A present `revoked` must be a boolean: the kernel writes the derived value
+                    // over this attribute, so a mistyped one would never reach Cedar's schema check.
+                    let revoked = match attrs.get("revoked") {
+                        None => false,
+                        Some(Value::Bool(b)) => *b,
+                        Some(_) => {
+                            violations.push(format!("Principal::{id}: revoked is not a boolean"));
+                            continue;
+                        }
+                    };
                     let rec = PrincipalRec {
                         id: id.to_owned(),
                         kind: attr_str(attrs, "kind").unwrap_or_default(),
@@ -239,10 +249,7 @@ impl Directory {
                         org,
                         roles,
                         jurisdictions,
-                        revoked: attrs
-                            .get("revoked")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
+                        revoked,
                     };
                     if rec.tenant.is_empty() {
                         violations.push(format!("Principal::{id}: missing tenant"));
@@ -820,6 +827,45 @@ mod tests {
             err.iter().any(|x| x.contains("expected Principal")),
             "{err:?}"
         );
+    }
+
+    /// A present `revoked` that is not a boolean is a violation, not false: the derived value
+    /// the kernel writes over it would hide the authored one from Cedar's schema check, so a
+    /// mistyped kill switch loaded the principal, and everyone under it, as active. Absent
+    /// still means false.
+    #[test]
+    fn a_present_non_boolean_revoked_is_a_violation_not_false() {
+        for bad in [
+            json!("true"),
+            json!(1),
+            json!(null),
+            json!(["true"]),
+            json!({"v": true}),
+        ] {
+            let ents = json!([
+                {"uid": {"type": "Principal", "id": "lead"},
+                 "attrs": {"kind": "Human", "tenant": "A", "expiry": 1000,
+                           "scopes": ["read"], "revoked": bad},
+                 "parents": []},
+                {"uid": {"type": "Principal", "id": "agent"},
+                 "attrs": {"kind": "Agent", "tenant": "A", "expiry": 500, "scopes": ["read"],
+                           "delegator": {"__entity": {"type": "Principal", "id": "lead"}}},
+                 "parents": []}
+            ]);
+            let err = Directory::parse(&ents).unwrap_err();
+            assert!(
+                err.iter()
+                    .any(|x| x.contains("Principal::lead: revoked is not a boolean")),
+                "{bad}: {err:?}"
+            );
+        }
+        let absent = json!([
+            {"uid": {"type": "Principal", "id": "lead"},
+             "attrs": {"kind": "Human", "tenant": "A", "expiry": 1000, "scopes": ["read"]},
+             "parents": []}
+        ]);
+        let dir = Directory::parse(&absent).unwrap();
+        assert!(!dir.revoked("lead"));
     }
 
     #[test]

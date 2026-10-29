@@ -32,7 +32,9 @@ entity Principal {
                             // its authority ancestors is revoked. Authors set
                             // `revoked` on the principal they revoke; the kernel
                             // propagates it down the chain, so revoking upstream
-                            // instantly kills every delegate beneath it.
+                            // instantly kills every delegate beneath it. Absent
+                            // means false; present and not a boolean refuses the
+                            // model at load.
 };
 
 entity Resource {
