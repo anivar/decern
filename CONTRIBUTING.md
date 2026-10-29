@@ -17,6 +17,11 @@ same gates CI runs. Prerequisites: the pinned toolchain (`rust-toolchain.toml`),
 `PATH` (or `$CVC5`) for the proof tests. Only cvc5 is proof-specific — the rest are needed
 even with `--skip-proofs`.
 
+After the gate, CI runs `scripts/smoke.sh target/debug <scratch-dir>` against the debug binaries:
+a CLI allow and deny, the server answering an allow and a deny, `decern verify` of the ledger, a
+restart on the same key, one more decision and a second verify. Run it locally after a change to a binary's startup,
+flags or wiring; it needs `cargo build -p decern-cli -p decern-server` first.
+
 While iterating on a change that cannot reach authorization semantics — an SDK, a doc, CLI
 output — you can run every other gate without installing a solver first:
 
