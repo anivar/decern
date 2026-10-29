@@ -202,13 +202,13 @@ fn approve_now(
     let dir = st.kernel.directory();
     let shard = shard_for(&st.backend, dir, &approver);
     let context = json!({
-        "agent": approved.mission.agent,
-        "description": approved.mission.description,
-        "approved_tools": approved.mission.approved_tools,
-        "capabilities": approved.mission.capabilities,
-        "expiry": approved.mission.expiry,
+        "agent": approved.mission().agent,
+        "description": approved.mission().description,
+        "approved_tools": approved.mission().approved_tools,
+        "capabilities": approved.mission().capabilities,
+        "expiry": approved.mission().expiry,
         // A recorded FACT (not part of `s256`): when this approval was accepted.
-        "approved_at": approved.mission.approved_at,
+        "approved_at": approved.mission().approved_at,
         "s256": s256,
     });
     let entry = mission_entry(
@@ -236,10 +236,10 @@ fn approve_now(
         &s256,
         decern_store::MissionEntry {
             approver: approver.clone(),
-            expiry: approved.mission.expiry,
+            expiry: approved.mission().expiry,
             terminated: false,
-            agent: approved.mission.agent.clone(),
-            approved_tools: approved.mission.approved_tools.clone(),
+            agent: approved.mission().agent.clone(),
+            approved_tools: approved.mission().approved_tools.clone(),
         },
         now_s,
     ) {
@@ -559,7 +559,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let s256 = expected.s256.clone();
+        let s256 = expected.s256().to_owned();
         assert!(
             st.missions.status(&s256).unwrap().is_none(),
             "precondition: the reference is not registered yet"
@@ -836,7 +836,7 @@ mod tests {
     }
 
     /// No caller reaches this today — `mission_approve`/`mission_terminate` build
-    /// `context` entirely from `approved.mission.*`, never from the request body — so
+    /// `context` entirely from `approved.mission().*`, never from the request body — so
     /// the strip in `mission_entry` has no live exploit path. This calls the function
     /// directly to prove the defense-in-depth fires anyway, in case a future change
     /// ever makes the path reachable.
