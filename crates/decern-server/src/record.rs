@@ -98,11 +98,14 @@ pub(crate) fn evaluation_body(decision: bool, reasons: &[String], errors: &[Stri
 }
 
 /// `GET /healthz`: `ok`, or `503` once the single-file ledger has stopped after a write
-/// error or its lock is poisoned, or once a sharded ledger's store has failed: a Postgres
-/// store whose connection closed or whose worker thread stopped. None recovers without a
-/// restart, so a liveness probe on this route restarts the process, and the restart reopens
-/// the ledger. A lock held by an append in progress counts as alive: the probe never waits
-/// behind a write.
+/// error or its lock is poisoned, once a sharded ledger's store has failed, a Postgres store
+/// whose connection closed or whose worker thread stopped, or while that store's current
+/// database call has run past its bound, a database that stopped answering without closing
+/// the connection. The first two recover only with a restart; the stall clears when the
+/// database answers. A liveness probe on this route restarts the process, and the restart
+/// reopens the ledger, or meets the store's startup deadline while the database is still
+/// gone. A lock held by an append in progress counts as alive: the probe never waits behind
+/// a write.
 pub(crate) async fn healthz(
     axum::extract::State(st): axum::extract::State<crate::AppState>,
 ) -> Response {
@@ -113,9 +116,17 @@ pub(crate) async fn healthz(
             Err(std::sync::TryLockError::WouldBlock) => false,
         }
         .then_some("ledger stopped after a write error; restart to recover"),
-        LedgerBackend::Sharded(s) => s
-            .has_failed()
-            .then_some("ledger store can no longer record; restart to recover"),
+        LedgerBackend::Sharded(s) => {
+            if s.has_failed() {
+                Some("ledger store can no longer record; restart to recover")
+            } else if s.is_stalled() {
+                Some(
+                    "ledger store has a database call running past its bound; the database has stopped answering",
+                )
+            } else {
+                None
+            }
+        }
     };
     match stopped {
         Some(why) => (StatusCode::SERVICE_UNAVAILABLE, why).into_response(),

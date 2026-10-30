@@ -105,10 +105,10 @@
 //! every server locale, matching the Memory/File backends exactly.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use decern_store::{
     HeadCriticalSection, HeadCursor, LedgerHeadStore, ShardCriticalSection, ShardSigners,
@@ -158,6 +158,9 @@ pub struct PostgresLedgerHeadStore {
     /// Set by the actor once its connection has closed. It never reconnects, so the store
     /// serves no section again.
     closed: Arc<AtomicBool>,
+    /// The actor's current database call, for [`LedgerHeadStore::is_stalled`].
+    busy: Arc<Busy>,
+    stall_after: Duration,
 }
 
 impl PostgresLedgerHeadStore {
@@ -179,9 +182,11 @@ impl PostgresLedgerHeadStore {
         let (job_tx, job_rx) = sync_channel::<Job>(depth);
         let closed = Arc::new(AtomicBool::new(false));
         let seen = Arc::clone(&closed);
+        let busy = Arc::new(Busy::new());
+        let calls = Arc::clone(&busy);
         let handle = thread::Builder::new()
             .name("decern-pg-ledger-head".into())
-            .spawn(move || actor_main(&url, bounds.lock_wait, &ready_tx, &job_rx, &seen))
+            .spawn(move || actor_main(&url, bounds.lock_wait, &ready_tx, &job_rx, &seen, &calls))
             .map_err(|e| StoreError::Io {
                 path: "<pg actor thread>".into(),
                 err: e.to_string(),
@@ -192,6 +197,8 @@ impl PostgresLedgerHeadStore {
                 depth,
                 handle: Some(handle),
                 closed,
+                busy,
+                stall_after: bounds.stall_after,
             }),
             Ok(Err(e)) => {
                 let _ = handle.join();
@@ -307,6 +314,15 @@ impl LedgerHeadStore for PostgresLedgerHeadStore {
         self.closed.load(Ordering::Relaxed)
             || self.handle.as_ref().is_some_and(JoinHandle::is_finished)
     }
+
+    /// One database call has run past the stall bound: a lock wait is cancelled before it,
+    /// and a head read or a commit takes milliseconds, so this is a database that has stopped
+    /// answering without closing the connection. Clears when the call returns.
+    fn is_stalled(&self) -> bool {
+        self.busy
+            .running_for()
+            .is_some_and(|running| running >= self.stall_after)
+    }
 }
 
 // ============================ actor thread ============================
@@ -317,6 +333,7 @@ fn actor_main(
     ready: &SyncSender<Result<(), StoreError>>,
     jobs: &Receiver<Job>,
     closed: &AtomicBool,
+    busy: &Busy,
 ) {
     let tls = match build_tls() {
         Ok(t) => t,
@@ -352,8 +369,15 @@ fn actor_main(
             } => {
                 // A single call's failure never kills the actor: the transaction
                 // rolls back via RAII and the loop continues with the next job.
-                let ended =
-                    run_with_shard(&mut client, &shard, history, lock_wait, &loaded, &decision);
+                let ended = run_with_shard(
+                    &mut client,
+                    &shard,
+                    history,
+                    lock_wait,
+                    busy,
+                    &loaded,
+                    &decision,
+                );
                 note_closed(&client, closed);
                 match ended {
                     // The caller is waiting on `loaded`, not `done`: answered anywhere else,
@@ -367,7 +391,10 @@ fn actor_main(
                 }
             }
             Job::ListShards { resp } => {
-                let shards = list_shards_impl(&mut client);
+                let shards = {
+                    let _call = busy.begin();
+                    list_shards_impl(&mut client)
+                };
                 note_closed(&client, closed);
                 let _ = resp.send(shards);
             }
@@ -392,11 +419,12 @@ fn run_with_shard(
     shard: &str,
     history: bool,
     lock_wait: Duration,
+    busy: &Busy,
     loaded: &SyncSender<Result<ShardState, StoreError>>,
     decision: &Receiver<Result<ShardWrite, StoreError>>,
 ) -> Ended {
-    match load(client, shard, history, lock_wait) {
-        Ok((tx, state)) => Ended::Ran(run_loaded(tx, shard, state, loaded, decision)),
+    match load(client, shard, history, lock_wait, busy) {
+        Ok((tx, state)) => Ended::Ran(run_loaded(tx, shard, state, busy, loaded, decision)),
         Err(e) => Ended::Unloaded(e),
     }
 }
@@ -408,6 +436,7 @@ fn run_loaded(
     mut tx: Transaction<'_>,
     shard: &str,
     state: ShardState,
+    busy: &Busy,
     loaded: &SyncSender<Result<ShardState, StoreError>>,
     decision: &Receiver<Result<ShardWrite, StoreError>>,
 ) -> Result<(), StoreError> {
@@ -429,6 +458,9 @@ fn run_loaded(
         }
     };
 
+    // The caller's decision above is its own time; the writes and the commit below are the
+    // database's, and a stall is judged on those.
+    let _call = busy.begin();
     if let Some((new_cursor, record_json)) = write {
         // The record's seq is the new cursor's next_seq minus one — identical to
         // the Memory and File backends. The `(shard, seq)` PK rejects a duplicate.
@@ -477,22 +509,30 @@ fn load<'c>(
     shard: &str,
     history: bool,
     lock_wait: Duration,
+    busy: &Busy,
 ) -> Result<(Transaction<'c>, ShardState), StoreError> {
-    let mut tx = client.transaction().map_err(|e| db(&e))?;
-    // The database cancels the lock wait below past `lock_wait`, so a host paused
-    // mid-section fails the others' sections on this shard instead of holding them. The
-    // number is ours, formatted; `SET` takes no bind parameter.
-    tx.batch_execute(&format!(
-        "SET LOCAL lock_timeout = '{}ms'",
-        lock_wait.as_millis()
-    ))
-    .map_err(|e| db(&e))?;
-    // Transaction-scoped, cross-host EXCLUSIVE lock on this shard. Blocks (in the
-    // database, across connections) until any other host's section commits, or the wait
-    // is cancelled.
-    tx.execute("SELECT pg_advisory_xact_lock($1)", &[&advisory_key(shard)])
+    // Begin, lock and read the head under the stall mark: a lock wait ends at `lock_wait`
+    // and the rest takes milliseconds. The history read below is outside it; a large shard's
+    // is long and legitimate.
+    let (mut tx, cursor) = {
+        let _call = busy.begin();
+        let mut tx = client.transaction().map_err(|e| db(&e))?;
+        // The database cancels the lock wait below past `lock_wait`, so a host paused
+        // mid-section fails the others' sections on this shard instead of holding them. The
+        // number is ours, formatted; `SET` takes no bind parameter.
+        tx.batch_execute(&format!(
+            "SET LOCAL lock_timeout = '{}ms'",
+            lock_wait.as_millis()
+        ))
         .map_err(|e| db(&e))?;
-    let cursor = read_head(&mut tx, shard)?;
+        // Transaction-scoped, cross-host EXCLUSIVE lock on this shard. Blocks (in the
+        // database, across connections) until any other host's section commits, or the wait
+        // is cancelled.
+        tx.execute("SELECT pg_advisory_xact_lock($1)", &[&advisory_key(shard)])
+            .map_err(|e| db(&e))?;
+        let cursor = read_head(&mut tx, shard)?;
+        (tx, cursor)
+    };
     let records = if history {
         read_records(&mut tx, shard)?
     } else {
@@ -690,12 +730,22 @@ const STARTUP_DEADLINE: Duration = Duration::from_secs(30);
 /// otherwise hold every other host's sections on that shard until it resumed.
 const LOCK_WAIT: Duration = Duration::from_secs(10);
 
+/// How long one database call may run before the store reports itself stalled. A lock wait
+/// is cancelled at [`LOCK_WAIT`] and a head read, a write or a commit takes milliseconds, so
+/// a call still running past this is a database that has stopped answering without closing
+/// the connection, which nothing in TCP ends for hours.
+const STALL_AFTER: Duration = Duration::from_secs(30);
+
+// A lock wait ends before it could read as a stall.
+const _: () = assert!(LOCK_WAIT.as_secs() < STALL_AFTER.as_secs());
+
 /// The waits the store bounds. [`PostgresLedgerHeadStore::new`] uses the constants above; a
 /// test shortens them.
 #[derive(Clone, Copy)]
 struct Bounds {
     startup: Duration,
     lock_wait: Duration,
+    stall_after: Duration,
 }
 
 impl Default for Bounds {
@@ -703,7 +753,53 @@ impl Default for Bounds {
         Self {
             startup: STARTUP_DEADLINE,
             lock_wait: LOCK_WAIT,
+            stall_after: STALL_AFTER,
         }
+    }
+}
+
+/// The actor's current database call, as the moment it began: milliseconds since `epoch`,
+/// or [`IDLE`] between calls. One writer, the actor; one reader, the store.
+struct Busy {
+    epoch: Instant,
+    since: AtomicU64,
+}
+
+const IDLE: u64 = u64::MAX;
+
+impl Busy {
+    fn new() -> Self {
+        Self {
+            epoch: Instant::now(),
+            since: AtomicU64::new(IDLE),
+        }
+    }
+
+    /// Mark a call begun. The guard marks it ended on every exit, an error's included.
+    fn begin(&self) -> CallMark<'_> {
+        let now = u64::try_from(self.epoch.elapsed().as_millis()).unwrap_or(IDLE - 1);
+        self.since.store(now, Ordering::Relaxed);
+        CallMark(self)
+    }
+
+    /// How long the current call has run, or `None` between calls.
+    fn running_for(&self) -> Option<Duration> {
+        match self.since.load(Ordering::Relaxed) {
+            IDLE => None,
+            began => Some(
+                self.epoch
+                    .elapsed()
+                    .saturating_sub(Duration::from_millis(began)),
+            ),
+        }
+    }
+}
+
+struct CallMark<'a>(&'a Busy);
+
+impl Drop for CallMark<'_> {
+    fn drop(&mut self) {
+        self.0.since.store(IDLE, Ordering::Relaxed);
     }
 }
 

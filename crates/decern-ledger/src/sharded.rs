@@ -113,6 +113,11 @@ impl ShardedLedger {
         self.store.has_failed()
     }
 
+    /// Whether the store's current call to its backend has run past its bound.
+    pub fn is_stalled(&self) -> bool {
+        self.store.is_stalled()
+    }
+
     /// Append `entry` to `shard`'s chain — the sharded analog of
     /// `Ledger::append`, held under `shard`'s exclusive lock for the write.
     ///

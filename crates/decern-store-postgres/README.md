@@ -48,15 +48,23 @@ ten seconds for the sections queued behind, not a hang until it resumes.
 
 ## What the store bounds, and what it does not
 
-A start fails after 30 seconds without a ready database: a server that does not
-accept the connection, one that accepts it and never answers, or a proxy with no
-backend, fails `decern-serve` at start instead of holding it with nothing served. A
-section waits at most ten seconds for any lock, its shard's first, as above. The
-store sets no statement timeout, which a stalled server could not deliver, and it
-does not reconnect: once the connection closes, every later section fails until the
-process restarts, and `/healthz` says so once a section has met it. The connection's
-TCP parameters are the URL's (`connect_timeout`, the
-keepalives); [`docs/CLI.md`](../../docs/CLI.md) states what each bounds.
+A start fails after 30 seconds without a ready database: a server that does not accept
+the connection, one that accepts it and never answers, or a proxy with no backend,
+fails `decern-serve` at start instead of holding it with nothing served; a server that
+answers the connect and the schema check and stalls afterwards holds the boot's own
+verify of each shard, which has no bound. A section waits at most ten seconds for any
+lock, its shard's first, as above. One database call that runs for 30 seconds, where a
+lock wait ends at ten and a head read, a write or a commit takes milliseconds, reads
+as a stall: `/healthz` answers `503` while it runs, so a liveness probe restarts a
+server whose database stopped answering without closing the connection, and the
+restart fails again while the database answers neither its connect nor its schema
+check. The caller's own decision and a read of a shard's history are not timed, so a
+long legitimate read never reads as a stall. The store sets no statement timeout,
+which a stalled server could not deliver, and it does not reconnect: once the
+connection closes, every later section fails until the process restarts, and
+`/healthz` says so once a section has met it. The connection's TCP parameters are the
+URL's (`connect_timeout`, the keepalives); [`docs/CLI.md`](../../docs/CLI.md) states
+what each bounds.
 
 ## The sync-client-in-async design (why the dedicated thread)
 

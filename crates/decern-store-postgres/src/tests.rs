@@ -47,6 +47,25 @@ fn test_url() -> Option<String> {
     std::env::var("DECERN_TEST_POSTGRES_URL").ok()
 }
 
+/// Take `shard`'s advisory lock from a second connection, in a transaction held open for
+/// `hold_for`, and return once it is held; the thread commits when the time is up.
+fn hold_shard_lock(url: &str, shard: &str, hold_for: Duration) -> thread::JoinHandle<()> {
+    let key = super::advisory_key(shard);
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+    let url = url.to_owned();
+    let holder = thread::spawn(move || {
+        let mut client = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+        let mut tx = client.transaction().unwrap();
+        tx.execute("SELECT pg_advisory_xact_lock($1)", &[&key])
+            .unwrap();
+        locked_tx.send(()).unwrap();
+        thread::sleep(hold_for);
+        tx.commit().unwrap();
+    });
+    locked_rx.recv().unwrap();
+    holder
+}
+
 /// THE pitfall regression test — needs no database. A sync `postgres::Client` is
 /// created via `block_on`, which panics if run inside a tokio runtime. This test
 /// runs `new()` from INSIDE a tokio runtime against a dead port: if the connect
@@ -651,6 +670,7 @@ fn a_start_against_a_silent_socket_fails_at_the_deadline() {
         startup: Duration::from_secs(1),
         ..Bounds::default()
     };
+    // (the lock wait and the stall bound keep their defaults)
     let started = Instant::now();
     let err = PostgresLedgerHeadStore::with_bounds(&url, 8, bounds)
         .err()
@@ -683,19 +703,7 @@ fn a_section_waits_a_bounded_time_for_its_shard_lock() {
     };
     let store = PostgresLedgerHeadStore::with_bounds(&url, 8, bounds).unwrap();
 
-    let key = super::advisory_key(&shard);
-    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
-    let holder_url = url.clone();
-    let holder = thread::spawn(move || {
-        let mut client = postgres::Client::connect(&holder_url, postgres::NoTls).unwrap();
-        let mut tx = client.transaction().unwrap();
-        tx.execute("SELECT pg_advisory_xact_lock($1)", &[&key])
-            .unwrap();
-        locked_tx.send(()).unwrap();
-        thread::sleep(Duration::from_secs(3));
-        tx.commit().unwrap();
-    });
-    locked_rx.recv().unwrap();
+    let holder = hold_shard_lock(&url, &shard, Duration::from_secs(3));
 
     let started = Instant::now();
     let err = store
@@ -719,4 +727,75 @@ fn a_section_waits_a_bounded_time_for_its_shard_lock() {
     store
         .with_shard_head(&shard, &mut |_cursor| Ok(None))
         .expect("the actor serves the next section");
+}
+
+/// A database call that outlives the stall bound reads as a stall, and the mark clears when
+/// it returns. A second connection holds the shard's lock for three seconds; the store, with
+/// a ten-second lock wait and a one-second stall bound, waits inside its lock call, is
+/// stalled at a second and a half, and is not, a stall bound later, once the holder commits
+/// and the section lands.
+#[test]
+fn a_database_call_past_the_stall_bound_reads_as_a_stall_until_it_returns() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    let shard = uniq("stall");
+    let bounds = Bounds {
+        stall_after: Duration::from_secs(1),
+        ..Bounds::default()
+    };
+    let store = Arc::new(PostgresLedgerHeadStore::with_bounds(&url, 8, bounds).unwrap());
+    assert!(!store.is_stalled(), "idle is not stalled");
+
+    let holder = hold_shard_lock(&url, &shard, Duration::from_secs(3));
+
+    let waiter = Arc::clone(&store);
+    let waiter_shard = shard.clone();
+    let section =
+        thread::spawn(move || waiter.with_shard_head(&waiter_shard, &mut |_cursor| Ok(None)));
+    thread::sleep(Duration::from_millis(1500));
+    assert!(
+        store.is_stalled(),
+        "a lock call running past the stall bound reads as a stall"
+    );
+
+    holder.join().unwrap();
+    section
+        .join()
+        .unwrap()
+        .expect("the section lands once the holder commits");
+    // Past the stall bound again, with no call running: a mark that did not clear would
+    // read as a stall here.
+    thread::sleep(Duration::from_millis(1500));
+    assert!(!store.is_stalled(), "the mark clears when the call returns");
+    assert!(!store.has_failed(), "a stall is not a failure");
+}
+
+/// The caller's own decision is not timed: a section whose caller takes longer than the stall
+/// bound to decide, the lock held and the transaction open meanwhile, does not read as a stall.
+#[test]
+fn a_slow_caller_does_not_read_as_a_stall() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    let shard = uniq("slowcaller");
+    let bounds = Bounds {
+        stall_after: Duration::from_secs(1),
+        ..Bounds::default()
+    };
+    let store = PostgresLedgerHeadStore::with_bounds(&url, 8, bounds).unwrap();
+    let mut stalled_while_deciding = None;
+    store
+        .with_shard_head(&shard, &mut |_cursor| {
+            thread::sleep(Duration::from_millis(1500));
+            stalled_while_deciding = Some(store.is_stalled());
+            Ok(None)
+        })
+        .expect("the section lands");
+    assert_eq!(
+        stalled_while_deciding,
+        Some(false),
+        "the caller's time is not the database's"
+    );
+    assert!(!store.is_stalled(), "nothing runs after the section");
 }

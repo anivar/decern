@@ -223,7 +223,7 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 | `POST` | `/mission/v1/{s256}/terminate` | guarded | End it. A terminated Mission never revives, and no Allow under it is recorded after its termination on this host: a decision bound to it before and recorded after is recorded, and answered, as a Deny saying so, whose record may precede the termination's own, written after the registry. A `503` for the clock, the registry or the server's places leaves the Mission as it was and nothing recorded. A record the ledger cannot complete is answered `503` with the Mission terminated and its record unwritten; a retry writes it once the ledger records again, while the registry still holds the Mission, which it does for thirty days past its expiry, and a terminate repeated after a `200` writes a second record. |
 | `GET` | `/.well-known/decern-subject-side-disclosure` | open | What this deployment does about challenges and callers, read from its running configuration. A challenge is classified and answered; it is not a re-evaluation or an appeal, and nothing in it changes a decision or reaches the kernel. A challenge that cannot be parsed, or whose standing is not proved, refuses the whole request with `422` and records nothing. |
 | `GET` | `/.well-known/authzen-configuration` | open | AuthZEN 1.0 PDP metadata: the decision point and its evaluation endpoint, when `--public-url` is set; 404 otherwise. |
-| `GET` | `/healthz` | open | `ok`, or `503` once the single-file ledger has stopped after a write error or its lock was poisoned by a panic, or once a Postgres head store has found its connection closed or the thread that holds it has stopped; a restart recovers. |
+| `GET` | `/healthz` | open | `ok`, or `503` once the single-file ledger has stopped after a write error or its lock was poisoned by a panic, once a Postgres head store has found its connection closed or the thread that holds it has stopped, or while a Postgres head store has had one database call running for 30 seconds, a database that stopped answering without closing the connection. A restart recovers the first two; the third clears when the database answers. |
 
 "Guarded" routes require the caller to be established; "open" routes are open by intent — they are
 operational, published on purpose, or answerable only to a party who already holds the handle they
@@ -413,28 +413,33 @@ back, such as an unknown action's name, is cut to 512 characters in the answer.
   `503`, and `/healthz` answers `503` so a liveness probe restarts the server. The restart trims
   an unterminated record and the ledger continues. A record written in full before its sync
   failed is kept, though its request was answered `503`.
-- **Recovery after a database restart.** A Postgres head store does not reconnect. Once the
-  database closes its connection, by restarting for example, every decision is answered `503`
-  until `decern-serve` is restarted. The first decision to find the connection closed turns
-  `/healthz` to `503`, so a liveness probe restarts the server; a replica that serves no
-  decision after the database restarts answers `ok` until one does. A database that stops
-  answering without closing the connection, behind a network partition for example, holds the
-  store until TCP gives up: each decision meanwhile is answered `503` at the 30-second request
-  deadline, and holds its thread until TCP gives up; once 512 are held, every later request is
-  answered `503`, `server_busy`, at once. `/healthz` answers `ok`, and `SIGTERM` waits. decern
-  sets two bounds of its own here, beside the 5 seconds the first boot's column add waits: a
-  start fails after 30 seconds without a ready database, whether it did not accept the
-  connection, accepted it and then stopped answering, a stalled server or a proxy with no
-  backend, or did not finish the schema check, instead of holding the start with nothing served
-  and no signal handled; and a section waits at most 10 seconds for any lock, its shard's first,
-  so a host paused mid-section costs each other host `503`s on that shard and, its store serving
-  one section at a time, a wait of up to 10 seconds for the sections queued behind, not a hang
-  until it resumes. It sets no statement timeout, which a stalled server could not deliver, and
-  the URL goes to the Postgres
-  client as given: `connect_timeout` bounds only the socket connect. Over TCP, how soon a lost database is found is
-  left to keepalives (`keepalives_idle`, `keepalives_interval`, `keepalives_retries`; on by
-  default, after two idle hours), the operating system's retransmission limit, and, on Linux,
-  `tcp_user_timeout`; a Unix-socket URL has none of these.
+- **Recovery after a database restart.** A Postgres head store does not reconnect. Once the database
+  closes its connection, by restarting for example, every decision is answered `503` until
+  `decern-serve` is restarted. The first decision to find the connection closed turns `/healthz` to
+  `503`, so a liveness probe restarts the server; a replica that serves no decision after the
+  database restarts answers `ok` until one does. A database that stops answering without closing the
+  connection, behind a network partition for example, holds the store until TCP gives up or the
+  server is restarted: each decision meanwhile is answered `503` at the 30-second request deadline,
+  and holds its thread until TCP gives up or the restart; once 512 are held, every later request is
+  answered `503`, `server_busy`, at once; `/healthz` answers `503` once the store's current database
+  call has run for 30 seconds, so a liveness probe restarts the server, and `SIGTERM` waits. decern
+  sets three bounds of its own here, beside the 5 seconds the first boot's column add waits: a start
+  fails after 30 seconds without a ready database, whether it did not accept the connection,
+  accepted it and then stopped answering, a stalled server or a proxy with no backend, or did not
+  finish the schema check, instead of holding the start with nothing served and no signal handled,
+  so a restarted server fails again while the database answers neither its connect nor its schema
+  check, where one that answers those and stalls afterwards holds the boot's own verify of each
+  shard, which has no bound; a section waits at most 10 seconds for any lock, its shard's first, so
+  a host paused mid-section costs each other host `503`s on that shard and, its store serving one
+  section at a time, a wait of up to 10 seconds for the sections queued behind, not a hang until it
+  resumes; and one database call running for 30 seconds, where a lock wait ends at 10 and a head
+  read, a write or a commit takes milliseconds, reads as the stall above; the caller's own decision
+  and a read of a shard's history are not timed, so a long legitimate read never reads as one. It
+  sets no statement timeout, which a stalled server could not deliver, and the URL goes to the
+  Postgres client as given: `connect_timeout` bounds only the socket connect. Over TCP, how soon a
+  lost database is found is left to keepalives (`keepalives_idle`, `keepalives_interval`,
+  `keepalives_retries`; on by default, after two idle hours), the operating system's retransmission
+  limit, and, on Linux, `tcp_user_timeout`; a Unix-socket URL has none of these.
 - **High availability.** The single-file ledger is one process, and a second is refused at startup. `--sharded postgres://…`
   spreads appends across hosts, every replica started with the same `--key`, but leaves each
   host with its own Mission registry, so a Mission's requests and its termination go to the host

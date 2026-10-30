@@ -1078,6 +1078,58 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A sharded store whose current backend call has run past its bound, a Postgres store
+    /// behind a database that stopped answering, fails the health check under its own text,
+    /// and passes it again once the call returns.
+    #[tokio::test]
+    async fn healthz_is_503_while_the_sharded_store_is_stalled() {
+        use decern_store::{
+            LedgerHeadStore, MemoryLedgerHeadStore, ShardCriticalSection, StoreError,
+        };
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Stalling(MemoryLedgerHeadStore, AtomicBool);
+        impl LedgerHeadStore for Stalling {
+            fn with_shard(
+                &self,
+                shard: &str,
+                f: &mut ShardCriticalSection<'_>,
+            ) -> Result<(), StoreError> {
+                self.0.with_shard(shard, f)
+            }
+            fn list_shards(&self) -> Result<Vec<String>, StoreError> {
+                self.0.list_shards()
+            }
+            fn is_stalled(&self) -> bool {
+                self.1.load(Ordering::Relaxed)
+            }
+        }
+        let base = mission_base();
+        let (mut st, _pubkey) = mission_state_at(&base);
+        let store = Arc::new(Stalling(
+            MemoryLedgerHeadStore::new(),
+            AtomicBool::new(false),
+        ));
+        st.backend = Arc::new(LedgerBackend::Sharded(ShardedLedger::new(
+            store.clone(),
+            decern_crypto::generate().unwrap(),
+            Vec::new(),
+        )));
+        store.1.store(true, Ordering::Relaxed);
+        let stalled = crate::record::healthz(State(st.clone())).await;
+        assert_eq!(stalled.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(stalled.into_body(), 1024)
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&body).contains("running past its bound"),
+            "{body:?}"
+        );
+        store.1.store(false, Ordering::Relaxed);
+        let ok = crate::record::healthz(State(st.clone())).await.status();
+        assert_eq!(ok, StatusCode::OK, "the stall clears with the call");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// A sharded store that can serve no section again, a Postgres store whose connection
     /// closed, fails the health check too, under its own text.
     #[tokio::test]

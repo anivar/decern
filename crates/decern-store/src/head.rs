@@ -154,6 +154,14 @@ pub trait LedgerHeadStore: Send + Sync {
     fn has_failed(&self) -> bool {
         false
     }
+
+    /// Whether the store's current call to its backend has run past the time any call should
+    /// take, a backend that has stopped answering without closing its connection, so a
+    /// liveness check restarts the process rather than wait on it. Clears when the call
+    /// returns. A store with no backend to wait on never says so.
+    fn is_stalled(&self) -> bool {
+        false
+    }
 }
 
 /// One shard's state for [`MemoryLedgerHeadStore`].
