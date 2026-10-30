@@ -106,8 +106,9 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use decern_store::{
     HeadCriticalSection, HeadCursor, LedgerHeadStore, ShardCriticalSection, ShardSigners,
@@ -164,13 +165,15 @@ impl PostgresLedgerHeadStore {
     /// schema. Spawns the actor thread FIRST and connects ON it, so the sync
     /// client is never created inside a caller's tokio runtime (see the crate
     /// docs). Returns `Err` — never panics — on a bad URL, an unreachable
-    /// server, or a schema failure.
+    /// server, or a schema failure, and after 30 seconds without a ready database,
+    /// leaving the actor thread in its connect until the process ends: a library caller that
+    /// retries leaks one thread per attempt.
     pub fn new(url: &str) -> Result<Self, StoreError> {
-        Self::with_queue_depth(url, QUEUE_DEPTH)
+        Self::with_bounds(url, QUEUE_DEPTH, Bounds::default())
     }
 
-    /// [`Self::new`] with the number of sections that may wait for the actor at once.
-    fn with_queue_depth(url: &str, depth: usize) -> Result<Self, StoreError> {
+    /// [`Self::new`] with the queue depth and the waits it bounds.
+    fn with_bounds(url: &str, depth: usize, bounds: Bounds) -> Result<Self, StoreError> {
         let url = url.to_owned();
         let (ready_tx, ready_rx) = sync_channel::<Result<(), StoreError>>(0);
         let (job_tx, job_rx) = sync_channel::<Job>(depth);
@@ -178,12 +181,12 @@ impl PostgresLedgerHeadStore {
         let seen = Arc::clone(&closed);
         let handle = thread::Builder::new()
             .name("decern-pg-ledger-head".into())
-            .spawn(move || actor_main(&url, &ready_tx, &job_rx, &seen))
+            .spawn(move || actor_main(&url, bounds.lock_wait, &ready_tx, &job_rx, &seen))
             .map_err(|e| StoreError::Io {
                 path: "<pg actor thread>".into(),
                 err: e.to_string(),
             })?;
-        match ready_rx.recv() {
+        match ready_rx.recv_timeout(bounds.startup) {
             Ok(Ok(())) => Ok(PostgresLedgerHeadStore {
                 jobs: job_tx,
                 depth,
@@ -194,7 +197,19 @@ impl PostgresLedgerHeadStore {
                 let _ = handle.join();
                 Err(e)
             }
-            Err(_) => {
+            // The actor is still connecting or checking the schema: a database that accepted
+            // the connection and does not answer. Not joined: the thread ends when its call
+            // returns or the process exits, and a join here would be the wait this bounds.
+            Err(RecvTimeoutError::Timeout) => Err(StoreError::Io {
+                path: "postgres".into(),
+                err: format!(
+                    "the head store was not ready after {}s: the database did not accept the \
+                     connection, accepted it and did not answer, or did not finish the schema \
+                     check",
+                    bounds.startup.as_secs()
+                ),
+            }),
+            Err(RecvTimeoutError::Disconnected) => {
                 let _ = handle.join();
                 Err(StoreError::Invalid(
                     "postgres ledger-head actor exited during startup".into(),
@@ -298,6 +313,7 @@ impl LedgerHeadStore for PostgresLedgerHeadStore {
 
 fn actor_main(
     url: &str,
+    lock_wait: Duration,
     ready: &SyncSender<Result<(), StoreError>>,
     jobs: &Receiver<Job>,
     closed: &AtomicBool,
@@ -336,7 +352,8 @@ fn actor_main(
             } => {
                 // A single call's failure never kills the actor: the transaction
                 // rolls back via RAII and the loop continues with the next job.
-                let ended = run_with_shard(&mut client, &shard, history, &loaded, &decision);
+                let ended =
+                    run_with_shard(&mut client, &shard, history, lock_wait, &loaded, &decision);
                 note_closed(&client, closed);
                 match ended {
                     // The caller is waiting on `loaded`, not `done`: answered anywhere else,
@@ -374,10 +391,11 @@ fn run_with_shard(
     client: &mut Client,
     shard: &str,
     history: bool,
+    lock_wait: Duration,
     loaded: &SyncSender<Result<ShardState, StoreError>>,
     decision: &Receiver<Result<ShardWrite, StoreError>>,
 ) -> Ended {
-    match load(client, shard, history) {
+    match load(client, shard, history, lock_wait) {
         Ok((tx, state)) => Ended::Ran(run_loaded(tx, shard, state, loaded, decision)),
         Err(e) => Ended::Unloaded(e),
     }
@@ -452,16 +470,26 @@ fn note_closed(client: &Client, closed: &AtomicBool) {
     }
 }
 
-/// Begin the section's transaction, take the shard's lock, and read its head and, when
-/// `history`, its records.
+/// Begin the section's transaction, take the shard's lock within `lock_wait`, and read its
+/// head and, when `history`, its records.
 fn load<'c>(
     client: &'c mut Client,
     shard: &str,
     history: bool,
+    lock_wait: Duration,
 ) -> Result<(Transaction<'c>, ShardState), StoreError> {
     let mut tx = client.transaction().map_err(|e| db(&e))?;
+    // The database cancels the lock wait below past `lock_wait`, so a host paused
+    // mid-section fails the others' sections on this shard instead of holding them. The
+    // number is ours, formatted; `SET` takes no bind parameter.
+    tx.batch_execute(&format!(
+        "SET LOCAL lock_timeout = '{}ms'",
+        lock_wait.as_millis()
+    ))
+    .map_err(|e| db(&e))?;
     // Transaction-scoped, cross-host EXCLUSIVE lock on this shard. Blocks (in the
-    // database, across connections) until any other host's section commits.
+    // database, across connections) until any other host's section commits, or the wait
+    // is cancelled.
     tx.execute("SELECT pg_advisory_xact_lock($1)", &[&advisory_key(shard)])
         .map_err(|e| db(&e))?;
     let cursor = read_head(&mut tx, shard)?;
@@ -634,10 +662,16 @@ fn from_i64(v: i64) -> Result<u64, StoreError> {
     u64::try_from(v).map_err(|_| StoreError::Invalid(format!("stored sequence {v} is negative")))
 }
 
+/// The database's own words when it has them, with the SQLSTATE, so a cancelled lock wait or
+/// a refused statement is named rather than reported as "db error".
 fn db(e: &postgres::Error) -> StoreError {
+    let err = match e.as_db_error() {
+        Some(d) => format!("{e}: {} ({})", d.message(), d.code().code()),
+        None => e.to_string(),
+    };
     StoreError::Io {
         path: "postgres".into(),
-        err: e.to_string(),
+        err,
     }
 }
 
@@ -645,6 +679,33 @@ fn db(e: &postgres::Error) -> StoreError {
 /// stalled database holds one request per connection and no more. A section that finds the
 /// queue full is refused at once, where it would otherwise wait behind every stalled one.
 const QUEUE_DEPTH: usize = 1024;
+
+/// How long a start waits for the actor to connect and check the schema. A database that
+/// accepts the connection and never answers would otherwise hold the start with no
+/// deadline, nothing served and no signal handled.
+const STARTUP_DEADLINE: Duration = Duration::from_secs(30);
+
+/// How long a section waits for its shard's advisory lock before the database cancels it.
+/// Another host's section holds the lock for milliseconds; one paused mid-section would
+/// otherwise hold every other host's sections on that shard until it resumed.
+const LOCK_WAIT: Duration = Duration::from_secs(10);
+
+/// The waits the store bounds. [`PostgresLedgerHeadStore::new`] uses the constants above; a
+/// test shortens them.
+#[derive(Clone, Copy)]
+struct Bounds {
+    startup: Duration,
+    lock_wait: Duration,
+}
+
+impl Default for Bounds {
+    fn default() -> Self {
+        Self {
+            startup: STARTUP_DEADLINE,
+            lock_wait: LOCK_WAIT,
+        }
+    }
+}
 
 /// Hand `job` to the actor without waiting: a full queue is the database not keeping up,
 /// answered now rather than joined.

@@ -8,9 +8,9 @@
 
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::PostgresLedgerHeadStore;
+use super::{Bounds, PostgresLedgerHeadStore};
 use decern_store::{HeadCursor, LedgerHeadStore, StoreError};
 
 /// A unique-per-test shard id, so tests sharing one database never collide (the
@@ -523,7 +523,7 @@ fn a_full_queue_refuses_a_section_at_once() {
     let Some(url) = test_url() else {
         return;
     };
-    let store = Arc::new(PostgresLedgerHeadStore::with_queue_depth(&url, 1).unwrap());
+    let store = Arc::new(PostgresLedgerHeadStore::with_bounds(&url, 1, Bounds::default()).unwrap());
     let stalled = uniq("stalled");
     let mut raw = postgres::Client::connect(&url, postgres::NoTls).unwrap();
     let mut holding = raw.transaction().unwrap();
@@ -631,4 +631,92 @@ fn a_boot_that_must_add_the_column_gives_up_behind_a_reader() {
     );
     assert!(matches!(added, Some(Ok(()))), "{added:?}");
     assert!(column, "the boot did not add the column");
+}
+
+/// Startup is bounded, with no database: a socket that accepts the connection and never
+/// answers, the shape of a stalled server or a proxy with no backend, fails `new` at the
+/// deadline instead of holding it. The holder keeps the connection open past the deadline;
+/// the actor thread is left in its connect, as a start is, until the process ends.
+#[test]
+fn a_start_against_a_silent_socket_fails_at_the_deadline() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let holder = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        thread::sleep(Duration::from_secs(4));
+        drop(stream);
+    });
+    let url = format!("postgres://decern@127.0.0.1:{port}/decern?sslmode=disable");
+    let bounds = Bounds {
+        startup: Duration::from_secs(1),
+        ..Bounds::default()
+    };
+    let started = Instant::now();
+    let err = PostgresLedgerHeadStore::with_bounds(&url, 8, bounds)
+        .err()
+        .expect("a database that never answers fails the start");
+    let waited = started.elapsed();
+    assert!(
+        waited >= Duration::from_secs(1) && waited < Duration::from_secs(3),
+        "failed at the deadline, not before and not long after: {waited:?}"
+    );
+    assert!(
+        err.to_string().contains("not ready after 1s"),
+        "the error names the deadline: {err}"
+    );
+    holder.join().unwrap();
+}
+
+/// A section waits a bounded time for its shard's lock. A second connection holds the lock
+/// in an open transaction for three seconds; the store's section, allowed one, fails naming
+/// the lock timeout, the store is not failed, and the actor serves the next section once the
+/// holder commits. Without the bound the section would succeed after the holder's commit.
+#[test]
+fn a_section_waits_a_bounded_time_for_its_shard_lock() {
+    let Some(url) = test_url() else {
+        return;
+    };
+    let shard = uniq("lockwait");
+    let bounds = Bounds {
+        lock_wait: Duration::from_secs(1),
+        ..Bounds::default()
+    };
+    let store = PostgresLedgerHeadStore::with_bounds(&url, 8, bounds).unwrap();
+
+    let key = super::advisory_key(&shard);
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+    let holder_url = url.clone();
+    let holder = thread::spawn(move || {
+        let mut client = postgres::Client::connect(&holder_url, postgres::NoTls).unwrap();
+        let mut tx = client.transaction().unwrap();
+        tx.execute("SELECT pg_advisory_xact_lock($1)", &[&key])
+            .unwrap();
+        locked_tx.send(()).unwrap();
+        thread::sleep(Duration::from_secs(3));
+        tx.commit().unwrap();
+    });
+    locked_rx.recv().unwrap();
+
+    let started = Instant::now();
+    let err = store
+        .with_shard_head(&shard, &mut |_cursor| Ok(None))
+        .expect_err("a held lock fails the section at its wait");
+    let waited = started.elapsed();
+    assert!(
+        waited >= Duration::from_secs(1) && waited < Duration::from_secs(3),
+        "cancelled at the wait, before the holder commits: {waited:?}"
+    );
+    assert!(
+        err.to_string().contains("lock timeout"),
+        "the error names the lock timeout: {err}"
+    );
+    assert!(
+        !store.has_failed(),
+        "a cancelled wait is the section's error, not the store's"
+    );
+
+    holder.join().unwrap();
+    store
+        .with_shard_head(&shard, &mut |_cursor| Ok(None))
+        .expect("the actor serves the next section");
 }

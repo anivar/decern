@@ -40,7 +40,23 @@ The advisory lock is **held across the whole read-then-decide-then-write critica
 section**, not just the final write — the same guarantee `FileLedgerHeadStore`'s
 `flock` gives on one host, now across hosts. A second host calling `with_shard`
 on the same shard blocks inside `pg_advisory_xact_lock` until the first commits,
-so the chain can't fork.
+so the chain can't fork. It blocks for ten seconds at most (`SET LOCAL lock_timeout`
+in every section): past that the database cancels the wait, that section fails,
+and the store serves the next, so a host paused mid-section costs each other host
+`503`s on that shard and, the store serving one section at a time, a wait of up to
+ten seconds for the sections queued behind, not a hang until it resumes.
+
+## What the store bounds, and what it does not
+
+A start fails after 30 seconds without a ready database: a server that does not
+accept the connection, one that accepts it and never answers, or a proxy with no
+backend, fails `decern-serve` at start instead of holding it with nothing served. A
+section waits at most ten seconds for any lock, its shard's first, as above. The
+store sets no statement timeout, which a stalled server could not deliver, and it
+does not reconnect: once the connection closes, every later section fails until the
+process restarts, and `/healthz` says so once a section has met it. The connection's
+TCP parameters are the URL's (`connect_timeout`, the
+keepalives); [`docs/CLI.md`](../../docs/CLI.md) states what each bounds.
 
 ## The sync-client-in-async design (why the dedicated thread)
 
