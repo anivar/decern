@@ -216,7 +216,7 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 | `POST` | `/access/v1/search/action` | guarded | The actions the model declares that a subject may perform on a resource (§8.6); `action` is omitted from the request. For all three: no pagination — every result comes in one page, a `page.limit` is accepted and a `page.token` is 400, since this server issued none; a search binds no Mission (refused, 422 `search_under_mission`, under `--require-mission` or with a `context.mission`); a `decision_subject` or a challenge in the context is dropped, nothing being decided about anyone, once admission has held a named handle to the caller's bind as on an evaluation; an action a decision would refuse for want of a Mission (`MoveMoney` in the built-in model) is never a result; parity is with what the authority records, since a fact that lives only in a request's `properties` for the searched side cannot be supplied; `properties` on the searched side describe every candidate (a subject search with `subject.properties` asks which subjects, so described, would be permitted — it is not a filter); an `action` sent to an action search is 400. Each search is recorded once under `Search.Subject`/`Search.Resource`/`Search.Action` with the result ids (up to 1000) and the count, over the context pruned to what the searched action declares (an action search: what any action declares; an unknown action: the clock alone); a subject search's record names no subject and lands in the resource's tenant's shard; its `decision` is `true` — the search ran — with no reasons, so a count of allows must exclude `Search.*`; its parameters digest is over the inputs, so a verifier recomputing it strips `context.search` first. |
 | `GET` | `/pubkey` | open | `kid`, the key records are signed with now, and `keys`, every key a record may be verified under: the `--retired-key` keys in the order given, then `kid`. `keys` changes when the deployment rotates; a verifier passes each of them to `decern verify --pubkey`. |
 | `GET` | `/anchor/v1/tree-head` | open | A signed commitment to the log's current state — publish it somewhere you do not control. Recomputed at most once a second, holding the lock appends need only to count the records and to sign; between, the last head is served. |
-| `GET` | `/audit/v1/subject?handle=<h>` | open | What was decided *about* one party, with inclusion proofs. |
+| `GET` | `/audit/v1/subject?handle=<h>` | open | What was decided *about* one party: the first 256 decisions recorded with that handle as their decision subject, with `truncated` set when more exist, which the route has no way to return, each with an inclusion proof against the tree head signed in the same answer. A head held elsewhere checks those proofs only at the same size, since no route serves a consistency proof, and no proof shows a record left out. |
 | `GET` | `/directory/v1/principals/{id}/descendants` | guarded | Who else loses authority if this principal is revoked. |
 | `POST` | `/mission/v1/approve` | guarded | Grant a scoped, fail-closed-attenuated Mission. Refused (422, nothing recorded) when it exceeds the approver's scopes or expiry, when the approver is revoked, directly or through a delegator, or is the agent itself, or when the agent is not a principal in the approver's tenant. A body that is not an approval request is refused in the same JSON shape, with 400, 413, 415 or 422. A Mission backs a decision only about a subject the model names, approved by another principal the model names (compared by id only), in the same tenant, and only while that approver is unrevoked, unexpired and holds the decision's scope in the model the server runs. The approval is recorded, then registered: a write the registry cannot complete is answered `503`, one it refuses because the Mission was terminated meanwhile is `409`, both with the approval recorded and not live, and a retry records it again when the registry reads the Mission as not terminated. |
 | `GET` | `/mission/v1/{s256}` | guarded | Its approver, state and expiry, to every established caller — a workload bound to itself included, so a reference a caller can compute or obtain answers who approved what and until when. `active` is the registry's state: whether the Mission backs a given decision is settled when that decision is taken, against the approver's standing then. Unbound because a PEP consults mission state before honoring a grant, and binding the read to the approver would refuse the agent a Mission authorizes. The registry is read on a blocking thread, one of the places the limits below count. |
@@ -352,17 +352,18 @@ records to anyone holding a decision-subject handle on one of them.
 
 ### What a record keeps
 
-Every decision record keeps, verbatim and permanently: the subject and resource ids, the
-action, the context attributes the model's schema declares for that action, the server's
-clock, the deciding policy ids, the accountable owner, the Mission named, any decision-subject
-handle, a challenge with the decision it names, the handle the challenger proved standing as, its
-basis, its requested effect, its answer and the answer's basis, and a digest of any evidence sent,
-and under a credential posture the caller's
-`sub`, `client_id` and `iss`. A Mission
-approval record keeps the approver, the agent, the approved scopes and capabilities, the
-expiry and the `description` as sent. The ledger cannot be edited, so none of these can be
-erased later. Use pseudonymous ids, keep personal data out of Mission descriptions, and
-declare in the schema only attributes you are prepared to keep for the ledger's lifetime.
+Every decision record keeps, verbatim and permanently: the subject and resource ids, the action,
+the context attributes the model's schema declares for that action, the server's clock, the
+deciding policy ids, the accountable owner, the Mission named, any decision-subject handle, a
+challenge with the decision it names, the handle the challenger proved standing as, its basis, its
+requested effect, its answer and the answer's basis, and a digest of any evidence sent, and under
+a credential posture the caller's `sub`, `client_id` and `iss`. A Mission approval record keeps
+the approver, the agent, the approved scopes and capabilities, the expiry and the `description` as
+sent. Nothing in decern edits or erases a record; one removed by hand from the middle fails a
+verify with the ledger's public key unless every record after it is renumbered, re-chained and
+re-signed with its key, and one removed from the end shows only against an anchor. Use
+pseudonymous ids, keep personal data out of Mission descriptions, and declare in the schema only
+attributes you are prepared to keep for the ledger's lifetime.
 
 ### Limits
 
@@ -407,7 +408,8 @@ back, such as an unknown action's name, is cut to 512 characters in the answer.
   rolls it over or archives it. Nothing in this binary redacts, prunes or partially exports a
   record, so what a record keeps (see [What a record keeps](#what-a-record-keeps)) stays for as
   long as the ledger does, and an export or a backup carries all of it for as long as the copy
-  is kept; a record a writer removes is detectable only against an anchor held elsewhere.
+  is kept; a record removed from the end, or anywhere by the key holder, shows only against an
+  anchor held elsewhere.
 - **Recovery after a write error.** A write, flush or sync error on the single-file ledger,
   on a full disk for example, leaves it refusing every later append: every decision is answered
   `503`, and `/healthz` answers `503` so a liveness probe restarts the server. The restart trims

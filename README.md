@@ -11,7 +11,9 @@
 An authorization decision point that records. Every decision for an agent, a human or a
 workload — one principal type, one pure function of `(principal, authority graph, policy,
 now)` — is written to an Ed25519-signed, hash-chained ledger **before it is served**, and
-that ledger verifies offline without trusting the operator. The model's safety invariants
+anyone holding its public key can verify a ledger kept in files offline; checked against a
+tree head published where the operator cannot reach, a single-file ledger also shows that
+nothing up to that head was dropped or rewritten. The model's safety invariants
 are **machine-checked over its whole symbolic input space**, not tested on examples, by
 Cedar's Lean-verified symbolic compiler ([cedar-policy-symcc](https://crates.io/crates/cedar-policy-symcc))
 and the cvc5 solver. What that covers, and what it deliberately does not, is
@@ -34,8 +36,8 @@ and the cvc5 solver. What that covers, and what it deliberately does not, is
 [Releases](https://github.com/anivar/decern/releases) · [Security](SECURITY.md)
 
 The industry standardizes how authority is *represented* — tokens, delegation envelopes,
-decision-request formats — and defers the *guarantee* (that attenuation holds, that nothing
-was dropped from the log, that a decision stayed within its mandate) to implementer policy.
+decision-request formats — and defers the *guarantee* (that attenuation holds, that a dropped
+record can be caught, that a decision stayed within its mandate) to implementer policy.
 decern is the guarantee.
 
 ## Quickstart
@@ -106,7 +108,8 @@ the kernel derives in Rust before the prover runs, and say so:
 
 Every decision lands in an append-only, Ed25519-signed, hash-chained ledger, and is served
 **only if its record was written** — an unrecordable decision returns 503, never a bare
-allow. A crash-torn tail heals; truncating committed history is detected.
+allow. A crash-torn tail heals; truncating history at or below an anchor's size is detected
+against that anchor.
 
 <p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: one of five postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p>
 
@@ -142,7 +145,8 @@ pseudonymous handle per
 [`draft-aravind-oauth-decision-subject-00`](https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/).
 It is stripped before the kernel runs (who a decision is about cannot change what it is),
 recorded only when it adds something, and refused outright when it identifies a person —
-this log cannot be edited, so that request is the last moment such a value can be kept out.
+nothing in decern edits this log, so that request is the last moment such a value can be
+kept out.
 
 ### The subject side
 
@@ -160,9 +164,11 @@ verify: dropping a committed record stops being a rule someone broke and starts 
 arithmetic that does not work.
 
 The party a decision was about gets the other direction. `GET /audit/v1/subject?handle=<h>`
-returns what was decided about one handle, each record with an inclusion proof — checked
-against an anchor obtained separately, because proofs and an unanchored head from the same
-source prove only internal consistency. And a party who believes a decision was wrong can
+returns the first 256 decisions recorded with one handle as their decision subject, saying
+when it stopped there, each with a proof that it is in the tree head signed with the answer.
+That shows each record returned is in a head the operator signed, not that none was left out,
+and a head held elsewhere checks the proofs only at the same size: no route serves a
+consistency proof. And a party who believes a decision was wrong can
 **challenge** it: a signed standing token in the decision context, stripped before the
 kernel runs (a forged challenge can neither escalate nor deny), answered afterwards on the
 record, with evidence kept as a digest. What a deployment actually supports — including the

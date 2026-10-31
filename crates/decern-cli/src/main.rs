@@ -461,8 +461,7 @@ async fn run() -> Result<ExitCode> {
             let report = decern_ledger::verify_with_keys(&ledger, &keys)?;
             if !report.signatures_checked {
                 // Prominent, at the TOP: a chain-only pass is NOT a full verify — it does
-                // not catch a record signed by nobody, so it is not "verify without trusting
-                // the operator". Do not let it read as a clean pass.
+                // not catch a record signed by nobody. Do not let it read as a clean pass.
                 println!("NOTE: no --pubkey given — hash chain verified, signatures NOT checked.");
                 println!("      This is a chain-only pass, not a full verify; pass --pubkey <kid>");
                 println!("      to check every record's signature.");

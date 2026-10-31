@@ -97,7 +97,8 @@ the tool version.
 
 ## What this proves, and what it does not
 
-decern can prove what was decided for every call that reached it, and that no recorded
-decision was altered or dropped afterwards. It cannot prove that a call which never
+decern can prove what was decided for every call that reached it, and, against a tree head
+published out of the operator's reach, that no recorded decision up to it was altered or
+dropped afterwards. It cannot prove that a call which never
 reached it did not happen. That guarantee — that this server is the only path to the
 tools — belongs to the deployment around it, and no decision point can supply it.
