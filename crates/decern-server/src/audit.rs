@@ -135,14 +135,15 @@ fn single(backend: &LedgerBackend) -> Result<&Mutex<Ledger>, LedgerError> {
 }
 
 /// `GET /audit/v1/subject?handle=<h>` — the decisions recorded about one party, each with a
-/// proof that it is in the log the anchor commits to.
+/// proof that it is in the tree head signed in the same response.
 ///
 /// A notice an operator is obliged to send is worth what their willingness to send it is
 /// worth. This is the other direction: a party who suspects a decision was made about them
-/// can ask, and can check the answer against a commitment the operator published earlier,
-/// without believing anything the operator says in this response.
+/// can ask, and can check that each record returned is in a head the operator signed. A head
+/// the operator published earlier checks the answer only at the same size, since no route
+/// serves a consistency proof, and no proof shows a record the answer left out.
 ///
-/// So the response carries proofs and never keys. The reader verifies with a key obtained
+/// The response carries proofs and never keys. The reader verifies with a key obtained
 /// elsewhere; one handed over in the same response would prove only that the operator can
 /// sign their own account of events.
 ///

@@ -1,6 +1,6 @@
 {
   "title": "decern",
-  "description": "<p>An authorization kernel whose decision function carries nine invariants discharged over the whole input space by an SMT solver, and a tamper-evident ledger that records each decision so a third party can verify what was decided and that the record was not altered afterwards.</p>",
+  "description": "<p>An authorization kernel whose decision function carries nine invariants discharged over the policy model's symbolic input space by an SMT solver, and a tamper-evident ledger that records each decision so a third party can verify what was decided and, against a tree head published out of the operator's reach, that no record up to it was altered or dropped afterwards.</p>",
   "upload_type": "software",
   "license": "Apache-2.0",
   "creators": [

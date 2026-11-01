@@ -631,7 +631,7 @@ fn answer_challenge(
         outcome: outcome.to_owned(),
         outcome_basis,
         // The digest, never the evidence itself: what a party sends to argue their case
-        // is likely to be about them, and this log cannot be edited.
+        // is likely to be about them, and nothing in decern edits this log.
         evidence_digest: c.evidence.as_ref().map(decern_ledger::digest),
     }))
 }

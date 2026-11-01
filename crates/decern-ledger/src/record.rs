@@ -92,13 +92,13 @@ pub struct Entry {
     /// chooses, and a reader who does not know a name can still see that something was
     /// pinned and that it does not match.
     ///
-    /// `decern-serve` writes [`DIGEST_AUTHORITY`]. The chain already proves a record was
-    /// not altered afterwards; it says nothing about what the record was decided
-    /// *against*, and that moves. Revoke a delegation tomorrow and an allow recorded today
-    /// still reads as an allow, with nothing to say what was true when — the trail is
-    /// immutable while the thing it refers to is not. A digest of the authority state
-    /// makes the decision addressable: a later reading can tell whether the authority it
-    /// was taken against is still the same one.
+    /// `decern-serve` writes [`DIGEST_AUTHORITY`]. The signature already shows a record was
+    /// not altered by anyone without the ledger's key; it says nothing about what the record
+    /// was decided *against*, and that moves. Revoke a delegation tomorrow and an allow
+    /// recorded today still reads as an allow, with nothing to say what was true when — the
+    /// trail stays as signed while the thing it refers to does not. A digest of the
+    /// authority state makes the decision addressable: a later reading can tell whether the
+    /// authority it was taken against is still the same one.
     ///
     /// Ordered, so the serialization is deterministic — this is inside the bytes the chain
     /// hashes, and a map that serialized in a different order each time would break it.

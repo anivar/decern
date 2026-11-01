@@ -53,11 +53,15 @@ rules are machine-checked over the model's symbolic input space ([what that
 covers](https://github.com/anivar/decern/blob/main/docs/CLI.md#what-proven-covers)), and whose
 decisions land in an append-only,
 signed, hash-chained log **before** they are served — a decision that cannot be recorded is
-refused, and a third party can verify what was decided without trusting the operator:
+refused, and a third party holding the server's public key can check what was decided
+from a ledger kept in files, offline, and, for a single-file ledger with `--anchor` and a
+tree head kept out of the operator's reach, that no record up to that head was dropped or
+rewritten:
 
 ```sh
-decern verify --ledger <file> --pubkey <key>   # the chain and every signature
-decern explain --ledger <file> --seq 12        # one decision, in full
+decern verify --ledger <file> --pubkey <key>                       # the chain and every signature
+decern verify --ledger <file> --pubkey <key> --anchor <tree-head>  # and nothing up to it dropped
+decern explain --ledger <file> --seq 12                            # one decision, in full
 ```
 
 Obtain the public key out of band; a key handed over by the party being audited
