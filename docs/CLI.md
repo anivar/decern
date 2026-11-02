@@ -226,8 +226,7 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 | `GET` | `/healthz` | open | `ok`, or `503` once the single-file ledger has stopped after a write error or its lock was poisoned by a panic, once a Postgres head store has found its connection closed or the thread that holds it has stopped, or while a Postgres head store has had one database call running for 30 seconds, a database that stopped answering without closing the connection. A restart recovers the first two; the third clears when the database answers. |
 
 "Guarded" routes require the caller to be established; "open" routes are open by intent — they are
-operational, published on purpose, or answerable only to a party who already holds the handle they
-ask about.
+operational, published on purpose, or keyed to a handle and answer whoever holds it.
 
 ### The trust boundary, stated plainly
 
@@ -327,12 +326,15 @@ carries no bind at all. If your caller is a workload, give it a workload posture
 
 `/audit/v1/subject` deserves its own sentence: it returns records *about a person*, and it stays
 **outside the guard on purpose** — the party a decision was about will not hold a credential for
-the deployment that decided it. The handle is pseudonymous and matched exactly, so it answers
-someone who already knows their own handle and tells everyone else nothing; treat handles as
-secrets, and rate-limit this route at whatever fronts the server. The other open routes publish
-on purpose what an operator may still want to keep off a public network: the tree head gives
-the record count, and the subject-side disclosure names the `--pep` entries, trust domains and
-providers this deployment accepts.
+the deployment that decided it. The handle is matched exactly and is the route's only access
+control, so the route answers whoever holds one. Beyond the caller's bind, recording checks a
+handle only for being blank or holding an `@`, and nothing checks how hard it is to guess: a short
+handle, or one used for more than one party, gives whoever guesses or shares it the records under
+it. Issue handles that cannot be guessed, never one handle for two parties, treat them as secrets,
+and rate-limit this route at whatever fronts the server. The other open routes publish on purpose
+what an operator may still want to keep off a public network: the tree head gives the record
+count, and the subject-side disclosure names the `--pep` entries, trust domains and providers this
+deployment accepts.
 
 ### Pairing with an identity provider
 

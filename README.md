@@ -144,7 +144,8 @@ taken *upon* — a different question from who asked and who answers for it — 
 pseudonymous handle per
 [`draft-aravind-oauth-decision-subject-00`](https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/).
 It is stripped before the kernel runs (who a decision is about cannot change what it is),
-recorded only when it adds something, and refused outright when it identifies a person —
+recorded only when it adds something, and refused outright when it holds an `@`, the shape
+of an address someone could be reached at. Nothing else about a person is detected, and
 nothing in decern edits this log, so that request is the last moment such a value can be
 kept out.
 
@@ -263,9 +264,10 @@ release still does not claim and carries each earlier release's limits forward.
   and `--trust-proxy` do not constrain it at all, because a gateway legitimately asks about
   other parties — so a bearer token issued to a workload carries no bind. The workload
   postures bind a caller to itself unless it is listed in `--pep`. `--require-mission` is what
-  makes decision approval server-derived, and `/audit/v1/subject` stays outside the guard on
-  purpose, so treat handles as secrets and rate-limit that route at whatever fronts the
-  server. The full map is in
+  makes decision approval server-derived. `/audit/v1/subject` stays outside the guard on
+  purpose with the handle as its only access control, and nothing checks how hard a handle is
+  to guess: issue handles that cannot be guessed, never one handle for two parties, treat them
+  as secrets and rate-limit that route at whatever fronts the server. The full map is in
   [docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly).
 - **Bearer validation verifies `EdDSA` tokens only.** RFC 9068 §2.1 requires a conforming
   resource server to support RS256, so `decern-serve` applies RFC 9068's checks without being a

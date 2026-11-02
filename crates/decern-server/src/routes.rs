@@ -82,7 +82,8 @@ pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
     // third party can check this deployment without holding a credential for it; and
     // `/audit/v1/subject` answers the party a decision was about — who will not hold a
     // credential for the deployment that decided about them; the subject-side surface
-    // exists for them. The pseudonymous handle is that route's whole access control.
+    // exists for them. The handle is that route's whole access control, and nothing checks
+    // how hard it is to guess.
     Router::new()
         .route("/healthz", get(healthz))
         .route("/pubkey", get(pubkey))
