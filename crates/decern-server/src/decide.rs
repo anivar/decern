@@ -96,10 +96,11 @@ pub(crate) fn resolve_sponsor(dir: &Directory, subject_id: &str) -> Option<Party
 /// as a decision subject adds an identifier and no information, so both are
 /// dropped rather than stored.
 ///
-/// A handle that is plainly a person — an address someone could be reached at —
-/// is refused instead. This is the last moment it can be: the record is appended,
-/// signed and chained, so anything written here is permanent, and a pseudonymous
-/// reference is the only form of this claim that stays safe to keep.
+/// A handle holding an `@`, the shape of an address someone could be reached at,
+/// is refused instead; nothing else about a person is detected. This is the last
+/// moment it can be: the record is appended, signed and chained, so anything written
+/// here is permanent, and a pseudonymous reference is the only form of this claim that
+/// stays safe to keep.
 fn take_decision_subject(
     ctx: &mut Value,
     subject_id: &str,

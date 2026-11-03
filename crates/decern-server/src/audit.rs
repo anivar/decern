@@ -147,12 +147,13 @@ fn single(backend: &LedgerBackend) -> Result<&Mutex<Ledger>, LedgerError> {
 /// elsewhere; one handed over in the same response would prove only that the operator can
 /// sign their own account of events.
 ///
-/// The handle is the capability. It matches exactly — no prefix, no listing — so the
-/// endpoint answers a party who already knows their own handle and tells everyone else
-/// nothing. That, and the pseudonymity of the handle itself, is the entire access control
-/// here, deliberately: this route stays outside the bearer guard, because the party a
-/// decision was about will not hold a credential for the deployment that decided it.
-/// What that choice costs is stated in the CLI reference's trust-boundary section.
+/// The handle is the capability and the entire access control here, deliberately: this
+/// route stays outside the bearer guard, because the party a decision was about will not
+/// hold a credential for the deployment that decided it. It matches exactly — no prefix, no
+/// listing — so the endpoint answers whoever holds a handle. Beyond the caller's bind,
+/// recording checks a handle only for being blank or holding an `@`; making one hard to
+/// guess is left to whoever issues it. What that choice costs is stated in the CLI
+/// reference's trust-boundary section.
 ///
 /// The handle arrives as a query parameter rather than a path segment because a handle is an
 /// opaque string chosen by whoever mints it — the conventional forms carry a colon — and a

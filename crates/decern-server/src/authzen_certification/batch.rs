@@ -405,7 +405,7 @@ async fn a_batch_over_the_cap_is_refused() {
 }
 
 /// A refusal this server would answer 422 on the single endpoint — here, a decision
-/// subject that identifies a person — is carried inside the item that earned it, as that
+/// subject holding an `@` — is carried inside the item that earned it, as that
 /// item's deny with `context.error` carrying the status and code, and the item is not
 /// recorded; the rest of the exchange is unaffected, and `deny_on_first_deny` treats it as
 /// the deny it is.
