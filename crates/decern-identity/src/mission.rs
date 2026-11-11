@@ -3,8 +3,8 @@
 //! decern-identity::mission — the person-centred ISSUE mode: an approval-backed
 //! authorization context.
 //!
-//! A Mission is a scoped authorization context an APPROVER (a human / delegating
-//! principal) grants to an AGENT: an explicit, hashed, referenceable record of
+//! A Mission is a scoped authorization context an APPROVER (a principal the model marks
+//! `Human`) grants to an AGENT: an explicit, hashed, referenceable record of
 //! "these tools, for this purpose, until this time." Its reference is
 //! `(approver, s256)`; it has exactly two states (active | terminated) and carries
 //! `approved_tools` and `capabilities`.
@@ -129,11 +129,14 @@ impl ApprovedMission {
     }
 }
 
+/// The `kind` a principal must carry to approve a Mission.
+pub const HUMAN_KIND: &str = "Human";
+
 /// Approve a Mission against the graph. Fail-closed: every approved tool must be
 /// one the approver actually holds, and the mission cannot outlive the approver's
 /// authority. The returned Mission is therefore provably bounded. An approver that is
-/// revoked, directly or through an ancestor, approves nothing, and no principal
-/// approves a Mission for itself.
+/// revoked, directly or through an ancestor, approves nothing, no principal approves a
+/// Mission for itself, and only a principal the model marks [`HUMAN_KIND`] approves.
 ///
 /// When a [`MissionRegistry`] is supplied the approval is RECORDED (active, keyed by
 /// its `s256`) so that a later mint can verify the mission reference names a real,
@@ -160,6 +163,16 @@ pub fn approve(
     if mission.approver == mission.agent {
         return Err(IdentityError::SubjectInvalid(format!(
             "approver {} cannot approve a mission for itself",
+            mission.approver
+        )));
+    }
+    // Only a principal the model marks Human approves. An Agent or a Machine that holds
+    // the scope can act within it and approves nothing; so does a principal with no
+    // `kind`, or one spelled any other way.
+    let kind = principal_attrs(model, &mission.approver).and_then(|a| a.get("kind")?.as_str());
+    if kind != Some(HUMAN_KIND) {
+        return Err(IdentityError::SubjectInvalid(format!(
+            "approver {} is not a Human principal",
             mission.approver
         )));
     }
@@ -389,6 +402,55 @@ mod tests {
         assert!(err.to_string().contains("root_everything"), "{err}");
     }
 
+    /// An Agent or a Machine holding the scope approves nothing. Both built-in principals
+    /// hold `read` in tenant A, as the agent does. The rule is an allowlist of one
+    /// spelling: a `kind` that is absent, of another type or another case approves
+    /// nothing either.
+    #[test]
+    fn approve_refuses_an_approver_that_is_not_human() {
+        let model = Model::builtin();
+        for approver in ["machine1", "agent2"] {
+            let expiry = delegator_attrs(&model, approver).unwrap().1;
+            let m = Mission {
+                approver: approver.into(),
+                ..mission(&["read"], expiry)
+            };
+            let err = approve(&model, m, 100, None).unwrap_err();
+            assert!(matches!(err, IdentityError::SubjectInvalid(_)));
+            assert!(
+                err.to_string().contains("is not a Human principal"),
+                "{approver}: {err}"
+            );
+        }
+        for kind in [
+            serde_json::Value::Null,
+            serde_json::json!("human"),
+            serde_json::json!("Person"),
+            serde_json::json!(""),
+            serde_json::json!(7),
+        ] {
+            let mut model = Model::builtin();
+            for e in model.entities.as_array_mut().unwrap() {
+                if e["uid"]["id"] == "corp" {
+                    if kind.is_null() {
+                        e["attrs"].as_object_mut().unwrap().remove("kind");
+                    } else {
+                        e["attrs"]["kind"] = kind.clone();
+                    }
+                }
+            }
+            let err = approve(&model, mission(&["read"], 150), 100, None).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("approver corp is not a Human principal"),
+                "kind {kind}: {err}"
+            );
+        }
+        // The same grant from the Human in that tenant is approved.
+        let m = mission(&["read"], 150);
+        approve(&model, m, 100, None).unwrap();
+    }
+
     #[test]
     fn approve_refuses_an_approver_in_another_tenant() {
         // corpB is a Human in tenant B holding move_money; corp is in tenant A.
@@ -448,24 +510,29 @@ mod tests {
 
     /// A revoked approver approves nothing, revoked directly or through a delegator, as the
     /// policy's `revoked` attribute reads it. `agent1` delegates from `corp`, so revoking
-    /// `corp` revokes `agent1` too; `now` is inside `agent1`'s expiry of 200.
+    /// `corp` revokes `agent1` too; `now` is inside `agent1`'s expiry of 200. Only a Human
+    /// approves, so each model here marks `agent1` as one: a person acting under `corp`.
     #[test]
     fn approve_refuses_a_revoked_approver_directly_or_through_its_delegator() {
-        let revoking = |id: &str| {
+        let delegate_is_human = |revoked: Option<&str>| {
             let mut model = Model::builtin();
             for e in model.entities.as_array_mut().unwrap() {
-                if e["uid"]["id"] == id {
+                if e["uid"]["id"] == "agent1" {
+                    e["attrs"]["kind"] = serde_json::json!("Human");
+                }
+                if revoked.is_some_and(|id| e["uid"]["id"] == id) {
                     e["attrs"]["revoked"] = serde_json::json!(true);
                 }
             }
             model
         };
+        let revoking = |id: &str| delegate_is_human(Some(id));
         let by_agent1 = || Mission {
             approver: "agent1".into(),
             agent: "agent2".into(),
             ..mission(&["read"], 150)
         };
-        approve(&Model::builtin(), by_agent1(), 100, None).expect("agent1 stands");
+        approve(&delegate_is_human(None), by_agent1(), 100, None).expect("agent1 stands");
         for revoked in ["agent1", "corp"] {
             let err = approve(&revoking(revoked), by_agent1(), 100, None).unwrap_err();
             assert!(

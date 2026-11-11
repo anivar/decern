@@ -180,8 +180,8 @@ read from its running configuration so the claim cannot drift from the binary.
 
 `decern-serve` also serves a **Mission lifecycle**: an approver grants an agent a scoped,
 fail-closed-attenuated authorization context — "these scopes, until this time." A Mission
-exceeding what its approver holds is refused, as is one from a revoked approver, one an approver
-grants itself, and one for an agent that is not a principal in the approver's tenant. A Mission
+exceeding what its approver holds is refused, as is one from an approver the model does not mark
+`Human`, one from a revoked approver, one an approver grants itself, and one for an agent that is not a principal in the approver's tenant. A Mission
 backs a decision only in its approver's tenant, and only while the approver, in the model the
 server runs, is unrevoked, unexpired and holds the scope the decision needs; that model is fixed
 at boot, so a revocation reaches existing Missions at the next restart. Every accepted transition
@@ -192,10 +192,15 @@ and the processes that open one file share it; under `--sharded postgres://…` 
 another host has its own, so a Mission approved or terminated on one host is unknown to, or
 still live on, the others: send a Mission's requests and its termination to the host that holds
 it, which a Postgres-sharded start says it does with `--missions-per-host`. A Mission binds only the built-in
-actions `Read`, `MoveMoney` and `AccessPII`; under a Mission any other action is denied. The
-self-approval refusal compares ids only: an approver in the agent's own delegation chain, or one
-the model does not mark `Human`, may approve, so `human_approved` means another principal
-approved, not that a person did.
+actions `Read`, `MoveMoney` and `AccessPII`; under a Mission any other action is denied. Only a
+principal the model marks `Human` approves, and never for itself. The self-approval refusal
+compares ids only, so an approver in the agent's own delegation chain may approve.
+Under a Mission, for `MoveMoney`, `human_approved` therefore means a principal of kind `Human`,
+other than the agent, is named as the approver. Whether the caller that named it spoke for that
+principal rests on the caller posture, and the proofs cover the flag, not who approved. `kind`
+is the model's word and one spelling: a model that omits it, or writes `human`, approves
+nothing. A workload caller may name only itself as approver, so one whose principal is not
+marked `Human` approves nothing either; its approvals come through a PEP.
 
 decern records an approval it is given and holds decisions to it; it does not render one. The
 approval screen, the consent record and the tokens belong outside decern, and the enforcement

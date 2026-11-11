@@ -94,8 +94,8 @@ method and the standards registry. `scripts/verify.sh` is the one gate every cha
 
 The same binary also reaches `decern-identity` for the **Mission lifecycle**: `POST
 /mission/v1/approve` grants an agent a scoped, fail-closed-attenuated authorization context
-(refused, and nothing recorded, if it exceeds the approver's own authority or expiry, comes from a
-revoked approver or one approving for itself, or names an agent outside the approver's tenant, and
+(refused, and nothing recorded, if it exceeds the approver's own authority or expiry, comes from an
+approver the model does not mark `Human`, a revoked approver or one approving for itself, or names an agent outside the approver's tenant, and
 backing a decision only while its approver still stands in the model loaded at boot);
 `GET /mission/v1/{s256}` reports its state; and `POST /mission/v1/{s256}/terminate` ends it, with
 no revival. Each accepted transition is appended to the
