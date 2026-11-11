@@ -799,3 +799,52 @@ fn a_slow_caller_does_not_read_as_a_stall() {
     );
     assert!(!store.is_stalled(), "nothing runs after the section");
 }
+
+/// A connection that leaves this host must require TLS: the client's default,
+/// `sslmode=prefer`, falls back to plaintext when the server, or anyone in the path, says
+/// it has none. Needs no database: the URL is refused before anything connects.
+#[test]
+fn a_url_to_another_host_is_refused_unless_it_requires_tls() {
+    for url in [
+        "postgres://decern@db.internal:5432/decern",
+        "postgres://decern@db.internal:5432/decern?sslmode=prefer",
+        "postgres://decern@db.internal:5432/decern?sslmode=disable",
+        "postgres://decern@10.0.0.7/decern?sslmode=disable",
+        "postgres://decern@[2001:db8::7]/decern",
+        // One host of several is elsewhere.
+        "postgres://decern@127.0.0.1,db.internal/decern?sslmode=disable",
+        // `hostaddr` is where the connection goes, whatever `host` names.
+        "postgres://decern@localhost/decern?hostaddr=10.0.0.7",
+        "host=db.internal user=decern dbname=decern",
+    ] {
+        let started = Instant::now();
+        let err = match PostgresLedgerHeadStore::new(url) {
+            Ok(_) => panic!("{url} was accepted"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("sslmode=require"), "{url}: {err}");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{url} was refused only after trying to connect"
+        );
+    }
+}
+
+/// What the rule leaves alone: a URL that requires TLS, and one that stays on this host by
+/// loopback address, by `localhost`, or by a Unix socket.
+#[test]
+fn a_url_that_requires_tls_or_stays_on_this_host_passes_the_tls_rule() {
+    for url in [
+        "postgres://decern@db.internal:5432/decern?sslmode=require",
+        "postgres://decern@127.0.0.1:5432/decern?sslmode=disable",
+        "postgres://decern@127.0.0.1:5432/decern",
+        "postgres://decern@localhost/decern?sslmode=prefer",
+        "postgres://decern@[::1]/decern",
+        "postgres://decern@db.internal/decern?hostaddr=127.0.0.1",
+        "host=/var/run/postgresql user=decern dbname=decern",
+        // Not a connection string at all: the connect reports it in its own words.
+        "not a url",
+    ] {
+        assert!(super::require_tls_off_host(url).is_ok(), "{url}");
+    }
+}
