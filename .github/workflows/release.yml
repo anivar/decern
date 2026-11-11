@@ -45,7 +45,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build release binaries
-        run: cargo build --release --target ${{ matrix.target }} -p decern-cli -p decern-server
+        run: cargo build --locked --release --target ${{ matrix.target }} -p decern-cli -p decern-server
 
       # Run the built binaries end to end, natively, before anything is uploaded. A static musl
       # build once failed at startup on every Linux target (musl's main-thread stack tripped
