@@ -4,4 +4,5 @@
   `--pubkey <kid>` for each key that signed the ledger, or the new `--chain-only`, which checks
   the chain alone, says so, and exits 0. `--anchor` now needs `--pubkey`: an anchor whose
   signature is not checked was taken at face value. Add `--chain-only` to a script that meant
-  the chain check. Authored by @anivar.
+  the chain check. `decern explain` without `--pubkey` still exits 0 and says the signature was
+  not checked. Authored by @anivar.

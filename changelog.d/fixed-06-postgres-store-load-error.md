@@ -9,5 +9,6 @@
   restarts the server; a replica that serves no decision meanwhile answers `ok` until one does.
   A database that stops answering without closing the connection, behind a network partition for
   example, still holds the store until TCP gives up: each decision meanwhile is answered `503` at
-  the 30-second request deadline, `/healthz` answers `ok`, and `SIGTERM` waits.
+  the 30-second request deadline, `/healthz` answers `503` once one database call has run for
+  30 seconds, and `SIGTERM` waits.
   Authored by @anivar.

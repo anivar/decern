@@ -21,6 +21,10 @@ One file, named `<section>-<slug>.md`. The prefix picks the section, so nothing 
 | `removed-` | Removed | it is gone |
 | `deprecated-` | Deprecated | it still works and will not |
 
+Entries in a section are assembled in file-name order. A two-digit rank after the prefix,
+`changed-03-<slug>.md`, places an entry; the release owner adds ranks before a release so the
+entries a reader must act on come first, and a new entry needs none.
+
 The file holds the entry exactly as it should appear, starting with `- `. It is copied verbatim, so
 it carries its own formatting:
 
