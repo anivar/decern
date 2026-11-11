@@ -349,6 +349,57 @@ async fn a_name_past_its_bound_is_refused_and_not_recorded() {
     assert!(records_in(&base, &st).is_empty());
 }
 
+/// A name is recorded as it was sent and read back on an auditor's terminal, where a control
+/// character is an instruction, not text. One in any name is refused before anything is
+/// decided or recorded.
+#[tokio::test]
+async fn a_name_with_a_control_character_is_refused_and_not_recorded() {
+    let (st, base) = fixture_state();
+    let esc = "record-1\u{1b}[2J";
+    for (field, body) in [
+        (
+            "subject.id",
+            json!({ "subject": { "type": "user", "id": "ali\u{7}ce" },
+                    "action": { "name": "read" },
+                    "resource": { "type": "record", "id": "record-1" } }),
+        ),
+        (
+            "subject.type",
+            json!({ "subject": { "type": "us\ner", "id": "alice" },
+                    "action": { "name": "read" },
+                    "resource": { "type": "record", "id": "record-1" } }),
+        ),
+        (
+            "resource.id",
+            json!({ "subject": { "type": "user", "id": "alice" },
+                    "action": { "name": "read" },
+                    "resource": { "type": "record", "id": esc } }),
+        ),
+        (
+            "resource.type",
+            json!({ "subject": { "type": "user", "id": "alice" },
+                    "action": { "name": "read" },
+                    "resource": { "type": "rec\u{9b}ord", "id": "record-1" } }),
+        ),
+        (
+            "action.name",
+            json!({ "subject": { "type": "user", "id": "alice" },
+                    "action": { "name": "re\u{7f}ad" },
+                    "resource": { "type": "record", "id": "record-1" } }),
+        ),
+    ] {
+        let (status, resp) = decision(&st, &body.to_string()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {resp}");
+        assert_eq!(resp["error"], "invalid_request", "{field}: {resp}");
+        assert_eq!(
+            resp["detail"],
+            format!("{field} contains a control character"),
+            "{resp}"
+        );
+        assert!(records_in(&base, &st).is_empty(), "{field} was recorded");
+    }
+}
+
 /// A kernel error can quote the request back; the answer bounds it as a refusal does.
 #[tokio::test]
 async fn an_error_quoting_the_request_is_bounded() {

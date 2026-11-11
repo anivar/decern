@@ -167,3 +167,59 @@ fn an_anchor_not_signed_by_the_ledger_key_is_refused() {
     );
     cleanup(&f.dir);
 }
+
+fn verify_with(f: &Fixture, flags: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_decern"))
+        .args(["verify", "--ledger"])
+        .arg(&f.ledger_path)
+        .args(flags)
+        .output()
+        .unwrap()
+}
+
+/// A run with no key checks only that the log holds together, which whoever wrote the log
+/// can arrange. It must not exit 0 unless the caller asked for exactly that.
+#[test]
+fn verify_without_a_key_fails_unless_chain_only_is_asked_for() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let f = seed_and_anchor("needs-a-key", 3);
+
+    let bare = verify_with(&f, &[]);
+    assert!(!bare.status.success(), "no key and no --chain-only passed");
+    let said = String::from_utf8_lossy(&bare.stderr).into_owned();
+    assert!(
+        said.contains("--pubkey") && said.contains("--chain-only"),
+        "the refusal names both ways out: {said}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&bare.stdout).contains("OK"),
+        "a refused run prints no OK"
+    );
+
+    let chain_only = verify_with(&f, &["--chain-only"]);
+    assert!(
+        chain_only.status.success(),
+        "--chain-only is the asked-for chain check: {}",
+        String::from_utf8_lossy(&chain_only.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&chain_only.stdout).contains("signatures NOT checked"),
+        "a chain-only pass still says what it did not check"
+    );
+
+    let keyed = verify_with(&f, &["--pubkey", &f.pubkey_hex]);
+    assert!(keyed.status.success(), "a keyed verify is unchanged");
+
+    // The two are different checks; asking for both is a mistake, not a stronger check.
+    let both = verify_with(&f, &["--chain-only", "--pubkey", &f.pubkey_hex]);
+    assert!(!both.status.success(), "--chain-only with --pubkey passed");
+
+    // An anchor nobody's key vouches for proves nothing about the log.
+    let anchor = f.anchor_path.to_str().unwrap().to_owned();
+    let unsigned_anchor = verify_with(&f, &["--chain-only", "--anchor", &anchor]);
+    assert!(
+        !unsigned_anchor.status.success(),
+        "--anchor without a key passed"
+    );
+    cleanup(&f.dir);
+}
