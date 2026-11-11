@@ -183,10 +183,15 @@ fn search(
         .context
         .as_ref()
         .and_then(|c| crate::decide::named_decision_subject(c.get("decision_subject")));
+    let asserts = req
+        .context
+        .as_ref()
+        .is_some_and(crate::decide::asserts_approval);
     if let Some(refusal) = admit_named(
         caller,
         named_subject.as_deref(),
         describes,
+        asserts,
         decision_subject,
     ) {
         return refusal;

@@ -21,7 +21,8 @@
 //! Establishing the caller is not the same as admitting the name the request speaks as.
 //! Bearer and `--trust-proxy` authenticate a PEP, which legitimately asks about other
 //! parties. A signed-request agent is a workload: unless it is named in `--pep`, it may
-//! only name itself as AuthZEN `subject`, mission `approver`, or directory principal.
+//! only name itself as AuthZEN `subject`, mission `approver`, or directory principal, and
+//! may neither describe a party nor assert consent or approval.
 //! That check lives in the handlers, not here — the guard does not parse bodies.
 
 use axum::Json;
@@ -254,8 +255,8 @@ pub(crate) fn refuse_unless_admits(
     }
 }
 
-/// An act only a PEP may perform — describing a party, searching for subjects — refused
-/// to a caller bound to itself with the same `caller_mismatch` as a name that is not
+/// An act only a PEP may perform — describing a party, searching for subjects, asserting
+/// consent or approval — refused to a caller bound to itself with the same `caller_mismatch` as a name that is not
 /// theirs: the bind that keeps a workload from naming another principal keeps it from
 /// speaking for, or enumerating, others. A PEP in `--pep`, a bearer caller and a trusted
 /// front may.
@@ -287,6 +288,14 @@ pub(crate) fn refuse_description_unless_pep(
     caller: &Option<axum::Extension<Authenticated>>,
 ) -> Option<Response> {
     refuse_unless_pep(caller, "describe the subject, resource or action")
+}
+
+/// A request that carries `consent` or `human_approved` says that another party agreed or
+/// approved, which a caller bound to itself may not say about its own request.
+pub(crate) fn refuse_approval_claim_unless_pep(
+    caller: &Option<axum::Extension<Authenticated>>,
+) -> Option<Response> {
+    refuse_unless_pep(caller, "assert consent or approval")
 }
 
 /// The layer over the protected routes.

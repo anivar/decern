@@ -417,3 +417,76 @@ async fn an_error_quoting_the_request_is_bounded() {
         "{body}"
     );
 }
+
+/// `consent` and `human_approved` say something about another party: that the resource's
+/// owner agreed, that an approval was given. A caller bound to itself may not say it about
+/// its own request, whatever value it gives the key, and nothing is recorded. A caller
+/// that may name any principal, and a trusted front with no verified caller, may.
+#[tokio::test]
+async fn a_caller_bound_to_itself_may_not_assert_consent_or_approval() {
+    let (st, base) = fixture_state();
+    let workload =
+        || crate::caller::Authenticated::new("bob", "bob", "https://iss.example/").self_only();
+    let request = |context: Value| -> DecideReq {
+        serde_json::from_value(json!({
+            "subject": { "type": "user", "id": "bob" },
+            "action": { "name": "read" },
+            "resource": { "type": "record", "id": "record-1" },
+            "context": context,
+        }))
+        .unwrap()
+    };
+    for claim in [
+        json!({ "consent": true }),
+        json!({ "consent": false }),
+        json!({ "human_approved": true }),
+        json!({ "ip": "192.168.1.1", "consent": "yes" }),
+    ] {
+        let (status, resp) = body_json(
+            decide(
+                State(st.clone()),
+                Some(axum::Extension(workload())),
+                Ok(Json(request(claim.clone()))),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{claim} {resp}");
+        assert_eq!(resp["error"], "caller_mismatch", "{claim}");
+        assert!(
+            resp["detail"]
+                .as_str()
+                .unwrap_or("")
+                .contains("cannot assert consent or approval"),
+            "{claim} {resp}"
+        );
+        assert!(
+            records_in(&base, &st).is_empty(),
+            "nothing was recorded: {claim}"
+        );
+    }
+    // The same context without the claim is decided, and the same claim from a PEP is.
+    let (status, resp) = body_json(
+        decide(
+            State(st.clone()),
+            Some(axum::Extension(workload())),
+            Ok(Json(request(json!({ "ip": "192.168.1.1" })))),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    let pep = crate::caller::Authenticated::new("gateway", "gateway", "https://iss.example/");
+    for caller in [Some(axum::Extension(pep)), None] {
+        let (status, resp) = body_json(
+            decide(
+                State(st.clone()),
+                caller,
+                Ok(Json(request(json!({ "consent": true })))),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{resp}");
+    }
+}
