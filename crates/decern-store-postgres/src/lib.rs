@@ -177,6 +177,7 @@ impl PostgresLedgerHeadStore {
 
     /// [`Self::new`] with the queue depth and the waits it bounds.
     fn with_bounds(url: &str, depth: usize, bounds: Bounds) -> Result<Self, StoreError> {
+        require_tls_off_host(url)?;
         let url = url.to_owned();
         let (ready_tx, ready_rx) = sync_channel::<Result<(), StoreError>>(0);
         let (job_tx, job_rx) = sync_channel::<Job>(depth);
@@ -323,6 +324,52 @@ impl LedgerHeadStore for PostgresLedgerHeadStore {
             .running_for()
             .is_some_and(|running| running >= self.stall_after)
     }
+}
+
+/// Refuse a connection string that could reach another host in plaintext.
+///
+/// The client's default is `sslmode=prefer`: it asks for TLS and carries on without it
+/// when the answer is no, and that answer is not authenticated, so whoever sits in the
+/// path can give it. Only `sslmode=require` makes the connection fail instead. A
+/// connection that stays on this host has no path to sit in: a Unix socket, `localhost`,
+/// or a loopback address. `hostaddr`, when given, is where the connection goes, so it is
+/// what is judged. A string the client cannot parse is left for the connect to refuse in
+/// its own words.
+fn require_tls_off_host(url: &str) -> Result<(), StoreError> {
+    use postgres::config::{Host, SslMode};
+
+    let Ok(config) = url.parse::<postgres::Config>() else {
+        return Ok(());
+    };
+    if config.get_ssl_mode() == SslMode::Require {
+        return Ok(());
+    }
+    let on_this_host = if config.get_hostaddrs().is_empty() {
+        config.get_hosts().iter().all(|host| match host {
+            Host::Tcp(name) => {
+                name == "localhost"
+                    || name
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|addr| addr.is_loopback())
+            }
+            #[cfg(unix)]
+            Host::Unix(_) => true,
+        })
+    } else {
+        config
+            .get_hostaddrs()
+            .iter()
+            .all(std::net::IpAddr::is_loopback)
+    };
+    if on_this_host {
+        return Ok(());
+    }
+    Err(StoreError::Invalid(
+        "the Postgres URL names a host other than this one and does not require TLS; add \
+         sslmode=require, which fails the connection where the default falls back to \
+         plaintext"
+            .into(),
+    ))
 }
 
 // ============================ actor thread ============================

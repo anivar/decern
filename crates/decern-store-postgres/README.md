@@ -95,6 +95,17 @@ and carries this TLS stack. We use `rustls` with the `ring` provider (default fe
 `aws-lc-rs` (which needs a `cmake` toolchain), keeping the exception a single, audit-scoped
 stack with an explicit crypto provider (no process-global provider is installed).
 
+## TLS to the database
+
+A URL that names a host other than this one must carry `sslmode=require`, or the store refuses
+it before connecting. The client's default, `sslmode=prefer`, asks for TLS and carries on in
+plaintext when the answer is no, and anyone in the network path can give that answer. With
+`sslmode=require` the connection fails instead, and the server's certificate is checked against
+the host's trust store. A URL that stays on this host is left alone: a Unix socket, `localhost`
+or a loopback address, judged by `hostaddr` when the URL gives one. A name that only resolves to
+this host counts as another host. A plaintext hop that something else encrypts, a mesh sidecar
+for one, has to be reached at a loopback address.
+
 ## Testing
 
 Tests read `DECERN_TEST_POSTGRES_URL`; when it is unset every DB test **skips**,
