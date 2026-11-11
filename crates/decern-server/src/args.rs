@@ -68,7 +68,7 @@ pub(crate) struct Args {
     pub(crate) missions_per_host: bool,
     /// Require every decision to name a live Mission in `context.mission`.
     /// When set, client-supplied `human_approved` and `consent` are stripped (or the
-    /// decision is Denied). `human_approved` is then re-derived from the verified
+    /// decision is Denied); from a caller bound to itself they are refused before that. `human_approved` is then re-derived from the verified
     /// grant, for MoveMoney. `consent` is NOT re-derived and never has been since a
     /// Mission stopped standing in for it: a Mission is an approver's grant, and
     /// consent is a claim about the resource owner. So this flag makes on-behalf-of

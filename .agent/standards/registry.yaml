@@ -45,7 +45,8 @@ standards:
       unknown top-level fields are ignored (§10.1.1). Subject, resource and action
       `properties` are carried as context.subject, context.resource and context.action
       where the action's schema declares them, from PEP-bound, bearer or trusted-front
-      callers only (a caller bound to itself is 403 caller_mismatch); context the schema
+      callers only (a caller bound to itself is 403 caller_mismatch, as it is for a context
+      that carries `consent` or `human_approved`, declared for the action or not); context the schema
       does not declare is dropped before evaluation at every declared record level (inside
       a set or an open record Cedar's own validation applies), since no validated policy
       can read it, while declared context keeps its schema validation; a context over

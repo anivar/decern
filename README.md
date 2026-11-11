@@ -101,8 +101,9 @@ the kernel derives in Rust before the prover runs, and say so:
 - **revocation-gate** — a revoked principal is allowed nothing
 - **residency-gate** / **role-gate** / **consent-gate** — data-bound access conditions; the
   consent gate reads `consent: true` from the request's context, the caller's word, which
-  decern does not check, so take it only from a PEP that holds the consent; under a Mission it
-  is removed instead, and on-behalf-of PII access fails closed
+  decern does not check, so take it only from a PEP that holds the consent; a workload bound
+  to itself may not send it, so its access to another party's PII is always denied; under a
+  Mission it is removed instead, and on-behalf-of PII access fails closed
 
 ## What is recorded
 
@@ -240,7 +241,7 @@ A PEP that spells entity types its own way maps them with
 `--authzen-type-alias user=Principal`. What it says about a party (`properties`) reaches a
 policy as `context.subject`, `context.resource` and `context.action` where the model declares
 it, and only from a caller bound as a PEP — a workload bound to itself may not describe one
-through `properties`.
+through `properties`, nor carry `consent` or `human_approved` in `context`.
 `--public-url` turns on `/.well-known/authzen-configuration`.
 
 `--sharded <dir>` replaces the single file with a per-tenant sharded ledger several

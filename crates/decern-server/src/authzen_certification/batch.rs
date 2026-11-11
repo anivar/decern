@@ -545,3 +545,63 @@ async fn a_batch_that_would_record_past_its_bound_is_refused_whole() {
     assert_eq!(resp["error"], "batch_too_large", "{resp}");
     assert!(records_in(&base, &st).is_empty());
 }
+
+/// A caller bound to itself may not assert consent or approval in a batch, from the
+/// defaults or from an item; nothing is recorded.
+#[tokio::test]
+async fn a_caller_bound_to_itself_may_not_assert_consent_or_approval_in_a_batch() {
+    let (st, base) = fixture_state();
+    let workload =
+        || crate::caller::Authenticated::new("bob", "bob", "https://iss.example/").self_only();
+    let parse = |v: Value| serde_json::from_value::<crate::batch::BatchReq>(v).unwrap();
+    for req in [
+        json!({
+            "subject": { "type": "user", "id": "bob" }, "action": { "name": "read" },
+            "context": { "consent": true },
+            "evaluations": [{ "resource": { "type": "record", "id": "record-1" } }],
+        }),
+        json!({
+            "subject": { "type": "user", "id": "bob" }, "action": { "name": "read" },
+            "evaluations": [{ "resource": { "type": "record", "id": "record-1" } },
+                            { "resource": { "type": "record", "id": "record-1" },
+                              "context": { "human_approved": true } }],
+        }),
+    ] {
+        let (status, resp) = body_json(
+            crate::batch::evaluations(
+                State(st.clone()),
+                Some(axum::Extension(workload())),
+                Ok(Json(parse(req.clone()))),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{req} {resp}");
+        assert_eq!(resp["error"], "caller_mismatch", "{req}");
+        assert!(
+            resp["detail"]
+                .as_str()
+                .unwrap_or("")
+                .contains("cannot assert consent or approval"),
+            "{req} {resp}"
+        );
+        assert!(
+            records_in(&base, &st).is_empty(),
+            "nothing was recorded: {req}"
+        );
+    }
+    // The same batch without the claim is answered.
+    let (status, resp) = body_json(
+        crate::batch::evaluations(
+            State(st.clone()),
+            Some(axum::Extension(workload())),
+            Ok(Json(parse(json!({
+                "subject": { "type": "user", "id": "bob" }, "action": { "name": "read" },
+                "evaluations": [{ "resource": { "type": "record", "id": "record-1" } }],
+            })))),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+}

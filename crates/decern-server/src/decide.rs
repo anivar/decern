@@ -281,9 +281,9 @@ impl IntoResponse for Refusal {
 
 impl DecideReq {
     /// What admission needs to know: whom the request names, whether it describes a
-    /// party through `properties` (an empty `properties` describes nothing), and whom it
-    /// names as the party the decision is about.
-    pub(crate) fn facts(&self) -> (Option<&str>, bool, Option<&str>) {
+    /// party through `properties` (an empty `properties` describes nothing), whether it
+    /// asserts consent or approval, and whom it names as the party the decision is about.
+    pub(crate) fn facts(&self) -> (Option<&str>, bool, bool, Option<&str>) {
         let describes = [
             &self.subject.properties,
             &self.resource.properties,
@@ -295,8 +295,22 @@ impl DecideReq {
             .context
             .as_ref()
             .and_then(|c| named_decision_subject(c.get("decision_subject")));
-        (Some(&self.subject.id), describes, decision_subject)
+        let asserts = self.context.as_ref().is_some_and(asserts_approval);
+        (Some(&self.subject.id), describes, asserts, decision_subject)
     }
+}
+
+/// The context keys that say another party agreed or approved. The model reads them as
+/// facts, so who may put one in a request is an admission question.
+const APPROVAL_FLAGS: [&str; 2] = ["human_approved", "consent"];
+
+/// Whether a context carries an approval flag, whatever its value: `false` is as much a
+/// statement about the other party as `true`, and a caller that may not make one makes
+/// neither.
+pub(crate) fn asserts_approval(context: &serde_json::Map<String, Value>) -> bool {
+    APPROVAL_FLAGS
+        .iter()
+        .any(|flag| context.contains_key(*flag))
 }
 
 /// The handle a request names as its decision subject, read for admission only: a string,
@@ -310,14 +324,14 @@ pub(crate) fn named_decision_subject(raw: Option<&Value>) -> Option<&str> {
 }
 
 /// What a caller may ask at all, checked before anything is evaluated or recorded: a
-/// caller bound to itself may neither name another principal, describe a party, nor name
-/// another party as the one the decision is about.
+/// caller bound to itself may neither name another principal, describe a party, assert
+/// consent or approval, nor name another party as the one the decision is about.
 pub(crate) fn admit(
     caller: &Option<axum::Extension<crate::caller::Authenticated>>,
     req: &DecideReq,
 ) -> Option<Response> {
-    let (subject_id, describes, decision_subject) = req.facts();
-    admit_named(caller, subject_id, describes, decision_subject)
+    let (subject_id, describes, asserts, decision_subject) = req.facts();
+    admit_named(caller, subject_id, describes, asserts, decision_subject)
 }
 
 /// The same admission over what a request names, for a request that could not be parsed
@@ -332,6 +346,7 @@ pub(crate) fn admit_named(
     caller: &Option<axum::Extension<crate::caller::Authenticated>>,
     subject_id: Option<&str>,
     describes: bool,
+    asserts: bool,
     decision_subject: Option<&str>,
 ) -> Option<Response> {
     if let Some(id) = subject_id
@@ -344,8 +359,11 @@ pub(crate) fn admit_named(
     {
         return Some(refusal);
     }
-    if describes {
-        return crate::caller::refuse_description_unless_pep(caller);
+    if describes && let Some(refusal) = crate::caller::refuse_description_unless_pep(caller) {
+        return Some(refusal);
+    }
+    if asserts {
+        return crate::caller::refuse_approval_claim_unless_pep(caller);
     }
     None
 }
@@ -571,7 +589,8 @@ fn prepare(
         };
 
     // What the authority does not declare, no policy can read, and AuthZEN 1.0 (§10.1.1)
-    // has the PDP ignore it rather than refuse the request. Dropped last, after every key
+    // has the PDP ignore it rather than refuse the request. Admission has already refused
+    // the one exception, an approval flag from a caller bound to itself. Dropped last, after every key
     // this server consumes itself has been taken out above, and before the record: an
     // attribute nobody evaluated is not written down for good.
     st.kernel.prune_undeclared_context(&action, &mut ctx);
@@ -740,8 +759,9 @@ pub(crate) enum MissionBind {
 
 pub(crate) fn strip_client_approval_flags(ctx: &mut Value) {
     if let Some(obj) = ctx.as_object_mut() {
-        obj.remove("human_approved");
-        obj.remove("consent");
+        for flag in APPROVAL_FLAGS {
+            obj.remove(flag);
+        }
     }
 }
 

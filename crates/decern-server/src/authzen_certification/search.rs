@@ -657,3 +657,60 @@ async fn a_search_naming_with_a_control_character_is_refused_and_not_recorded() 
     );
     assert!(records_in(&base, &st).is_empty());
 }
+
+/// A caller bound to itself may not assert consent or approval in a search; nothing is
+/// recorded.
+#[tokio::test]
+async fn a_caller_bound_to_itself_may_not_assert_consent_or_approval_in_a_search() {
+    let (st, base) = fixture_state();
+    let workload =
+        || crate::caller::Authenticated::new("bob", "bob", "https://iss.example/").self_only();
+    let parse = |v: Value| serde_json::from_value::<crate::search::SearchReq>(v).unwrap();
+    let resources = parse(json!({
+        "subject": { "type": "user", "id": "bob" }, "action": { "name": "read" },
+        "resource": { "type": "record" }, "context": { "consent": true },
+    }));
+    let (status, resp) = body_json(
+        crate::search::search_resource(
+            State(st.clone()),
+            Some(axum::Extension(workload())),
+            Ok(Json(resources)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(resp["error"], "caller_mismatch");
+    assert!(
+        resp["detail"]
+            .as_str()
+            .unwrap_or("")
+            .contains("cannot assert consent or approval"),
+        "{resp}"
+    );
+    assert!(records_in(&base, &st).is_empty(), "nothing was recorded");
+    // An action search is refused the same way, for the other key.
+    let actions = parse(json!({
+        "subject": { "type": "user", "id": "bob" },
+        "resource": { "type": "record", "id": "record-1" },
+        "context": { "human_approved": true },
+    }));
+    let (status, resp) = body_json(
+        crate::search::search_action(
+            State(st.clone()),
+            Some(axum::Extension(workload())),
+            Ok(Json(actions)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert!(
+        resp["detail"]
+            .as_str()
+            .unwrap_or("")
+            .contains("cannot assert consent or approval"),
+        "{resp}"
+    );
+    assert!(records_in(&base, &st).is_empty(), "nothing was recorded");
+}

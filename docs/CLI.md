@@ -194,7 +194,7 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | `--retired-key <HEX>` | Public key of a ledger key this deployment rotated away from, as the startup line or `GET /pubkey` printed it while it signed. Repeatable, once per earlier key; requires `--key`, which must then name a key file that already exists. Records it signed keep verifying, and the server never signs with it. Verification refuses a record under it from its successor's first record on, within one log: for a single-file or segmented ledger that is everything after the rotation, while a sharded store is checked shard by shard, so a retired key can still sign a shard its successor has not signed. To rotate, make the new key file first, `(umask 077; openssl rand -hex 32 > new.key)`, then stop the server and start it with `--key new.key` and the old key's id here. A sharded deployment stops every replica and starts each the same way: a replica still on the old key refuses with `503` to record into a shard the new key has signed. To undo a rotation, rotate again to another new key. Do not put a retired key back under `--key`: one a later key has followed in the ledger or in any shard refuses to start. A retired key equal to `--key`'s, or given twice, refuses to start. |
 | `--missions <PATH>` | Mission registry. Default `decern-missions.json` beside the ledger, or in the working directory under `--sharded postgres://…`. It is a file on one host, shared by the processes that open it: under `--sharded postgres://…` a replica on another host has its own, so a Mission approved or terminated on one host is unknown to, or still live on, the others. |
 | `--missions-per-host` | Required under `--sharded postgres://…`, refused with any other ledger: the deployment's word, which the server cannot check, that it keeps a Mission's requests and its termination on the host whose registry holds it. What one host's registry means is under `--missions`. |
-| `--require-mission` | Refuse any decision that does not name a live Mission. Client-supplied `human_approved` and `consent` are then stripped; `human_approved` is re-derived from the grant for MoveMoney. `consent` is **not** re-derived — a Mission is an approver's grant, not the resource owner's consent — so this makes on-behalf-of PII access fail closed rather than server-derived. A Mission binds only `Read` (scope `read`), `MoveMoney` (`move_money`) and `AccessPII` (`pii:read`), and under a Mission any other action is denied, so on a custom model this flag denies every action outside those three. |
+| `--require-mission` | Refuse any decision that does not name a live Mission. Client-supplied `human_approved` and `consent` are then stripped (from a caller bound to itself they are refused before that, `403 caller_mismatch`); `human_approved` is re-derived from the grant for MoveMoney. `consent` is **not** re-derived — a Mission is an approver's grant, not the resource owner's consent — so this makes on-behalf-of PII access fail closed rather than server-derived. A Mission binds only `Read` (scope `read`), `MoveMoney` (`move_money`) and `AccessPII` (`pii:read`), and under a Mission any other action is denied, so on a custom model this flag denies every action outside those three. |
 | `--standing-issuer-key <HEX>` | An issuer whose standing tokens this deployment accepts. Repeatable. Omit to accept no challenges. |
 | `--bearer-issuer <URL>` | The `iss` an access token must carry, matched exactly. Turns on bearer validation for the guarded routes; requires `--bearer-audience` and at least one `--bearer-issuer-key`. |
 | `--bearer-audience <URI>` | This deployment's resource identifier, which a token's `aud` must contain (RFC 8707 §2). |
@@ -266,7 +266,9 @@ names one posture:
   says about the subject, resource or action (carried into the context as `context.subject`,
   `context.resource` and `context.action` where the action's schema declares them): a caller
   bound to itself may not describe a party through `properties`, nor search for subjects — a
-  search names everyone — and each is `403 caller_mismatch`. Verification is against configured
+  search names everyone — nor carry `consent` or `human_approved` in a request's `context`,
+  whatever the value: those say another party agreed or approved. Each is
+  `403 caller_mismatch`. Verification is against configured
   keys only, same no-fetch posture as bearer validation, and an agent identifier with no
   configured key, or a request whose `@authority` is not `--signed-authority`, is refused before
   any cryptography runs. The bound token must carry an `iss`, but no issuer key verifies the
@@ -292,7 +294,8 @@ names one posture:
   A verified `spiffe://…` identity is recorded as the caller on the decision. Like a
   signed-request agent it is a **workload**, so unless it is listed in `--pep` it may only name
   itself as AuthZEN `subject`, `decision_subject`, mission `approver`, stored approver on terminate, and directory
-  principal, and may not describe a party with `properties`; either is `403 caller_mismatch`.
+  principal, and may not describe a party with `properties` nor carry `consent` or
+  `human_approved` in `context`; each is `403 caller_mismatch`.
   It is never minted into the authority graph
   either: what a decision may be *about* is unchanged, and stays closed-world exactly as under
   every other posture.
@@ -328,9 +331,11 @@ identity to bind in the first place.
 The workload postures are the opposite. A signed-request, SPIFFE or AAuth caller may only
 name itself as subject, decision subject, approver, stored approver on terminate, and directory principal,
 each matched by id, so a custom model with several principal types shares the binding across them;
-it may neither describe a party with `properties` nor search for subjects; a mismatch is
-`403 caller_mismatch`. Only a principal the model marks `Human` approves a Mission, so a workload
-whose own principal is an `Agent` or a `Machine` approves none: its approvals come through a PEP. `--pep` is the way out for a workload that genuinely is a gateway.
+it may neither describe a party with `properties`, search for subjects, nor carry `consent` or
+`human_approved` in `context`; a mismatch is `403 caller_mismatch`. Only a principal the model
+marks `Human` approves a Mission, so a workload whose own principal is an `Agent` or a `Machine`
+approves none: its approvals come through a PEP. `--pep` is the way out for a workload that
+genuinely is a gateway.
 
 The corollary is easy to miss: a bearer token issued to a workload is a PEP credential, and
 carries no bind at all. If your caller is a workload, give it a workload posture.

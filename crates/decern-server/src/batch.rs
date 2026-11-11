@@ -129,14 +129,15 @@ fn field<'a>(
     item.get(key).or_else(|| top.default_for(key))
 }
 
-/// What admission needs to know about an item, read in place: whom it names, and whether
-/// it describes a party through `properties`, and whom it names as the decision subject.
+/// What admission needs to know about an item, read in place: whom it names, whether
+/// it describes a party through `properties`, whether it asserts consent or approval, and
+/// whom it names as the decision subject.
 /// An item that is not an object names nobody, and is answered for what it is when its
-/// turn comes. The same three facts [`DecideReq::facts`] reads off a parsed request, which
+/// turn comes. The same four facts [`DecideReq::facts`] reads off a parsed request, which
 /// a test holds them to.
-fn facts<'a>(top: &'a BatchReq, item: &'a Value) -> (Option<&'a str>, bool, Option<&'a str>) {
+fn facts<'a>(top: &'a BatchReq, item: &'a Value) -> (Option<&'a str>, bool, bool, Option<&'a str>) {
     let Some(item) = item.as_object() else {
-        return (None, false, None);
+        return (None, false, false, None);
     };
     let subject_id = field(top, item, "subject")
         .and_then(|s| s.get("id"))
@@ -147,10 +148,13 @@ fn facts<'a>(top: &'a BatchReq, item: &'a Value) -> (Option<&'a str>, bool, Opti
             .and_then(Value::as_object)
             .is_some_and(|m| !m.is_empty())
     });
-    let decision_subject = crate::decide::named_decision_subject(
-        field(top, item, "context").and_then(|c| c.get("decision_subject")),
-    );
-    (subject_id, describes, decision_subject)
+    let context = field(top, item, "context");
+    let asserts = context
+        .and_then(Value::as_object)
+        .is_some_and(crate::decide::asserts_approval);
+    let decision_subject =
+        crate::decide::named_decision_subject(context.and_then(|c| c.get("decision_subject")));
+    (subject_id, describes, asserts, decision_subject)
 }
 
 /// Item `i` with the defaults filled in, as the request one evaluation would be — or what
@@ -238,8 +242,9 @@ fn answer(
 ///
 /// Without an `evaluations` array, or with an empty one, this is the single Access
 /// Evaluation over the top-level fields, answered in that shape (§7.1). With items, every
-/// item is admitted first — a caller that may not name or describe a party in one of them,
-/// evaluation or not, is refused before anything is evaluated or recorded — and then the
+/// item is admitted first — a caller that may not name or describe a party, or assert
+/// consent or approval, in one of them, evaluation or not, is refused for the whole batch
+/// before anything is evaluated or recorded — and then the
 /// items are evaluated in order under the requested semantic. An item that is not an
 /// evaluation, or that this server refuses, is answered `decision: false` with the reason
 /// in its context (§7.2.1) and, having decided nothing, is not recorded. Every decision
@@ -293,8 +298,9 @@ fn evaluate_all(
     // read off the items and the defaults in place: a refusal is for the whole exchange,
     // costs no copies, and comes before a single record has landed.
     for item in items {
-        let (subject_id, describes, decision_subject) = facts(&top, item);
-        if let Some(refusal) = admit_named(caller, subject_id, describes, decision_subject) {
+        let (subject_id, describes, asserts, decision_subject) = facts(&top, item);
+        if let Some(refusal) = admit_named(caller, subject_id, describes, asserts, decision_subject)
+        {
             return refusal;
         }
     }
@@ -366,8 +372,8 @@ mod tests {
     use super::*;
 
     /// Admission reads an item in place; evaluation parses it. The two must agree on whom
-    /// an item names and whether it describes a party, or admission could pass what
-    /// evaluation then treats differently.
+    /// an item names, whether it describes a party and whether it asserts consent or
+    /// approval, or admission could pass what evaluation then treats differently.
     #[test]
     fn facts_read_in_place_match_facts_read_off_the_parsed_request() {
         let top: BatchReq = serde_json::from_value(json!({
@@ -386,12 +392,16 @@ mod tests {
             json!({ "context": { "decision_subject": "ppid:carol" } }),
             json!({ "context": { "decision_subject": { "handle": "ppid:carol" } } }),
             json!({ "context": { "decision_subject": null } }),
+            json!({ "context": { "consent": true } }),
+            json!({ "context": { "human_approved": false, "ip": "192.168.1.1" } }),
+            json!({ "context": { "ip": "192.168.1.1" } }),
         ] {
-            let (id, describes, about) = facts(&top, &item);
+            let (id, describes, asserts, about) = facts(&top, &item);
             let parsed = merged(&top, Some(0), &item).expect("a well-formed item");
-            let (parsed_id, parsed_describes, parsed_about) = parsed.facts();
+            let (parsed_id, parsed_describes, parsed_asserts, parsed_about) = parsed.facts();
             assert_eq!(id, parsed_id, "{item}");
             assert_eq!(describes, parsed_describes, "{item}");
+            assert_eq!(asserts, parsed_asserts, "{item}");
             assert_eq!(about, parsed_about, "{item}");
         }
         // A decision subject in the defaults reaches every item that names none of its own.
@@ -402,18 +412,40 @@ mod tests {
             "context": { "decision_subject": "ppid:carol" },
         }))
         .unwrap();
-        assert_eq!(facts(&about_top, &json!({})).2, Some("ppid:carol"));
+        assert_eq!(facts(&about_top, &json!({})).3, Some("ppid:carol"));
         assert_eq!(
             facts(
                 &about_top,
                 &json!({ "context": { "decision_subject": "ppid:dave" } })
             )
-            .2,
+            .3,
             Some("ppid:dave")
         );
+        // An approval flag in the defaults reaches every item that brings no context of its
+        // own; an item's context, or its `null`, replaces the default whole.
+        let claiming_top: BatchReq = serde_json::from_value(json!({
+            "subject": { "type": "user", "id": "alice" },
+            "action": { "name": "read" },
+            "resource": { "type": "record", "id": "record-1" },
+            "context": { "consent": true },
+        }))
+        .unwrap();
+        for (item, asserts) in [
+            (json!({}), true),
+            (json!({ "context": { "ip": "192.168.1.1" } }), false),
+            (json!({ "context": null }), false),
+            (json!({ "context": { "human_approved": true } }), true),
+        ] {
+            assert_eq!(facts(&claiming_top, &item).2, asserts, "{item}");
+            let parsed = merged(&claiming_top, Some(0), &item).expect("a well-formed item");
+            assert_eq!(parsed.facts().2, asserts, "{item}");
+        }
         // What cannot be parsed still names whom it names.
         let unparseable = json!({ "subject": { "type": "user", "id": "bob" }, "action": 7 });
-        assert_eq!(facts(&top, &unparseable), (Some("bob"), false, None));
-        assert_eq!(facts(&top, &json!("not an object")), (None, false, None));
+        assert_eq!(facts(&top, &unparseable), (Some("bob"), false, false, None));
+        assert_eq!(
+            facts(&top, &json!("not an object")),
+            (None, false, false, None)
+        );
     }
 }
