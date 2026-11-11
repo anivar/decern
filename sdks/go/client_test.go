@@ -290,3 +290,50 @@ func TestClientHTTPErrorBodyTruncation(t *testing.T) {
 		t.Errorf("expected error message to end with '...', got %q", decErr.Error())
 	}
 }
+
+func evaluateAgainst(t *testing.T, body string) (*Decision, error) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(body))
+	}))
+	defer server.Close()
+	client := NewClient(&ClientOptions{BaseURL: server.URL})
+	return client.Evaluate(context.Background(), EvaluateArgs{
+		Subject:  Entity{"type": "Principal", "id": "a"},
+		Action:   "Read",
+		Resource: Entity{"type": "Resource", "id": "b"},
+	})
+}
+
+// AuthZEN 1.0: `decision` is a JSON boolean. Anything else is not an allow.
+func TestClientRefusesANonBooleanDecision(t *testing.T) {
+	for _, body := range []string{
+		`{"decision": "false"}`,
+		`{"decision": "true"}`,
+		`{"decision": 1}`,
+		`{"decision": [false]}`,
+		`{"decision": {"allow": false}}`,
+		`{"decision": null}`,
+		`{}`,
+		`[]`,
+		`"true"`,
+	} {
+		if d, err := evaluateAgainst(t, body); err == nil {
+			t.Errorf("%s: expected an error, got allowed=%v", body, d.Allowed)
+		}
+	}
+	for body, want := range map[string]bool{`{"decision": true}`: true, `{"decision": false}`: false} {
+		d, err := evaluateAgainst(t, body)
+		if err != nil || d.Allowed != want {
+			t.Errorf("%s: got %v, %v", body, d, err)
+		}
+	}
+}
+
+func TestClientRefusesASuccessBodyOverTheBound(t *testing.T) {
+	body := `{"decision": true, "pad": "` + strings.Repeat("x", 1024*1024) + `"}`
+	if d, err := evaluateAgainst(t, body); err == nil {
+		t.Errorf("expected an error for a %d-byte body, got allowed=%v", len(body), d.Allowed)
+	}
+}

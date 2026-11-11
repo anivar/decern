@@ -43,6 +43,10 @@ const MAX_ERROR_BODY_LEN = 512;
 // size isn't bounded by decern-serve's own behavior.
 const MAX_ERROR_BODY_BYTES = 64 * 1024; // 64 KiB
 
+// Caps a 2xx body for the same reason. An evaluation answer is a decision and a short
+// list of reasons; one past this size did not come from a decision point.
+const MAX_BODY_BYTES = 1024 * 1024; // 1 MiB
+
 /** Transport failure or non-2xx response from the PDP. */
 export class DecernError extends Error {
   readonly status?: number;
@@ -147,7 +151,11 @@ export class Client {
         const { text: raw, truncated } = await readCapped(res, MAX_ERROR_BODY_BYTES);
         throw buildHttpError(method, path, res, raw, truncated);
       }
-      return await res.text();
+      const { text, truncated } = await readCapped(res, MAX_BODY_BYTES);
+      if (truncated) {
+        throw new DecernError(`${method} ${path}: response body is over ${MAX_BODY_BYTES} bytes`, res.status);
+      }
+      return text;
     } catch (e) {
       if (e instanceof DecernError) throw e;
       throw new DecernError(`${method} ${path} failed: ${(e as Error).message}`);
@@ -161,14 +169,17 @@ export class Client {
     const body: Record<string, unknown> = { subject, action: act, resource };
     if (context !== undefined) body.context = context;
 
-    const resp = JSON.parse(await this.request("POST", "/access/v1/evaluation", body)) as {
-      decision?: boolean;
-      context?: Record<string, unknown>;
-    };
+    const parsed: unknown = JSON.parse(await this.request("POST", "/access/v1/evaluation", body));
+    // AuthZEN 1.0: `decision` is a JSON boolean. Truthiness would turn the string
+    // "false", or any other non-empty value, into an allow.
+    if (typeof parsed !== "object" || parsed === null || typeof (parsed as { decision?: unknown }).decision !== "boolean") {
+      throw new DecernError("POST /access/v1/evaluation: `decision` is not a boolean");
+    }
+    const resp = parsed as { decision: boolean; context?: Record<string, unknown> };
     const ctx = resp.context ?? undefined;
     const reasons = ctx && Array.isArray(ctx.reasons) ? (ctx.reasons as string[]) : [];
     const errors = ctx && Array.isArray(ctx.errors) ? (ctx.errors as string[]) : [];
-    return { allowed: Boolean(resp.decision), reasons, errors, context: ctx };
+    return { allowed: resp.decision, reasons, errors, context: ctx };
   }
 
   async pubkey(): Promise<string> {

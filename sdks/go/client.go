@@ -55,6 +55,11 @@ type Client struct {
 // so an error body's size isn't bounded by decern-serve's own behavior.
 const maxErrorBodyBytes = 64 * 1024 // 64 KiB
 
+// maxBodyBytes caps a 2xx body for the same reason. An evaluation answer is a
+// decision and a short list of reasons; one past this size did not come from a
+// decision point.
+const maxBodyBytes = 1024 * 1024 // 1 MiB
+
 // DecernError represents a transport failure or non-2xx response from the PDP.
 type DecernError struct {
 	Message    string
@@ -131,9 +136,13 @@ func (c *Client) request(ctx context.Context, method, path string, body any) ([]
 		return nil, buildHTTPError(method, path, resp)
 	}
 
-	respBody, err := io.ReadAll(resp.Body)
+	// One byte past the cap tells an oversized body from one that fits.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if len(respBody) > maxBodyBytes {
+		return nil, fmt.Errorf("%s %s: response body is over %d bytes", method, path, maxBodyBytes)
 	}
 
 	return respBody, nil
@@ -198,12 +207,18 @@ func (c *Client) Evaluate(ctx context.Context, args EvaluateArgs) (*Decision, er
 	}
 
 	var resp struct {
-		Decision bool           `json:"decision"`
+		Decision *bool          `json:"decision"`
 		Context  map[string]any `json:"context"`
 	}
 
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse evaluation response: %w", err)
+	}
+
+	// AuthZEN 1.0: `decision` is a JSON boolean. An absent or null one is not a deny
+	// the decision point gave.
+	if resp.Decision == nil {
+		return nil, fmt.Errorf("POST /access/v1/evaluation: `decision` is not a boolean")
 	}
 
 	reasons := []string{}
@@ -227,7 +242,7 @@ func (c *Client) Evaluate(ctx context.Context, args EvaluateArgs) (*Decision, er
 	}
 
 	return &Decision{
-		Allowed: resp.Decision,
+		Allowed: *resp.Decision,
 		Reasons: reasons,
 		Errors:  errors,
 		Context: resp.Context,
