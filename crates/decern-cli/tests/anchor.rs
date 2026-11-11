@@ -221,5 +221,13 @@ fn verify_without_a_key_fails_unless_chain_only_is_asked_for() {
         !unsigned_anchor.status.success(),
         "--anchor without a key passed"
     );
+    // Asked for alone, the anchor's refusal names what it needs.
+    let anchor_alone = verify_with(&f, &["--anchor", &anchor]);
+    assert!(!anchor_alone.status.success(), "--anchor alone passed");
+    assert!(
+        String::from_utf8_lossy(&anchor_alone.stderr).contains("--pubkey"),
+        "the refusal names --pubkey: {}",
+        String::from_utf8_lossy(&anchor_alone.stderr)
+    );
     cleanup(&f.dir);
 }

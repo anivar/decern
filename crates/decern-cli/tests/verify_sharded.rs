@@ -145,3 +145,38 @@ fn verify_sharded_passes_clean_then_detects_a_tampered_shard() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A directory that holds no shard verifies nothing: a wrong path, or a store before its
+/// first record. Exit 0 would read as "checked", so the run fails and says why, with a key
+/// and with `--chain-only` alike.
+#[test]
+fn a_directory_with_no_shards_fails_verification() {
+    let dir = std::env::temp_dir().join(format!("decern-verify-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let pubkey = hex::encode(generate().unwrap().verifying_key().to_bytes());
+    let bin = env!("CARGO_BIN_EXE_decern");
+
+    for flags in [vec!["--pubkey", pubkey.as_str()], vec!["--chain-only"]] {
+        let out = Command::new(bin)
+            .args(["verify", "--sharded"])
+            .arg(&dir)
+            .args(&flags)
+            .output()
+            .unwrap();
+        assert!(
+            !out.status.success(),
+            "an empty directory passed with {flags:?}"
+        );
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(
+            said.contains("no shards") && said.contains("nothing was verified"),
+            "{flags:?}: {said}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&out.stdout).contains("OK"),
+            "a failed run prints no OK"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
