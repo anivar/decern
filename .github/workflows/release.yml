@@ -13,8 +13,40 @@ permissions:
   contents: read
 
 jobs:
+  # Everything that can refuse the tag without building: the manifest must carry the version
+  # the tag names, and the CHANGELOG must hold that version's section. Both were found only
+  # after four builds and the signing step, with the registries already publishing.
+  preflight:
+    name: the tag, the manifest and the notes agree
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.v.outputs.base }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: v
+        name: Resolve the version and check it against the manifest and the CHANGELOG
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          base="${version%%-rc.*}"
+          if [ "${base}" != "${version}" ]; then prerelease=true; else prerelease=false; fi
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+          manifest="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          if [ "${manifest}" != "${base}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} names ${base}, Cargo.toml says ${manifest}"
+            exit 1
+          fi
+          if ! grep -q "^## \\[${base}\\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section for ${base}"
+            exit 1
+          fi
+
   build:
     name: build ${{ matrix.target }}
+    needs: preflight
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -55,6 +87,17 @@ jobs:
         timeout-minutes: 10
         run: ./scripts/smoke.sh "target/${{ matrix.target }}/release" "$RUNNER_TEMP" "${{ matrix.ext }}"
 
+      # The binaries say which release they are; a tag on the wrong commit builds the wrong one.
+      - name: The binaries report the tagged version
+        shell: bash
+        run: |
+          set -euo pipefail
+          for bin in decern decern-serve; do
+            said="$("target/${{ matrix.target }}/release/${bin}${{ matrix.ext }}" --version)"
+            echo "${said}"
+            [ "${said##* }" = "${{ needs.preflight.outputs.base }}" ]
+          done
+
       - name: Package
         shell: bash
         run: |
@@ -70,7 +113,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [preflight, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the release
@@ -92,7 +135,7 @@ jobs:
 
       - name: SBOM (CycloneDX)
         run: |
-          cargo install cargo-cyclonedx --locked
+          cargo install cargo-cyclonedx --version 0.5.10 --locked
           cargo cyclonedx --format json
           find . -name '*.cdx.json' -exec cp {} dist/ \;
 
@@ -114,9 +157,11 @@ jobs:
       # The release notes are the CHANGELOG section for this tag — the entries contributors
       # wrote alongside their changes. A generated list of pull-request titles says what was
       # merged; this says what the release does.
-      # A release candidate (`v0.4.0-rc.1`) is the dry run of this workflow: it is published
-      # as a pre-release from the CHANGELOG section of the version it rehearses, and the
-      # publish workflows skip it. Only the final tag reaches a registry.
+      # A release candidate (`v0.4.0-rc.1`) is the dry run of this workflow: it makes a DRAFT
+      # pre-release from the CHANGELOG section of the version it rehearses, and the publish
+      # workflows skip it. A draft is not public and does not fire the `release` event, so
+      # nothing archives it; a published candidate once left a permanent archive record
+      # behind. Only the final tag publishes a release and reaches a registry.
       - name: Release notes from CHANGELOG
         id: notes
         run: |
@@ -145,3 +190,4 @@ jobs:
           body_path: notes.md
           files: dist/*
           prerelease: ${{ steps.notes.outputs.prerelease == 'true' }}
+          draft: ${{ steps.notes.outputs.prerelease == 'true' }}

@@ -70,7 +70,7 @@ jobs:
           ls -l dist
 
       - name: Publish
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: sdks/python/dist
           # A re-run of a tag should be a no-op, not a failure.
@@ -101,7 +101,7 @@ jobs:
       - name: Build
         working-directory: sdks/typescript
         run: |
-          npm ci || npm install
+          npm ci
           npm run build
 
       - name: Publish

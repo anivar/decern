@@ -25,9 +25,9 @@ on:
         description: The version to publish, without the leading v (e.g. 0.3.1)
         required: true
       dry_run:
-        description: Resolve and package every crate, publish nothing
+        description: Package the crates that resolve against the index, publish nothing. Untick to publish.
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read

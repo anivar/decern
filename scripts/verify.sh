@@ -100,6 +100,10 @@ no_lineage() {
   echo "clean"
 }
 
+# The release build uses the lock file as it is and fails on a stale one. Nothing else did,
+# so a manifest changed without its lock passed here and broke only at the tag.
+lock_matches() { cargo metadata --locked --format-version 1 >/dev/null; }
+step "lock file"      lock_matches
 step "build"          cargo build --workspace --tests
 step "test"           cargo test --workspace
 if [ "${skip_proofs}" -eq 1 ]; then
