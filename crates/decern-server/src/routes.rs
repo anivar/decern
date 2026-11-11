@@ -983,6 +983,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// machine1 is a Machine in tenant A that holds `read` and does not expire, so only its
+    /// kind stands between it and an approval for corp.
+    #[tokio::test]
+    async fn approve_refuses_an_approver_that_is_not_human_and_records_nothing() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        let (status, body) = body_json(
+            mission_approve(
+                State(st.clone()),
+                None,
+                Ok(Json(MissionApproveReq {
+                    approver: "machine1".into(),
+                    agent: "corp".into(),
+                    description: "approved by a machine".into(),
+                    approved_tools: vec!["read".into()],
+                    capabilities: vec![],
+                    expiry: corp_expiry(),
+                })),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .unwrap_or("")
+                .contains("approver machine1 is not a Human principal"),
+            "{body}"
+        );
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let records = decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100)
+            .unwrap()
+            .1;
+        assert!(records.is_empty(), "a refused approval is not recorded");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// A registry can hold a cross-tenant Mission approved by a release that did not refuse
     /// one. Binding it at decision time is what keeps it from backing a money movement.
     #[tokio::test]
@@ -1005,6 +1043,31 @@ mod tests {
                 &body,
                 "was not approved by a principal of subject corp's tenant"
             ),
+            "{body}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A registry can hold a Mission whose approver the model marks Machine, from a release
+    /// that approved one. Binding it at decision time is what keeps it from setting
+    /// `human_approved`: the money movement is denied, and the errors say why.
+    #[tokio::test]
+    async fn a_registered_mission_from_a_non_human_approver_does_not_back_a_decision() {
+        let base = mission_base();
+        let (st, _pubkey) = mission_state_at(&base);
+        let entry = MissionEntry {
+            approver: "machine1".into(),
+            expiry: corp_expiry(),
+            terminated: false,
+            agent: "corp".into(),
+            approved_tools: vec!["move_money".into()],
+        };
+        let (status, body) =
+            decide_under_registered_mission(&st, "by-a-machine", entry, "corp", "MoveMoney").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["decision"], false, "{body}");
+        assert!(
+            has_error(&body, "approver machine1 is not a Human principal"),
             "{body}"
         );
         let _ = std::fs::remove_dir_all(&base);

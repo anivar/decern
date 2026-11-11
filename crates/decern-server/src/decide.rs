@@ -756,11 +756,12 @@ fn scope_for_action(action: &str) -> Option<&'static str> {
 fn apply_mission_context(ctx: &mut Value, action: &str) {
     strip_client_approval_flags(ctx);
     // A verified Mission that covers MoveMoney is what F-money's `human_approved`
-    // stands for. `approve` refuses an approver that is the agent, but does not check
-    // that the approver is human, so the flag means another principal granted a covering
-    // Mission, not that a person approved. It is not a data subject's
-    // consent: F-consent is a different claim, about the resource owner, and an
-    // approver granting `pii:read` never made it. AccessPII and Read therefore leave
+    // stands for. `approve` and `bind_mission` refuse an approver that is the agent or
+    // that the model does not mark Human, so the flag means a principal of kind Human,
+    // other than the agent, granted a covering Mission. That the caller who named that
+    // approver spoke for it is the caller posture's to establish, not this check's. The
+    // flag is not a data subject's consent: F-consent is a different claim, about the
+    // resource owner, and an approver granting `pii:read` never made it. AccessPII and Read therefore leave
     // `consent` unset — the same as they already did for Read.
     if action == "MoveMoney" {
         ctx["human_approved"] = json!(true);
@@ -881,6 +882,15 @@ fn bound_mission(
             ));
         }
     };
+    // `approve` refuses an approver the model does not mark Human; this also refuses such
+    // a grant a registry already holds from a release that did not, and one whose approver
+    // a model loaded since no longer marks Human.
+    if approver_rec.kind != decern_identity::mission::HUMAN_KIND {
+        return Err(format!(
+            "mission {s256}'s approver {} is not a Human principal",
+            entry.approver
+        ));
+    }
     // The approver's standing is read from this model at every decision, not only once at
     // approval: a Mission backs a decision while its approver is unrevoked, unexpired and
     // still holds the scope it approved, each as the policy would judge the approver
@@ -1037,6 +1047,19 @@ mod tests {
             assert!(
                 why.contains("approver deputy no longer holds what it approved"),
                 "{case}: {why}"
+            );
+        }
+        // A grant whose approver the model marks as anything but Human backs no decision,
+        // whenever the registry came to hold it.
+        for kind in ["Agent", "Machine", "human", ""] {
+            let why = refusal(bind(
+                &graph(set("deputy", "kind", json!(kind))),
+                "by-deputy",
+                "deputy",
+            ));
+            assert!(
+                why.contains("approver deputy is not a Human principal"),
+                "kind {kind:?}: {why}"
             );
         }
         let why = refusal(bind(&graph(|_| {}), "by-teller", "teller"));
