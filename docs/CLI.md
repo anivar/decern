@@ -93,7 +93,7 @@ decern verify --ledger /tmp/decern.jsonl --chain-only
 | Option | Meaning |
 |---|---|
 | `--ledger <PATH>` | A single file or a segmented directory. Required unless `--sharded`. |
-| `--sharded <DIR>` | A `flock` head-store directory: every shard is verified, and any failing shard fails the run. The shards are those listed when the run starts, each read as of its own turn, so a shard created after the listing is read next time. For one point in time across shards, stop the writers first. |
+| `--sharded <DIR>` | A `flock` head-store directory: every shard is verified, and any failing shard fails the run, as does a directory that holds no shard. The shards are those listed when the run starts, each read as of its own turn, so a shard created after the listing is read next time. For one point in time across shards, stop the writers first. |
 | `--pubkey <HEX>` | Ed25519 public key. Repeatable, once per key that signed the log. A record naming a `kid` is checked against that key and one without against each key given, and a record is refused when its key had already been followed by another key in the same file, segmented ledger or shard. With `--ledger` the output lists each key with the record it started at. Without one, signatures are **not** checked. |
 | `--anchor <FILE>` | A tree head published earlier. Also proves nothing at or below the anchored size was rewritten, reordered or dropped. Its signature is checked against `--pubkey`, so it needs one. Not for `--sharded`. |
 | `--chain-only` | Check the hash chain alone, with no key. It shows the log holds together, which whoever wrote it can arrange, and exits 0 on that alone. Not with `--pubkey` or `--anchor`. |

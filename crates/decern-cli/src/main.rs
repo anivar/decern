@@ -179,7 +179,8 @@ fn hash32(hex_str: &str) -> Result<[u8; 32]> {
         .map_err(|_| anyhow::anyhow!("expected 32 bytes"))
 }
 
-/// Every `--pubkey` given, decoded. Given none, signatures are not checked.
+/// Every `--pubkey` given, decoded. With none, `verify` runs only under `--chain-only` and
+/// `explain` says the signature was not checked.
 fn parse_pubkeys(hexes: &[String]) -> Result<Vec<ed25519_dalek::VerifyingKey>> {
     hexes
         .iter()
@@ -546,13 +547,18 @@ fn looks_like_sharded_dir(dir: &std::path::Path) -> bool {
 }
 
 /// Verify every shard of a `--sharded <dir>` flock deployment: PASS/TAMPER per shard,
-/// with a non-zero exit if any shard failed. Signatures are checked when a key is given
-/// (same as single-file verify); the hash chain always is.
+/// with a non-zero exit if any shard failed or the directory holds none. Signatures are
+/// checked against the keys given; with none the caller has asked for `--chain-only`, and
+/// only the hash chains are.
 fn verify_sharded(dir: &std::path::Path, keys: &[ed25519_dalek::VerifyingKey]) -> Result<ExitCode> {
     let results = decern_ledger::verify_sharded_dir_with_keys(dir, keys)?;
+    // A store with no shard and a wrong path look the same from here, and neither was
+    // verified: exit 0 would say otherwise.
     if results.is_empty() {
-        println!("no shards found to verify in {}", dir.display());
-        return Ok(ExitCode::SUCCESS);
+        anyhow::bail!(
+            "no shards found in {}, so nothing was verified; check the path",
+            dir.display()
+        );
     }
     // Describe the mode BEFORE the per-shard results — it is what will be checked,
     // not a verdict. A failing shard aborts its own signature check, so printing
