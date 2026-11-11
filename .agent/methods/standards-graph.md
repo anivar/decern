@@ -40,11 +40,11 @@ Branches that each re-`grep` the registry will drift. Ground with this output on
 Width under three is a loop. When `dimensions` has three or more independent axes, each
 axis is one Find branch; Verify refutes; Synthesize asks what no dimension could see.
 
-Caller-posture surfaces (`sig.rs`, `bearer.rs`, `spiffe.rs`, `caller.rs`) get posture
+Caller-posture surfaces (every module that implements `CallerAuth`, and `caller.rs`) get posture
 dimensions (fail-open / binding / replay). Other surfaces get the default three
 (correctness / fail-open / tests). Conformance text may add at most two extras.
 
-Runnable skeleton: [`workflow-template.js`](workflow-template.js) — pass
+Runnable skeleton: [`workflow-template-standards.js`](workflow-template-standards.js) — pass
 `args.target` and optionally `args.dimensions` from `for`'s JSON, and put `grounding`
 into the Ground brief (or skip re-deriving it).
 

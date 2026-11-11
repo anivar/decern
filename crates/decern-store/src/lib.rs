@@ -10,7 +10,7 @@
 //!   coordination the sharded ledger appends through, so several `decern-serve`
 //!   replicas on one host can extend each shard's chain safely;
 //! - the **mission registry** ([`MissionRegistry`] + [`FileMissionRegistry`] /
-//!   [`MemoryMissionRegistry`]): the authoritative `(approver, expiry, terminated)`
+//!   [`MemoryMissionRegistry`]): the authoritative `(approver, agent, approved_tools, expiry, terminated)`
 //!   record the Mission mint path checks, so a mission's termination outlives any
 //!   single in-memory `ApprovedMission` handle.
 //!

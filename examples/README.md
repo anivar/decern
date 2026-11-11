@@ -20,7 +20,8 @@ except `quickstart.sh`, which is for running by hand.
 - [`aauth/`](aauth/) — an AAuth agent token verified against provider keys pinned at startup,
   with the request signed by the key the token's `cnf` confirms. Agent identity access only.
   Providers are pinned rather than discovered, a request with a body must cover its digest,
-  and a conformant draft -11 agent is refused today; its README says where.
+  and a draft -11 agent that signs only the draft's own component list is refused on a request
+  with a body; its README says where.
 
 The first two integrations are a pair: same decision point, consulted from inside the tool
 server or from the gateway in front of it. The rest are about the other axis — not where the

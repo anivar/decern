@@ -18,5 +18,4 @@ by asking.
 |---|---|---|---|
 
 Evaluating it and not ready to be named is entirely reasonable, and saying so privately is still
-useful — knowing where it is being tried shapes what gets built next. `SECURITY.md` has a private
-contact route.
+useful — knowing where it is being tried shapes what gets built next.

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
 #![forbid(unsafe_code)]
-//! decern-identity — agent identity intake.
+//! decern-identity — agent identity intake, and the Mission core in [`mission`].
+//!
+//! `decern-serve` calls [`mission::approve`] and nothing else here; the badge and exchange
+//! functions below are library surface no decern binary calls.
 //!
 //! An agent principal enters the authority graph by presenting an **Agent
 //! Badge**: a W3C VC 2.0-shaped credential carried in a JWS compact

@@ -20,8 +20,9 @@ A decision is a **pure function of `(principal, authority graph, policy, now)`**
 is arranged around that function: a proof harness that machine-checks its safety properties, a
 tamper-evident ledger that records what it decided, and thin binaries that expose it.
 
-Two binaries over seven library crates. The stock build is pure Rust; the one exception —
-`decern-store-postgres` — carries a TLS stack behind a build flag and is off by default.
+Two binaries over seven library crates. The stock build carries no TLS stack, no OpenSSL and no
+cmake; `psm` compiles a small assembly routine in every build. `decern-store-postgres` adds a TLS
+stack behind a build flag and is off by default.
 
 | Crate | Kind | Responsibility |
 |---|---|---|
@@ -30,8 +31,8 @@ Two binaries over seven library crates. The stock build is pure Rust; the one ex
 | `decern-ledger` | lib | The tamper-evident record. Append-only, Ed25519-signed, hash-chained over each entry's exact stored bytes; RFC 9162 Merkle tree heads and proofs, anchors, single-file + sharded. JCS canonicalization is used for the digests an entry binds, not for the chain. |
 | `decern-store` | lib | Persistence traits + reference impls. `LedgerHeadStore` (single-host `flock` head store) and the durable `MissionRegistry`. |
 | `decern-store-postgres` | lib *(optional)* | Multi-host `LedgerHeadStore` over Postgres advisory locks. Adds the TLS stack (rustls/ring) to the compiled-native dependencies; behind `--features postgres`. |
-| `decern-identity` | lib | The Mission core: approval-backed, provably-attenuated authority (`approve`, `ApprovedMission`, `MissionRegistry`). |
-| `decern-crypto` | lib | Ed25519 + SHA-256 primitives shared by the ledger and identity. |
+| `decern-identity` | lib | The Mission core: approval-backed, fail-closed-attenuated authority, tested and not proven (`approve`, `ApprovedMission`). Also carries Agent Badge issue and verify and an RFC 8693 exchange mint that neither binary calls. |
+| `decern-crypto` | lib | Ed25519, SHA-256 and key-file primitives shared by the ledger, identity and the server; also a secret-sealing API that neither binary calls. |
 | `decern-cli` | bin → `decern` | `prove` / `decide` / `explain` / `verify`. |
 | `decern-server` | bin → `decern-serve` | The fail-closed AuthZEN PDP: evaluate, record, serve. Also serves the Mission lifecycle over `decern-identity` (`POST /mission/v1/approve`, `GET`/`terminate`), recording each transition to the ledger. |
 
@@ -62,7 +63,7 @@ The credential postures sit under `caller.rs` and know nothing of each other: ea
 owns one spec's rules and implements the same trait, so the guard dispatches once and a
 posture added later cannot skip a step by being wired in differently.
 
-`crates/decern-kernel/model/` holds the Cedar policy, schema, and entities the kernel loads. `examples/` holds the worked integrations and the quickstart — runnable and CI-tested, never published as crates. `.agent/` holds the working
+`crates/decern-kernel/model/` holds the Cedar policy, schema, and entities the kernel loads. `examples/` holds the worked integrations, runnable and CI-tested, and the quickstart, which CI does not run; none is published as a crate. `.agent/` holds the working
 method and the standards registry. `scripts/verify.sh` is the one gate every change must pass.
 
 ## How a decision flows
@@ -90,19 +91,20 @@ method and the standards registry. `scripts/verify.sh` is the one gate every cha
    was dropped — whoever wrote the log can rewrite it and re-chain it, and it will still
    pass. Catching a dropped tail takes `--anchor`, checked against a tree head published
    somewhere the operator cannot reach. That is the step that stops requiring trust in them,
-   and it does not work for `--sharded` yet. See [`decern verify`](docs/CLI.md#decern-verify).
+   and it does not work for `--sharded`. See [`decern verify`](docs/CLI.md#decern-verify).
 
 The same binary also reaches `decern-identity` for the **Mission lifecycle**: `POST
 /mission/v1/approve` grants an agent a scoped, fail-closed-attenuated authorization context
 (refused, and nothing recorded, if it exceeds the approver's own authority or expiry, comes from an
-approver the model does not mark `Human`, a revoked approver or one approving for itself, or names an agent outside the approver's tenant, and
-backing a decision only while its approver still stands in the model loaded at boot);
-`GET /mission/v1/{s256}` reports its state; and `POST /mission/v1/{s256}/terminate` ends it, with
-no revival. Each accepted transition is appended to the
-ledger under the same fail-closed contract as a decision — a 503 rather than an unrecorded success —
-so a Mission's whole history is as externally verifiable as the decisions it authorizes. The durable
-Mission registry (`decern-store`) holds the authoritative state, so a termination outlives any
-single process.
+approver the model does not mark `Human`, a revoked approver or one approving for itself, or names
+an agent outside the approver's tenant, and backing a decision only while its approver still
+stands in the model loaded at boot); `GET /mission/v1/{s256}` reports its state; and
+`POST /mission/v1/{s256}/terminate` ends it: on Unix it does not revive on the host that
+terminated it. An accepted transition is answered `200` only once it is recorded, a `503` rather
+than an unrecorded success. A termination takes effect in the registry before its record, and an
+approval is recorded before it is registered, so after a `503` the ledger and the registry can
+differ until a retry. The durable Mission registry (`decern-store`) holds the authoritative
+state, so a termination outlives any single process.
 
 ## How the guarantees are established
 
@@ -113,7 +115,8 @@ domain. Each invariant ships with a **negative control** — a test that removes
 policy and asserts cvc5 then *finds* a counterexample — so a passing suite is evidence the proofs are
 load-bearing. Proof statements are calibrated to exactly what the solver certifies; where a property
 depends on a derived attribute (e.g. the transitive delegation closure), the derivation is trusted
-Rust covered by property tests and is documented as such. See `decern-proof` and `AGENTS.md`.
+Rust covered by property tests and is documented as such. See `decern-proof` and
+[what proven covers](docs/CLI.md#what-proven-covers).
 
 The solver runs in `decern prove` and CI only — `decern-serve` does not link it. The guarantee is
 established where the proofs run, not on the request path, and nothing checks that the model
@@ -124,8 +127,7 @@ established where the proofs run, not on the request path, and nothing checks th
 Match a contribution area to the crate that owns it:
 
 - **A new client SDK** → mirror `sdks/go` / `sdks/python` / `sdks/typescript` against the AuthZEN surface in `decern-server`.
-- **Enforcement adapters** → the HTTP forward-auth shim shipped (`examples/ext_authz_adapter/`,
-  contributed); extend it, or bring the gRPC `ext_authz` variant.
+- **Enforcement adapters** → an HTTP forward-auth shim is in `examples/ext_authz_adapter/`; extend it, or bring the gRPC `ext_authz` variant.
 - **Agent-protocol integrations** → `examples/mcp/` is the worked MCP integration; other agent
   protocols compose the same way — validate the caller, consult the PDP per action, record.
 - **Authority-graph tooling** (traversal, blast-radius, export) → `decern-kernel`'s `Directory`.

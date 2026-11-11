@@ -43,6 +43,7 @@ Every rule below is enforced by `scripts/verify.sh` where a grep can enforce it.
 8. **No debt markers or dead code in shipped source.** No `TODO`/`FIXME`/`HACK`/
    `XXX` — open an issue instead. No commented-out code. No snark, no profanity.
 
-Enforcement: `scripts/verify.sh` greps shipped `*.rs`/`*.md`/`*.toml` for a
-denylist (non-existent sibling-crate names, marketing terms, debt markers) and
-fails CI on a hit — the same mechanism as the lineage guard.
+Enforcement: `scripts/verify.sh` greps shipped `*.rs` for a denylist (non-existent
+sibling-crate names, marketing terms, debt markers), `*.rs` and `*.toml` for issue
+references, and the file types rule 5's scan lists for its words, and fails CI on a hit —
+the same mechanism as the lineage guard.

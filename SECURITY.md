@@ -28,8 +28,8 @@ posture is named: RFC 9068 bearer validation, RFC 9421 sender-constrained signed
 (`--aauth-provider`), or a declared authenticating front (`--trust-proxy`). The workload
 postures — the signed-request, SPIFFE and AAuth ones — also bind a caller to the principals
 it may name, so a report about one naming another party should say whether `--pep` was set.
-A few routes are open by intent (the anchor, the disclosure, the subject-side audit
-projection). The full map is in
+Six routes are open by intent (health, the public key, the anchor, the disclosure, AuthZEN
+discovery, the subject-side audit projection). The full map is in
 [docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly); a report that assumes an
 endpoint is unauthenticated should say which posture it was tested under.
 
@@ -58,5 +58,4 @@ cosign verify-blob \
 `sha256sum -c SHA256SUMS` checks the rest. Releases before 0.4.0 shipped a `<file>.sig` and
 `<file>.pem` pair instead; verify those with `--signature` and `--certificate` in place of
 `--bundle`, with the same identity and issuer. A CycloneDX SBOM per crate is attached
-unsigned. A script that runs all of this from a version number alone is
-[#62](https://github.com/anivar/decern/issues/62).
+unsigned.

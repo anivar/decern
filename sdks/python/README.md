@@ -14,7 +14,8 @@ Standard library only — no `requests`, no `httpx`. Python ≥ 3.11.
 ```sh
 uv add decern
 # and a server to ask:
-cargo install decern-server && decern-serve --trust-proxy
+cargo install decern-server && decern-serve --trust-proxy --key decern.key
+# (--key keeps the signing key; without it a restart refuses the ledger it already wrote)
 # and, to check the log afterwards:
 cargo install decern-cli
 ```
@@ -40,10 +41,15 @@ deployment that requires bearer tokens on the evaluation endpoint.
 
 Also on the client: `c.pubkey()` (the Ed25519 key id signing the log now; `GET /pubkey` lists
 earlier ones under `keys`) and `c.healthy()`.
-A non-2xx response or transport failure raises `DecernError` with the HTTP status and body, so a
-denial is distinguishable from a misconfigured endpoint. `context` reaches the policies wherever
-the model's schema declares it, apart from keys the server reserves for the caller, the Mission
-and the challenge. The server sets `now` from its own clock, and records the accountable owner
+`DecernError` is raised on a non-2xx response, with the HTTP status and body, so a denial is
+distinguishable from a misconfigured endpoint; on a redirect, which is not followed, so the
+bearer token is not sent on; on a success body over 1 MiB; on a `decision` that is absent or is
+not a JSON boolean; and on a connection failure. A success body that is not JSON raises the
+standard library's `json.JSONDecodeError`. `context` reaches the policies where
+the model's schema declares it, except the keys the server takes for itself: `mission`,
+`decision_subject`, the challenge, `asserted_by`, `subject`, `resource` and `action`. Under a
+Mission the server removes `human_approved` and `consent` and sets `human_approved` itself for
+`MoveMoney`. The server sets `now` from its own clock, and records the accountable owner
 and any verified caller itself, whatever the context says.
 
 ## What the server gives you

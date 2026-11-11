@@ -104,7 +104,7 @@ echo "== 5. A POST signed over the DRAFT'S OWN component list — refused =="
 # This is decern's profile, not the draft's: the draft's example covers @method, @authority,
 # @path and signature-key, and does not cover the body. Every AuthZEN evaluation is a POST,
 # so accepting that would mean one captured signature authorizing any body at this path —
-# the defect closed in 0.3.0. RFC 9421 4.1 assigns component requirements to the profile, so
+# the defect closed in 0.3.0. RFC 9421 1.4 assigns component requirements to the profile, so
 # requiring content-digest is conformant. An AAuth agent must sign it to talk to decern.
 CODE=$(send "$(mint_for "$BODY" --no-digest)" "$BODY")
 [ "$CODE" = 401 ]

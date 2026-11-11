@@ -35,7 +35,7 @@ sfv = { workspace = true }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["server", "server-graceful", "http1", "service", "tokio"] }
 # Optional: multi-host sharded head store. Off by default so `decern-serve`
-# stays pure Rust; enabling it pulls in the one documented C-FFI stack (TLS).
+# carries no TLS stack; enabling it pulls in the one documented C-FFI stack (TLS).
 decern-store-postgres = { workspace = true, optional = true }
 
 [features]

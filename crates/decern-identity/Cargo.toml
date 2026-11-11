@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
-description = "Approval-backed, provably-attenuated Mission authority for decern."
+description = "Agent badge intake and approval-backed Mission authority for decern, attenuated to the approver at approval and at every mint."
 repository.workspace = true
 
 [dependencies]
