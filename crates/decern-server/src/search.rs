@@ -408,7 +408,7 @@ fn checked(req: &SearchReq, what: For) -> Result<(), Refusal> {
             )))
         }
     };
-    if let Some(refusal) = crate::decide::name_too_large([
+    if let Some(refusal) = crate::decide::name_refused([
         ("subject.type", req.subject.ty.as_str()),
         ("subject.id", req.subject.id.as_deref().unwrap_or_default()),
         ("resource.type", req.resource.ty.as_str()),

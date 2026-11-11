@@ -69,8 +69,9 @@ a ledger, so it is not an audit trail and should not be treated as one.
 
 ## `decern verify`
 
-Check a ledger. The hash chain is always checked. Signatures are checked when you supply the key —
-and a run without one says so rather than reading as a clean pass.
+Check a ledger: the hash chain, and every signature against the key you supply. A run with no
+key fails, so an exit code of 0 means the signatures were checked, unless `--chain-only` asked
+for the chain alone.
 
 ```sh
 # chain + every signature
@@ -84,6 +85,9 @@ decern verify --sharded /var/lib/decern --pubkey <kid>
 
 # a ledger whose key was rotated: --pubkey once per key that signed it
 decern verify --ledger /tmp/decern.jsonl --pubkey <retired-kid> --pubkey <kid>
+
+# the hash chain alone, with no key: not a verification of who signed the log
+decern verify --ledger /tmp/decern.jsonl --chain-only
 ```
 
 | Option | Meaning |
@@ -91,7 +95,8 @@ decern verify --ledger /tmp/decern.jsonl --pubkey <retired-kid> --pubkey <kid>
 | `--ledger <PATH>` | A single file or a segmented directory. Required unless `--sharded`. |
 | `--sharded <DIR>` | A `flock` head-store directory: every shard is verified, and any failing shard fails the run. The shards are those listed when the run starts, each read as of its own turn, so a shard created after the listing is read next time. For one point in time across shards, stop the writers first. |
 | `--pubkey <HEX>` | Ed25519 public key. Repeatable, once per key that signed the log. A record naming a `kid` is checked against that key and one without against each key given, and a record is refused when its key had already been followed by another key in the same file, segmented ledger or shard. With `--ledger` the output lists each key with the record it started at. Without one, signatures are **not** checked. |
-| `--anchor <FILE>` | A tree head published earlier. Also proves nothing at or below the anchored size was rewritten, reordered or dropped. Not for `--sharded`. |
+| `--anchor <FILE>` | A tree head published earlier. Also proves nothing at or below the anchored size was rewritten, reordered or dropped. Its signature is checked against `--pubkey`, so it needs one. Not for `--sharded`. |
+| `--chain-only` | Check the hash chain alone, with no key. It shows the log holds together, which whoever wrote it can arrange, and exits 0 on that alone. Not with `--pubkey` or `--anchor`. |
 
 **Why `--anchor` is the one that matters.** A hash chain proves a log holds together, which whoever
 wrote it can always arrange — rewrite the records, rechain them, and an ordinary verify passes. A
@@ -121,6 +126,11 @@ decern explain --ledger /tmp/decern.jsonl --seq 0 --json
 | `--seq <N>` | Which record, 0-based. Required. |
 | `--pubkey <HEX>` | Check the signature too. Repeatable, as for `decern verify`. Without it the line says `not checked`. |
 | `--json` | Machine-readable instead of prose. |
+
+The prose form writes each control character in a recorded value as its escape (`\u{1b}`), a
+newline included, so a value cannot act on the terminal or start a line of its own. `--json`
+prints the entry as recorded: JSON escapes U+0000 to U+001F and nothing above, so send it to a
+program, not to a terminal.
 
 A denial, read back (from a live run; `asserted_by:` appears under any credential posture —
 bearer, signed request, SPIFFE or AAuth — and is absent under `--trust-proxy`, which verifies
@@ -383,7 +393,7 @@ waiting:
 | Shutdown after SIGINT or SIGTERM | 30 seconds for requests in progress, then the listener closes | the process exits once every blocking thread has returned; one a stalled database holds is waited for |
 | Request body | 2 MiB | `413` |
 | A context, properties included | 64 KiB | `413`, `context_too_large` |
-| An entity type, entity id or action name | 1 KiB | `413`, `name_too_large` |
+| An entity type, entity id or action name | 1 KiB, and no control character | `413`, `name_too_large`; `400`, `invalid_request` for a control character |
 | Items in one batch | 1,000 | `400` |
 | What one batch may record: each item's own fields and the defaults it inherits | 16 MiB | `413`, `batch_too_large`, nothing recorded |
 | `Signature`, `Signature-Input`, `Signature-Key` | 8 KiB each | `401` |

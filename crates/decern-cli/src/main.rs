@@ -72,8 +72,9 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Verify a tamper-evident ledger (hash chain always; signatures when a key is
-    /// given). `--ledger` is a single file or a segmented directory; `--sharded` is a
+    /// Verify a tamper-evident ledger: the hash chain and, against `--pubkey`, every
+    /// signature. With no key the run fails unless `--chain-only` asks for the chain
+    /// alone. `--ledger` is a single file or a segmented directory; `--sharded` is a
     /// flock head-store directory, where every shard is verified.
     Verify {
         /// Single-file or segmented-directory ledger path.
@@ -90,6 +91,10 @@ enum Cmd {
         /// nothing at or below the anchored size was rewritten, reordered, or dropped.
         #[arg(long, conflicts_with = "sharded")]
         anchor: Option<PathBuf>,
+        /// Check the hash chain alone, with no key. It shows the log holds together,
+        /// which whoever wrote it can arrange; it is not a verification of who signed it.
+        #[arg(long, conflicts_with_all = ["pubkey", "anchor"])]
+        chain_only: bool,
     },
 }
 
@@ -101,9 +106,9 @@ enum Cmd {
 /// consistency proof against a commitment published earlier, somewhere the operator does not
 /// control, proves they did not quietly drop a record that used to be there.
 ///
-/// With `--pubkey` the anchor's own signature is checked first, against each key given. Without
-/// one, the anchor is taken at face value, which is worth saying out loud: an unsigned anchor
-/// an attacker could have written proves nothing about the log.
+/// The anchor's own signature is checked first, against each key given. With no key it is
+/// refused: an anchor nobody's key vouches for, one an attacker could have written, proves
+/// nothing about the log.
 fn verify_against_anchor(
     ledger: &Path,
     anchor_path: &Path,
@@ -115,7 +120,9 @@ fn verify_against_anchor(
         serde_json::from_str(&raw).context("parsing anchor as a tree head")?;
 
     if keys.is_empty() {
-        println!("    anchor:     signature NOT checked (no --pubkey given)");
+        anyhow::bail!(
+            "--anchor needs --pubkey: an anchor whose signature is not checked proves nothing"
+        );
     } else if keys
         .iter()
         .any(|k| decern_ledger::verify_tree_head_sig(&anchor, k))
@@ -209,6 +216,21 @@ fn parse_ref(s: &str) -> Result<EntityRef> {
 /// Explain a recorded decision by sequence number. Reads the record from the
 /// ledger, verifies chain integrity, and outputs a faithful explanation of
 /// what was recorded — not a re-derivation of policy.
+/// A recorded string as text for a terminal: each control character written as its
+/// escape (`\u{1b}`), a newline included, so a value cannot move the cursor, recolour the
+/// screen or start a line of its own. A record holds what a caller sent.
+fn shown(recorded: &str) -> String {
+    let mut out = String::with_capacity(recorded.len());
+    for c in recorded.chars() {
+        if c.is_control() {
+            out.extend(c.escape_unicode());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn explain(
     ledger_path: &std::path::Path,
     seq: u64,
@@ -248,20 +270,22 @@ fn explain(
         println!("timestamp:     {} (ms since epoch)", record.entry.ts_ms);
         println!(
             "subject:       {}:{}",
-            record.entry.subject_type, record.entry.subject_id
+            shown(&record.entry.subject_type),
+            shown(&record.entry.subject_id)
         );
-        println!("action:        {}", record.entry.action);
+        println!("action:        {}", shown(&record.entry.action));
         println!(
             "resource:      {}:{}",
-            record.entry.resource_type, record.entry.resource_id
+            shown(&record.entry.resource_type),
+            shown(&record.entry.resource_id)
         );
         println!("decision:      {}", decision_str);
 
         // Chain integrity
         println!();
         println!("chain:");
-        println!("  prev:       {}", record.prev);
-        println!("  hash:       {}", record.hash);
+        println!("  prev:       {}", shown(&record.prev));
+        println!("  hash:       {}", shown(&record.hash));
         // "(verified)" belongs only to the branch that actually verified something:
         // without a key the chain still checks out but no signature was examined, and
         // saying otherwise would be the explanation claiming more than it did.
@@ -274,7 +298,7 @@ fn explain(
             }
         );
         if let Some(kid) = &record.kid {
-            println!("  signed_by:  {}", kid);
+            println!("  signed_by:  {}", shown(kid));
         }
 
         // Decision metadata
@@ -282,7 +306,7 @@ fn explain(
             println!();
             println!("reasoning:");
             for reason in &record.entry.reasons {
-                println!("  - {}", reason);
+                println!("  - {}", shown(reason));
             }
         }
 
@@ -293,7 +317,7 @@ fn explain(
             // never heard of still appears: a reader must be able to see that something
             // was pinned even when this binary cannot say what it was.
             for (name, digest) in &record.entry.digests {
-                println!("  {name:<12} {digest}");
+                println!("  {:<12} {}", shown(name), shown(digest));
             }
         }
 
@@ -301,12 +325,15 @@ fn explain(
             println!();
             match &a.iss {
                 Some(iss) => println!(
-                    "asserted_by:  {} (client {}, issuer {iss})",
-                    a.sub, a.client_id
+                    "asserted_by:  {} (client {}, issuer {})",
+                    shown(&a.sub),
+                    shown(&a.client_id),
+                    shown(iss)
                 ),
                 None => println!(
                     "asserted_by:  {} (client {}, no issuer verified)",
-                    a.sub, a.client_id
+                    shown(&a.sub),
+                    shown(&a.client_id)
                 ),
             }
             println!("  the caller the server verified when it took this request —");
@@ -315,7 +342,11 @@ fn explain(
 
         if let Some(sponsor) = &record.entry.sponsor {
             println!();
-            println!("accountable_owner: {}:{}", sponsor.kind, sponsor.id);
+            println!(
+                "accountable_owner: {}:{}",
+                shown(&sponsor.kind),
+                shown(&sponsor.id)
+            );
             if record.entry.sponsor_source == decern_ledger::SponsorSource::Explicit {
                 println!("  (admin-set, not derived)");
             }
@@ -324,19 +355,19 @@ fn explain(
         if let Some(mission) = &record.entry.mission {
             println!();
             println!("mission_justification:");
-            println!("  approver:  {}", mission.approver);
-            println!("  sha256:    {}", mission.s256);
+            println!("  approver:  {}", shown(&mission.approver));
+            println!("  sha256:    {}", shown(&mission.s256));
         }
 
         if let Some(ds) = &record.entry.decision_subject {
             println!();
             // A pseudonymous handle: printed as recorded, resolved by no one here.
-            println!("decision_affects:  {}", ds.handle);
+            println!("decision_affects:  {}", shown(&ds.handle));
             if let Some(scheme) = &ds.scheme {
-                println!("  scheme:     {scheme}");
+                println!("  scheme:     {}", shown(scheme));
             }
             if let Some(purpose) = &ds.purpose {
-                println!("  purpose:    {purpose}");
+                println!("  purpose:    {}", shown(purpose));
             }
         }
 
@@ -438,8 +469,17 @@ async fn run() -> Result<ExitCode> {
             sharded,
             pubkey,
             anchor,
+            chain_only,
         } => {
             let keys = parse_pubkeys(&pubkey)?;
+            // Exit 0 has to mean the signatures were checked, or that the caller asked for
+            // less: a script reads the exit code, not the note printed above the OK.
+            if keys.is_empty() && !chain_only {
+                anyhow::bail!(
+                    "no --pubkey given, so no signature can be checked; pass --pubkey <kid> for \
+                     each key that signed the ledger, or --chain-only to check the hash chain alone"
+                );
+            }
 
             if let Some(dir) = sharded {
                 return verify_sharded(&dir, &keys);
@@ -462,7 +502,7 @@ async fn run() -> Result<ExitCode> {
             if !report.signatures_checked {
                 // Prominent, at the TOP: a chain-only pass is NOT a full verify — it does
                 // not catch a record signed by nobody. Do not let it read as a clean pass.
-                println!("NOTE: no --pubkey given — hash chain verified, signatures NOT checked.");
+                println!("NOTE: --chain-only — hash chain verified, signatures NOT checked.");
                 println!("      This is a chain-only pass, not a full verify; pass --pubkey <kid>");
                 println!("      to check every record's signature.");
             }
@@ -521,7 +561,7 @@ fn verify_sharded(dir: &std::path::Path, keys: &[ed25519_dalek::VerifyingKey]) -
         println!("signatures: checked against --pubkey");
     } else {
         // Prominent, at the TOP: a chain-only pass is NOT a full verify.
-        println!("NOTE: no --pubkey given — hash chains verified, signatures NOT checked.");
+        println!("NOTE: --chain-only — hash chains verified, signatures NOT checked.");
         println!("      This is a chain-only pass, not a full verify; pass --pubkey <kid>.");
     }
     let total = results.len();

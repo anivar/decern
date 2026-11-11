@@ -639,3 +639,21 @@ async fn a_search_naming_past_the_bound_is_refused_and_not_recorded() {
     assert_eq!(resp["error"], "name_too_large", "{resp}");
     assert!(records_in(&base, &st).is_empty());
 }
+
+/// A search refuses a control character in a name as an evaluation does.
+#[tokio::test]
+async fn a_search_naming_with_a_control_character_is_refused_and_not_recorded() {
+    let (st, base) = fixture_state();
+    let body = json!({
+        "subject": { "type": "user", "id": "alice" },
+        "action": { "name": "read" },
+        "resource": { "type": "record", "id": "record-1\u{1b}[2J" },
+    });
+    let (status, resp) = search(&st, "subject", &body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+    assert_eq!(
+        resp["detail"], "resource.id contains a control character",
+        "{resp}"
+    );
+    assert!(records_in(&base, &st).is_empty());
+}

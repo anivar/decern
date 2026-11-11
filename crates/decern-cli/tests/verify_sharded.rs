@@ -117,5 +117,31 @@ fn verify_sharded_passes_clean_then_detects_a_tampered_shard() {
         "verify with both --ledger and --sharded must be rejected"
     );
 
+    // The tampered shard is restored so the next two runs judge only the missing key.
+    let restored = std::fs::read_to_string(&target)
+        .unwrap()
+        .replace("acme-rX", "acme-r1");
+    std::fs::write(&target, restored).unwrap();
+    let bare = Command::new(bin)
+        .args(["verify", "--sharded"])
+        .arg(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        !bare.status.success(),
+        "a sharded verify with no key and no --chain-only must fail"
+    );
+    let chain_only = Command::new(bin)
+        .args(["verify", "--sharded"])
+        .arg(&dir)
+        .arg("--chain-only")
+        .output()
+        .unwrap();
+    assert!(
+        chain_only.status.success(),
+        "--chain-only checks each shard's chain; stderr: {}",
+        String::from_utf8_lossy(&chain_only.stderr)
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }

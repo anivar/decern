@@ -230,16 +230,27 @@ pub(crate) const CONTEXT_TOO_LARGE: &str = "context exceeds 64 KiB, properties i
 /// recorded with the decision, and a batch repeats its defaults in every item.
 pub(crate) const MAX_NAME_BYTES: usize = 1024;
 
-/// A refusal for the first of `names` longer than [`MAX_NAME_BYTES`].
-pub(crate) fn name_too_large<'a>(
+/// A refusal for the first of `names` longer than [`MAX_NAME_BYTES`], or that carries a
+/// control character. A name is recorded as sent and later printed for an auditor, on
+/// whose terminal a control character is an instruction: the record keeps it out rather
+/// than trusting every reader to escape it.
+pub(crate) fn name_refused<'a>(
     names: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> Option<Refusal> {
-    names
-        .into_iter()
-        .find(|(_, value)| value.len() > MAX_NAME_BYTES)
-        .map(|(field, _)| {
-            Refusal::payload_too_large("name_too_large", format!("{field} exceeds 1 KiB"))
-        })
+    names.into_iter().find_map(|(field, value)| {
+        if value.len() > MAX_NAME_BYTES {
+            Some(Refusal::payload_too_large(
+                "name_too_large",
+                format!("{field} exceeds 1 KiB"),
+            ))
+        } else if value.chars().any(char::is_control) {
+            Some(Refusal::invalid_request(format!(
+                "{field} contains a control character"
+            )))
+        } else {
+            None
+        }
+    })
 }
 
 pub(crate) fn context_too_large(context: &Value) -> bool {
@@ -458,7 +469,7 @@ fn prepare(
     caller: &Option<axum::Extension<crate::caller::Authenticated>>,
     mut req: DecideReq,
 ) -> Result<Prepared, Refusal> {
-    if let Some(refusal) = name_too_large([
+    if let Some(refusal) = name_refused([
         ("subject.type", req.subject.ty.as_str()),
         ("subject.id", req.subject.id.as_str()),
         ("resource.type", req.resource.ty.as_str()),
