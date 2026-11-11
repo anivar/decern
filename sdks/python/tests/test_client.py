@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the decern client. No network/server required."""
+"""Tests for the decern client. No decision point required; two tests serve on loopback."""
 
 import json
 import unittest
@@ -109,7 +109,7 @@ class TestBearerToken(unittest.TestCase):
         """Run one evaluate() through urllib and return the outgoing Request."""
         resp = mock.MagicMock()
         resp.__enter__.return_value.read.return_value = b'{"decision": true}'
-        with mock.patch("urllib.request.urlopen", return_value=resp) as urlopen:
+        with mock.patch("decern.client._OPENER.open", return_value=resp) as urlopen:
             client.evaluate({"id": "a"}, "Read", {"id": "b"})
         return urlopen.call_args[0][0]
 
@@ -136,7 +136,7 @@ class TestHttpError(unittest.TestCase):
             io.BytesIO(body),
         )
 
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch("decern.client._OPENER.open", side_effect=err):
             c = Client()
             with self.assertRaises(DecernError) as cm:
                 c.evaluate({"id": "a"}, "Read", {"id": "b"})
@@ -159,7 +159,7 @@ class TestHttpError(unittest.TestCase):
             io.BytesIO(b""),
         )
 
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch("decern.client._OPENER.open", side_effect=err):
             c = Client()
             with self.assertRaises(DecernError) as cm:
                 c.evaluate({"id": "a"}, "Read", {"id": "b"})
@@ -184,7 +184,7 @@ class TestHttpError(unittest.TestCase):
             io.BytesIO(huge_body.encode("utf-8")),
         )
 
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch("decern.client._OPENER.open", side_effect=err):
             c = Client()
             with self.assertRaises(DecernError) as cm:
                 c.evaluate({"id": "a"}, "Read", {"id": "b"})
@@ -208,7 +208,7 @@ class TestHttpError(unittest.TestCase):
             io.BytesIO(long_body.encode("utf-8")),
         )
 
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch("decern.client._OPENER.open", side_effect=err):
             c = Client()
             with self.assertRaises(DecernError) as cm:
                 c.evaluate({"id": "a"}, "Read", {"id": "b"})
@@ -218,6 +218,103 @@ class TestHttpError(unittest.TestCase):
             self.assertEqual(e.body, long_body)
             self.assertIn("...", str(e))
             self.assertTrue(str(e).endswith("..."))
+
+
+class TestDecisionIsABoolean(unittest.TestCase):
+    """AuthZEN 1.0: `decision` is a JSON boolean. Anything else is not an allow."""
+
+    def evaluate(self, raw):
+        c, _ = client_with(raw)
+        return c.evaluate({"type": "Principal", "id": "a"}, "Read", {"type": "Resource", "id": "b"})
+
+    def test_true_and_false_pass_through(self):
+        self.assertIs(self.evaluate('{"decision": true}').allowed, True)
+        self.assertIs(self.evaluate('{"decision": false}').allowed, False)
+
+    def test_a_non_boolean_decision_is_an_error(self):
+        for raw in (
+            '{"decision": "false"}',
+            '{"decision": "true"}',
+            '{"decision": 1}',
+            '{"decision": [false]}',
+            '{"decision": {"allow": false}}',
+            '{"decision": null}',
+            "{}",
+            "[]",
+            '"true"',
+        ):
+            with self.subTest(raw=raw), self.assertRaises(DecernError):
+                self.evaluate(raw)
+
+
+class TestTransportOverLoopback(unittest.TestCase):
+    """Runs the real transport against servers on the loopback interface."""
+
+    def serve(self, handler):
+        import http.server
+        import threading
+
+        httpd = http.server.HTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        return "http://127.0.0.1:%d" % httpd.server_address[1]
+
+    def test_the_token_is_not_sent_to_a_redirect_target(self):
+        import http.server
+
+        seen = []
+
+        class Target(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen.append(self.headers.get("Authorization"))
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                body = b'{"decision": true}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        target = self.serve(Target)
+
+        class Redirector(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(307)
+                self.send_header("Location", target + "/access/v1/evaluation")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        c = Client(self.serve(Redirector), token="app-token")
+        with self.assertRaises(DecernError) as cm:
+            c.evaluate({"type": "Principal", "id": "a"}, "Read", {"type": "Resource", "id": "b"})
+        self.assertEqual(cm.exception.status_code, 307)
+        self.assertEqual(seen, [])
+
+    def test_a_success_body_over_the_bound_is_an_error(self):
+        import http.server
+
+        class Big(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                body = b'{"decision": true, "pad": "' + b"x" * (1024 * 1024) + b'"}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        c = Client(self.serve(Big))
+        with self.assertRaises(DecernError):
+            c.evaluate({"type": "Principal", "id": "a"}, "Read", {"type": "Resource", "id": "b"})
 
 
 if __name__ == "__main__":

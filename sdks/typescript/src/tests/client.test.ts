@@ -188,3 +188,43 @@ test("healthy false on transport error", async () => {
   assert.equal(await c.healthy(), false);
 });
 
+
+// AuthZEN 1.0: `decision` is a JSON boolean. Anything else is not an allow.
+test("a non-boolean decision is an error, never an allow", async () => {
+  for (const raw of [
+    '{"decision": "false"}',
+    '{"decision": "true"}',
+    '{"decision": 1}',
+    '{"decision": [false]}',
+    '{"decision": {"allow": false}}',
+    '{"decision": null}',
+    "{}",
+    "[]",
+    '"true"',
+    "null",
+  ]) {
+    const { c } = clientWith(200, raw);
+    await assert.rejects(
+      c.evaluate({ subject: { id: "a" }, action: "Read", resource: { id: "b" } }),
+      DecernError,
+      raw,
+    );
+  }
+});
+
+test("true and false pass through as booleans", async () => {
+  for (const [raw, want] of [['{"decision": true}', true], ['{"decision": false}', false]] as const) {
+    const { c } = clientWith(200, raw);
+    const d = await c.evaluate({ subject: { id: "a" }, action: "Read", resource: { id: "b" } });
+    assert.equal(d.allowed, want);
+  }
+});
+
+test("a success body over the bound is an error", async () => {
+  const raw = `{"decision": true, "pad": "${"x".repeat(1024 * 1024)}"}`;
+  const { c } = clientWith(200, raw);
+  await assert.rejects(
+    c.evaluate({ subject: { id: "a" }, action: "Read", resource: { id: "b" } }),
+    DecernError,
+  );
+});

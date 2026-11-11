@@ -20,6 +20,25 @@ _MAX_ERROR_BODY_LEN = 512
 # size isn't bounded by decern-serve's own behavior.
 _MAX_ERROR_BODY_BYTES = 64 * 1024  # 64 KiB
 
+# Caps a 2xx body for the same reason. An evaluation answer is a decision and a short
+# list of reasons; one past this size did not come from a decision point.
+_MAX_BODY_BYTES = 1024 * 1024  # 1 MiB
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow a redirect.
+
+    urllib re-sends the request headers to wherever `Location` points, the bearer token
+    among them. A decision point has one address; a 3xx is an answer the caller should
+    see, not one to act on.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
 
 class DecernError(Exception):
     """Transport failure or non-2xx response from the PDP."""
@@ -70,8 +89,14 @@ class Client:
             self.base_url + path, data=data, headers=headers, method=method
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return resp.read().decode()
+            with _OPENER.open(req, timeout=self.timeout) as resp:
+                raw = resp.read(_MAX_BODY_BYTES + 1)
+                if len(raw) > _MAX_BODY_BYTES:
+                    raise DecernError(
+                        f"{method} {path}: response body is over {_MAX_BODY_BYTES} bytes",
+                        status_code=resp.status,
+                    )
+                return raw.decode()
         except urllib.error.HTTPError as e:
             raise self._build_http_error(method, path, e) from e
         except urllib.error.URLError as e:
@@ -121,11 +146,16 @@ class Client:
             body["context"] = context
         raw = self._request("POST", "/access/v1/evaluation", body)
         resp = json.loads(raw)
+        # AuthZEN 1.0: `decision` is a JSON boolean. Truthiness would turn the string
+        # "false", or any other non-empty value, into an allow.
+        decision = resp.get("decision") if isinstance(resp, dict) else None
+        if not isinstance(decision, bool):
+            raise DecernError("POST /access/v1/evaluation: `decision` is not a boolean")
         ctx = resp.get("context") or None
         reasons = list(ctx.get("reasons", [])) if ctx else []
         errors = list(ctx.get("errors", [])) if ctx else []
         return Decision(
-            allowed=bool(resp.get("decision", False)),
+            allowed=decision,
             reasons=reasons,
             errors=errors,
             context=ctx,
