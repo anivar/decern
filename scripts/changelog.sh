@@ -17,11 +17,12 @@ SECTIONS=(added changed deprecated removed fixed security)
 usage() {
   echo "usage: scripts/changelog.sh --check"
   echo "       scripts/changelog.sh --preview"
-  echo "       scripts/changelog.sh --release <version> [--date YYYY-MM-DD]"
+  echo "       scripts/changelog.sh --release <version> [--date YYYY-MM-DD | --no-date]"
   echo
   echo "  --check     every fragment is named for a real section and is not empty"
   echo "  --preview   print the section that would be written, changing nothing"
-  echo "  --release   fold the fragments into ${FILE} and delete them"
+  echo "  --release   fold the fragments into ${FILE} and delete them; the heading carries"
+  echo "              today's date, the one given, or with --no-date none: the tag dates a release"
 }
 
 fragments() {
@@ -53,7 +54,7 @@ check() {
 # The assembled section, on stdout. Fragments are copied verbatim.
 render() {
   local version="$1" date="$2" section f found
-  echo "## [${version}] - ${date}"
+  if [ -n "${date}" ]; then echo "## [${version}] - ${date}"; else echo "## [${version}]"; fi
   for section in "${SECTIONS[@]}"; do
     found=0
     for f in $(fragments); do
@@ -100,6 +101,8 @@ case "$1" in
     if [ "${3:-}" = "--date" ]; then
       date="${4:-}"
       [ -n "${date}" ] || { echo "changelog: --date needs a value" >&2; exit 2; }
+    elif [ "${3:-}" = "--no-date" ]; then
+      date=""
     fi
     [ -n "$(fragments)" ] || { echo "changelog: no fragments to release" >&2; exit 1; }
     check || exit 1

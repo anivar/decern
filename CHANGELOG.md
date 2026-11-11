@@ -6,6 +6,543 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0]
+
+0.7.0 is the last feature release of the current design. After it the 0.x line takes security
+fixes only, and the next line will be built beside it in this repository, to return a signed
+receipt with every decision; the
+[roadmap](https://github.com/anivar/decern/blob/main/ROADMAP.md) says how. This release adds
+rotation of the ledger signing key, bounds what a caller can make `decern-serve` hold, and closes
+several ways a caller, an approver or a second process could obtain an approval or write a record
+it should not. Deployments 0.6.0 started can refuse to start, and requests it answered can be
+refused; the list below gives each, most disruptive first. The policies, the invariants and the
+proofs do not change.
+
+Upgrading from 0.6.0:
+
+- **A directory shard store cannot go back.** Under `--sharded <dir>` each shard is converted at
+  the first record written to it, a search's record included, and a shard this release creates
+  is marked from the start. 0.6.0 then refuses the whole store, and a 0.6.0 replica left running
+  answers `503` for a shard a new replica has written. Stop every replica, copy the directory,
+  and upgrade them together.
+- **A ledger with a signed-request record or a rotated key cannot go back.** A record written
+  under the signed-request posture carries no `iss`, and a ledger whose key was rotated needs two
+  keys. `decern verify`, `decern explain` and `decern-serve` from 0.6.0 and earlier read both as
+  tampered, so after the first such record or the first rotation only this release opens the
+  ledger. A single-file ledger with neither can still be opened by 0.6.0.
+- **Postgres.** `--sharded postgres://…` starts only with `--missions-per-host`, and a URL to
+  another host only with `sslmode=require`: add both. The first start adds a `signers` column to
+  `decern_ledger_head` and needs the role that owns the table. A start now fails after 30
+  seconds without a database, where it waited.
+- **Signed-request.** `--signed-agent-key` starts only with `--signed-authority`: add it, with
+  the host and port the signers' requests carry.
+- **AAuth.** An agent token's header and the key in its `cnf` must name `alg: Ed25519`, and the
+  token is read from the `Signature-Key` member under the label the signature carries, so an
+  agent built for 0.6.0 is refused. A provider key set keeps only keys with `alg: Ed25519` and a
+  `kid`, and skips the rest without a message: a set with none stops the start, and a token
+  under a skipped key is refused. Reissue the key set and move agents to the draft -11 profile.
+- **A store in which a retired key signed after its successor** is not repaired by
+  `--retired-key`: it does not start or verify under any set of keys. Move it aside.
+- **Missions.** A Mission backs a decision only while its approver is a principal the model
+  marks `Human`, is not the agent, is not revoked, is not past its own `expiry` and holds the
+  scope. One approved otherwise stays in the registry, still reads as `active`, and every
+  decision under it is a Deny whose errors name the reason. Approve it again from a `Human`
+  principal in the agent's tenant that holds the scope. A model that does not mark its approvers
+  `Human` approves nothing.
+- **Models.** A `revoked` that is present and not a boolean no longer loads: make it a boolean.
+- **One process writes a single-file ledger.** A restart that starts the new process before the
+  old one exits is refused, so stop the old process first. A `--ledger` or `--missions` path
+  that names the key file is refused too.
+- **`decern verify`** without `--pubkey` exits non-zero: pass `--pubkey` once per key that
+  signed, or `--chain-only` where the chain check alone was meant. `--anchor` needs `--pubkey`,
+  and `--sharded` on a directory that holds no shard fails.
+- **Requests now refused.** A workload not listed in `--pep` that sends `consent`,
+  `human_approved` or another party's `decision_subject` gets `403`, and a batch with one such
+  item is refused whole: list the workload in `--pep`, or stop sending the keys. A name with a
+  control character is `400` and a name over 1 KiB `413`; in a batch that item alone is answered
+  `decision: false`. A batch that would record more than 16 MiB is `413` whole, a `Signature`
+  header over 8 KiB is refused, and a `challenge_basis` with a non-string item is `422`.
+- **Deadlines and bounds.** A connection idle for 10 seconds is closed and a request is
+  answered `503` at 30 seconds. Past 512 decisions, searches, audits and Mission calls in
+  progress the next is answered `503` at once, and past 1,024 connections the next waits. A
+  stopping server gives requests in progress 30 seconds. A decision answered `503` at the deadline may be on
+  the ledger; read a Mission's state before repeating an approval or a termination. A clock set
+  before 1970 is answered `503`.
+- **Names that changed.** A challenge is answered `challenge_classified` where it was
+  `reevaluate_with_subject_context`, and the disclosure's
+  `challenge_bases_that_reopen_a_decision` is now `challenge_bases_that_bear_on_the_facts`.
+  `/pubkey` gains `keys`, a malformed Mission approval is refused in JSON where it was plain
+  text, and the tree head is recomputed at most once a second.
+- **Clients.** Each raises an error when `decision` is absent or not a boolean, or when a
+  success body passes 1 MiB, which the TypeScript client counts only where `fetch` gives a
+  stream. The Python client no longer follows a redirect.
+- **Libraries and builds.** `ApprovedMission`'s fields are read through accessors,
+  `Ledger::rotate` returns a `Result`, `AssertedBy::iss` is an `Option`, `HeadCursor` and
+  `VerifyReport` each gain a `signers` field, and `cedar-policy` is pinned at `=4.14.0`. A build
+  from source needs Rust 1.99.
+
+### Added
+
+- **The ledger signing key can be rotated without starting a new ledger.** `decern-serve
+  --retired-key <HEX>`, repeatable, names by its public key a key the deployment rotated away
+  from, and `--key` then names a key file made beforehand. Restarted on the new key with the old
+  one retired, the server extends the ledger and every record still verifies. `GET /pubkey` keeps
+  `kid`, the key signing now, and adds `keys`: the retired keys in the order given, then `kid`.
+  `decern verify` and `decern explain` take `--pubkey` once per key, and `decern verify --ledger`
+  with `--pubkey` prints each signing key with the record it started at. A sharded deployment
+  rotates every replica together: a replica still on the old key refuses to record into a shard
+  the new key has signed and answers `503` until it is restarted on the new key; `/healthz` does
+  not report it. The same check makes two replicas started together on an empty store under
+  different keys each answer `503` for a shard the other wrote first, where both recorded into it
+  before. Authored by @anivar.
+
+### Changed
+
+- **A sharded append no longer reads the shard's history.** Under `--sharded`, each append read
+  and parsed every record of the tenant's shard under its lock, so an append cost more the longer
+  the shard: on the file store, 12.3 ms per append at 1,000 records and 26.1 ms at 5,000 on one
+  machine. An append now reads the shard's head alone. The head carries the keys that have signed
+  the shard, which the key-rotation guard checks. On the file store a shard is a small head,
+  rewritten atomically, and an append-only log; on Postgres the head row alone is read. On the
+  same machine an append on the file store costs about 12.5 ms at 1,000, 5,000 and 10,000
+  records; the in-memory store takes 17 µs, so nearly all of it is the file store's disk writes.
+  A record edited so it no longer parses as JSON is no longer refused by the next append to its
+  shard; the next boot's check of every shard and `decern verify --sharded` find it, as they find
+  any edit to a record. An append does refuse a log an edit has left with its committed length
+  inside a record, rather than cut a committed record there.
+  A file store written by an earlier release is read as it is, and each shard is converted at its
+  next append. Every shard this release creates carries, from before its first record, a marker
+  an earlier release cannot read, and every shard it converts gets one as the conversion
+  completes. An earlier release's `decern-serve` and `decern verify` refuse a store holding a
+  marked shard rather than read the shard as empty, so stop every replica before upgrading; there
+  is no way back to the earlier release. Should an earlier release still write to a converted
+  shard, this release refuses that shard rather than overwrite what it wrote.
+  A Postgres store gains a nullable `signers` column. The first boot of this release adds it,
+  which needs the role that owns `decern_ledger_head`, and gives up after 5 seconds behind
+  another session holding the table, naming the statement to run; later boots only check for it.
+  An earlier release still writing to the store leaves the column out of date, and the next append
+  then reads the history instead of trusting it.
+  Authored by @anivar.
+- **A Postgres-sharded start says that its Mission registry is this host's.** `decern-serve
+  --sharded postgres://…` starts only with `--missions-per-host`, which says that the Mission
+  registry is a file on this host alone: a Mission approved or terminated here is unknown to, or
+  still live on, every other host. The flag is the deployment's word, which the server cannot check,
+  that a Mission's requests and its termination go to the host that holds it; given with a
+  single-file or directory ledger it is refused, since the flag would be ignored. 0.6.0 stated
+  this in the option table only. Authored by @anivar.
+- **`decern verify` with no `--pubkey` fails.** It checked the hash chain, printed a note that no
+  signature was checked, and exited 0, so a script reading the exit code passed a log that
+  anyone could have rewritten and rechained. It now exits non-zero and names the two ways on:
+  `--pubkey <kid>` for each key that signed the ledger, or the new `--chain-only`, which checks
+  the chain alone, says so, and exits 0. `--anchor` now needs `--pubkey`: an anchor whose
+  signature is not checked was taken at face value. Add `--chain-only` to a script that meant
+  the chain check. `decern explain` without `--pubkey` still exits 0 and says the signature was
+  not checked. Authored by @anivar.
+- **`decern verify --sharded` fails on a directory that holds no shard.** It printed `no shards
+  found` and exited 0, so a wrong path, or a store with no record yet, passed a check whose exit
+  code is read as "verified". It now exits non-zero and says nothing was verified. A script that
+  verifies a store before its first decision fails until the store holds one. Authored by
+  @anivar.
+- **The AAuth posture verifies draft-hardt-oauth-aauth-protocol-11's signature profile.** An
+  agent token's header must name `alg: Ed25519`; the polymorphic `EdDSA` that 0.6 required is
+  refused, so an agent built to that shape is refused until it moves. Every key carries a
+  fully-specified `alg` consistent with `kty` and `crv`: the key `cnf` confirms is refused
+  without one. An `--aauth-provider` key set keeps only the members that name one, carry a
+  `kid` and have no `use` other than `sig`, skips the rest, and is refused at startup if none
+  is left or two share a `kid`. The token is the `Signature-Key` member under the label the
+  signature carries, read as a structured-field dictionary, where it was the member `sig`
+  beside a signature labelled `sig1`; a second `jwt`-scheme member is refused. The signature
+  must cover the required components in any order and may cover further header fields; an
+  `alg` parameter is not read, `nonce` and `tag` are refused, and `expires` is honoured.
+  `created` may be up to 60 seconds either side of the server's clock, and an agent token's
+  `iat` up to 60 seconds ahead, where both were limited to 5 seconds ahead; further ahead is
+  answered with `Signature-Error: error=clock_skew`. Still not met: no other refusal carries a
+  `Signature-Error` code, so an agent that leaves `content-digest` off a request with a body,
+  which this deployment requires, learns why only from the response body, and that body is not
+  problem details; ES256 is not verified. The signed-request posture accepts and refuses what
+  it did; its refusal for a missing `Content-Digest` now reads "request carries no
+  Content-Digest" where it named POST. Authored by @anivar.
+- **A signed request's record names no issuer.** Under `--signed-agent-key`, `asserted_by.iss`
+  held the bound token's `iss` claim, which nothing verified: the token is covered by the
+  request signature, never checked against an issuer key, so the value was the agent's own
+  claim. Records made under this posture now omit `iss`, and `decern explain` says no issuer was
+  verified. Records already written keep theirs, and the other postures record the issuer whose
+  signature they checked, as before. `decern verify` and `decern explain` from 0.3.0 through
+  0.6.0 require `iss` and report a record without it as tampered, so a ledger written under this
+  posture is verified with this release or later. In `decern-ledger`, `AssertedBy::iss` is now
+  an `Option<String>`.
+  Authored by @anivar.
+- **A retired ledger key may not sign after its successor.** Verification refuses a record whose
+  key had already been followed by another key in the same log, where it accepted a record under
+  any key in the ring at any position. A record is attributed to the key its signature verifies
+  under, so removing its `kid` does not get past the rule. `decern verify`, `decern-serve` at
+  startup and the library apply it; `decern-serve` refuses to start on a `--key` another key has
+  already followed, and the library refuses to open a ledger with one or to rotate back to one, so
+  `Ledger::rotate` now returns a `Result`, and `VerifyReport` gains `signers`, each key with the
+  record it started at. `verify_evidence_bundle` checks each record under the key its `kid` names
+  and applies the rule within the bundle's span, where it accepted a record under any pinned key.
+  The rule holds within one log: across a single-file or segmented ledger, and shard by shard in a
+  sharded store, where a retired key can still sign a shard its successor has not signed. It
+  covers records only: a tree head is checked against the keys given, whichever of them signed it,
+  and records removed from the end of a log show only against a tree head kept where the operator
+  cannot reach. A ledger `decern-serve` signed with one key is unaffected. A shard where replicas
+  under different keys took turns, so that one key signed again after the other, now fails even
+  with every key given: that can happen to a store that replicas of a release before 0.6.0
+  extended without `--key`, and to one that 0.6.0 replicas started together on an empty store
+  under different keys. A library caller that rotated back to an earlier key wrote a ledger this
+  refuses. Authored by @anivar.
+- **A challenge outcome no longer names a re-evaluation that does not happen.** A challenge
+  whose standing named the decision subject a record keeps, and whose basis bears on the facts
+  a decision was made from, was answered `reevaluate_with_subject_context`, though the kernel
+  runs once, without the challenge, and the decision stands as recorded. It is now answered
+  `challenge_classified`, in the ledger record and in `outcomes_supported` on the subject-side
+  disclosure, which also says what an outcome describes (`outcomes_describe`) and lists those
+  bases as `challenge_bases_that_bear_on_the_facts`, renamed from
+  `challenge_bases_that_reopen_a_decision`. Records written by earlier releases keep the old
+  name for the same answer. A challenge is classified when a basis it gives bears on those
+  facts and its standing names a party the decision's record is about: the third party it keeps
+  as its decision subject, or, when it keeps none, the requester or the resource's owner. A
+  challenge from the requester or the owner was always affirmed. A challenge whose standing
+  names no such party is affirmed with the reason "the challenge's standing names no party the
+  decision's record is about", in place of a reason about the challenged decision, which the
+  server does not read.
+  Authored by @anivar.
+- **An approved Mission handle is read-only, and a mint is held to the registered approval.**
+  `ApprovedMission` is read-only to its holder: `mission`, `state` and `s256` are read through
+  accessors of those names, and only `terminate` changes it. A mint under a registry refuses a
+  handle whose approved tools or expiry differ from the registered entry, which refuses a Mission
+  whose row was written before its tools were recorded, as `decern-serve` already refuses it at the
+  decision. The fields were public and `issue_under_mission` took its ceiling from them, so a
+  library caller could widen a handle after approval and mint up to the approver's own authority.
+  `decern-serve` never exposed that path. Authored by @anivar.
+- **A head store's cursor carries the keys that signed its shard.** `HeadCursor` gains `signers:
+  Option<ShardSigners>`, so code that builds a `HeadCursor` adds the field; `None` is what a store
+  that does not keep them returns. `LedgerHeadStore` gains `with_shard_head`, `has_failed` and
+  `is_stalled`, each with a default, so an existing implementation compiles. `LedgerError` gains
+  `KeySuperseded`. Added beside them: `Ledger::prefix`, `read_verified_with_keys`,
+  `merkle_leaves_with_keys`, `verify_sharded_dir_with_keys`, `ShardedLedger::append_revised`,
+  `Directory::revoked` and `decern_identity::mission::HUMAN_KIND`. Authored by @anivar.
+- **Each client refuses a success body over 1 MiB.** The error body was already capped at 64 KiB and
+  the success body was read whole. The TypeScript client counts the body only where the runtime's
+  `fetch` gives a stream. Authored by @anivar.
+- **The kernel decides with Cedar 4.14.0, and the proofs compile through `cedar-policy-symcc`
+  0.8.0.** Both are exact pins and move together; 0.6.0 pinned 4.13.0 and 0.7.0. A crate that
+  depends on a decern library and on `cedar-policy` must name `=4.14.0`. A build from source needs
+  Rust 1.99, the toolchain `rust-toolchain.toml` pins, where 0.6.0 pinned 1.97. Authored by @anivar.
+- **Release binaries are built from the committed `Cargo.lock`.** The release workflow now passes
+  `--locked`, so a release build fails when the lock file does not match the manifests, where it
+  used to re-resolve the dependencies without saying so. A build from source is unchanged. Authored
+  by @anivar.
+
+### Fixed
+
+- **A second process can no longer fork the single-file ledger.** Two `decern-serve` processes
+  pointed at one `--ledger` file both served decisions, each chaining from the same record, so
+  the ledger stopped verifying and the next start refused it. Opening a single-file ledger for
+  writing now takes an exclusive lock before anything reads the log, and a second writer is
+  refused at startup. On Unix the lock is on the ledger file itself, so it holds through any
+  path, symbolic or hard link, or mount; on Windows it is a `<ledger>.lock` file beside the
+  ledger's canonical path, which a hard link to the ledger, or a link made before the ledger
+  existed, does not share. On a network filesystem the lock holds only where the filesystem
+  honours it. Readers such as `decern verify` take no lock. A deployment that runs a second
+  replica on the same file, or starts the new process before the old one exits, is now refused
+  rather than forked. On Unix a child process started while a ledger is open shares its lock
+  until it starts its own program, so an open in that moment is refused as a second writer.
+  `Ledger::open_anchored` now refuses a ledger whose file is gone when its
+  anchor counts a record, as it refuses a truncation; it started a new ledger.
+  Authored by @anivar.
+- **No Allow under a Mission is recorded after the Mission's termination.** A decision bound to a
+  live Mission, then recorded after the Mission was terminated through the same host, was recorded
+  and served as the Allow it was evaluated as. The decision is now settled under the ledger's lock
+  just before its record lands: one whose Mission was terminated is recorded and answered as a Deny
+  with that reason. A Mission terminated at or past its expiry now keeps its termination on record
+  for the 30 days a termination is kept past its expiry, rather than being pruned at once, so the
+  rule holds then too and `GET /mission/v1/{s256}` reports it terminated. In a `deny_on_first_deny`
+  or `permit_on_first_permit` batch each item is recorded before the next is evaluated and the
+  semantic follows the decision as recorded, so an item settled to a Deny stops the first and does
+  not end the second; `execute_all` records the whole batch as one step on the single-file ledger,
+  where the two short-circuit modes record, and sync, one item per step. The order holds on one
+  host; under a Postgres store each host has its own Mission registry. Authored by @anivar.
+- **A clock set before 1970 is refused rather than read as 1970.** `decern-serve` read such a
+  clock as the epoch itself, a time before every expiry, so no principal, Mission or token had
+  expired. Every request that needs the time is now answered `503 clock_unavailable` until the
+  clock is right; under `--trust-proxy` a batch answers each of its items `decision: false` with
+  that code. Under a credential posture the refusal comes before authentication, so an
+  unauthenticated caller gets the `503` rather than a `401`. A tree head already computed is still
+  served, carrying the time it was signed at.
+  Authored by @anivar.
+- **A model whose `revoked` is present and not a boolean is refused at load.** The refusal names the
+  principal. It loaded with that principal, and every principal under it, active: the parser read
+  any non-boolean as false, and the derived value written over the attribute hid the authored one
+  from Cedar's schema check. An absent `revoked` is still false. A model
+  that carries such a value no longer loads, in `decern-serve`, `decern decide` and `decern prove`
+  alike: make it a boolean. Authored by @anivar.
+- **A ledger path that names the key file is refused, and a new key file is synced to disk.**
+  `decern-serve --ledger k --key k` booted and truncated the key to nothing: the ledger trims an
+  unterminated last line, and a key file has none, so the process went on signing with a key no
+  longer on disk. The boot now refuses a `--ledger` or `--missions` that names the key file, by
+  any spelling of its path or a link to it, and compares `--missions` with `--ledger` the same
+  way. The ledger refuses to truncate an unterminated last line that does not begin a record, so
+  a file that is not a ledger is never cut. A key file created at boot is synced, with its
+  directory, before anything is signed with it. Authored by @anivar.
+- **A Postgres head store answers a database error with a `503` instead of hanging.**
+  Under `--sharded postgres://…`, a database error before a shard was read, such as the
+  connection a database restart closes, left the store's one connection and the request each
+  waiting on the other for good. That decision and every later one waited, and `decern-serve` did
+  not stop on `SIGTERM`. Such an error is now answered at once with `503`, the store goes on
+  to the next request, and the server stops when asked. The store does not reconnect: after the
+  database restarts, every decision is refused with `503` until `decern-serve` is restarted. The
+  first decision to find the connection closed turns `/healthz` to `503`, so a liveness probe
+  restarts the server; a replica that serves no decision meanwhile answers `ok` until one does.
+  A database that stops answering without closing the connection, behind a network partition for
+  example, still holds the store until TCP gives up: each decision meanwhile is answered `503` at
+  the 30-second request deadline, `/healthz` answers `503` once one database call has run for
+  30 seconds, and `SIGTERM` waits.
+  Authored by @anivar.
+- **A Postgres head store bounds its waits.** A start fails after 30 seconds without a ready
+  database, where it waited with no deadline, serving nothing and handling no signal; a section
+  waits at most 10 seconds for any lock, its shard's first, so a host paused mid-section costs
+  each other host `503`s on that shard and, its store serving one section at a time, a wait of up
+  to 10 seconds for the sections queued behind, not a hang until it resumes; and `/healthz`
+  answers `503` once one database call has run for 30 seconds, a database that stopped answering
+  without closing the connection, where it answered `ok` until TCP gave up. The store still sets
+  no statement timeout, which a stalled server could not deliver, does not reconnect, and leaves
+  the connection's TCP parameters to the URL. Authored by @anivar.
+- **A failed directory sync is the anchor's or the manifest's error, never an `Ok`.** On Unix the
+  directory open and the sync return their error, so a crash cannot take back an anchor or a
+  rollover the caller was told had landed. Both writes discarded that result. A segment rollover
+  that fails after its manifest landed stops the ledger, as a half-written record does, until it is
+  reopened; one that fails before it is retried on the next append, as before. On a target that is
+  not Unix, the Windows build, the directory sync is skipped, as it is for the store's files.
+  Authored by @anivar.
+- **`/audit/v1/subject` says `truncated` only when a record about the party was left out.** The
+  projection stops at 256 records, and it reported the cut as soon as any later record existed,
+  so exactly 256 records about a party followed by records about anyone else read as cut. It now
+  reports the cut only when a further record names the same handle; a list the bound fits
+  exactly is complete.
+  Authored by @anivar.
+- **A `challenge_basis` array with a non-string item is a malformed challenge.** Answered `422`, as
+  every malformed challenge is. The strings were kept and the rest dropped, so `["ownership", 5]`
+  was classified as `["ownership"]`, and only an array with no strings at all was refused. Authored
+  by @anivar.
+- **A malformed Mission approval is refused in JSON.** `POST /mission/v1/approve` answered a body
+  that is not an approval request in plain text. It now answers
+  `{"error": "mission not approved", "detail": …}`, the shape of every other approval refusal,
+  with 400 for JSON that does not parse, 422 for a missing or mistyped field, 415 without a JSON
+  content type and 413 past the 2 MiB body limit. The detail quotes the request and is cut at 512
+  characters.
+  Authored by @anivar.
+- **The example adapter's PDP deadline covers the response body, and the body is bounded.** The
+  external-authorization adapter's `--pdp-timeout-secs` is a deadline over the whole PDP exchange,
+  response body included, and a response body over 64 KiB is refused at the bound. The timeout
+  covered the request until the PDP's headers arrived; a PDP that then stalled held the adapter's
+  request for as long as it liked, and one that streamed a large body was read into memory whole.
+  Authored by @anivar.
+- **An organization is not an authorization boundary, and the model says so.** The schema's comments
+  and the README say that `Organization` membership and parentage are validated at load and read by
+  no built-in policy: an organization is not an authorization boundary, `tenant` is. The comments
+  called it the tenancy anchor, which implied an isolation the built-in policy does not provide;
+  they call it a grouping now. Authored by @anivar.
+- **The parameter digest's documentation claims the binding, not the execution.** It binds a record
+  to the arguments decided, so whoever holds the arguments an execution used can tell whether they
+  are the ones on record. The comments said the digest "closes the TOCTOU gap between authorized and
+  executed", which the ledger cannot see; a PEP that acts on other arguments is caught only by that
+  comparison. Authored by @anivar.
+- **The README, the website and the Postgres store README say what `--sharded` needs.** Each now
+  states that `--sharded` requires `--key` and that `decern verify --sharded` audits a directory
+  store only, since a Postgres head store has no `decern verify` path; both READMEs also state
+  that a store whose records a key it was not given signed refuses to start, and the README's
+  Known-limitations entry on the file head store says when the ledger key is checked, and its
+  pointer to the release's known limits no longer lists items from an older release. The website
+  drops its version badge, so it carries no version string and no release step has to move one.
+  Authored by @anivar.
+- **Help text, doc comments and docs no longer contradict what the code does.** The ledger's
+  `asserted_by` field was described as present only under bearer validation; it is present
+  under every credential posture. The CLI described proving over "every input" rather than the
+  model's symbolic input space, and its crate description left out `explain`. The kernel's
+  `reasons` were described as present only on an Allow. The Postgres store named a money budget
+  that does not exist and said the binaries never depend on it, which a `--features postgres`
+  build does. The signed-request posture said only a POST covers `content-digest`. `--help`
+  cited sections of the CLI reference by names that are not headings. The MCP walkthrough
+  listed five records where its ledger holds six. The README now says the AAuth posture follows
+  an individual, unadopted Internet-Draft; that on Windows `decern-serve` does not protect its
+  files by permission, refusing to create a `--key` file and loading one without checking who can
+  read it; and that the Mission self-approval refusal compares ids only.
+  Authored by @anivar.
+
+### Security
+
+- **A caller bound to itself can no longer assert `consent` or `human_approved`.** Under the
+  signed-request, SPIFFE and AAuth postures a workload not listed in `--pep` may name only
+  itself, and may not describe a party through `properties`; it could still send
+  `"consent": true` in `context`, which the consent gate read as the resource owner's word. An
+  evaluation or a search from such a caller that carries either key, whatever its value, is
+  now refused with `403 caller_mismatch` and nothing is recorded; a batch is refused whole when
+  any item, or a default an item inherits, carries one. This holds where the key was dropped
+  before: `human_approved` on an action that does not declare it, and either key under a
+  Mission, which used to be stripped. Such a workload therefore has no way to carry consent,
+  and its access to another party's PII is always denied. A PEP listed in `--pep`, a bearer
+  caller and a trusted front may carry the keys as before: `consent` is still the caller's
+  word, which decern does not check. The rule knows these two names only; a custom model that
+  reads an approval under another name is not covered. Authored by @anivar.
+- **A caller bound to itself may not name another party as the decision subject.**
+  `context.decision_subject` is the handle the open subject-side audit route is keyed by, and a
+  workload posture caller could name any handle, so a record it asserted attached to another
+  party's audit view with nothing to tell planted from genuine. The handle now binds as
+  `subject.id` does: a workload not listed in `--pep` may name only itself, which the record then
+  drops as redundant, and any other handle is `403 caller_mismatch` before anything is evaluated or
+  recorded, on the single evaluation, on every batch item, defaults included, and on the searches.
+  Bearer and `--trust-proxy` callers are unchanged, as they are for `subject.id`. Authored by
+  @anivar.
+- **Only a principal the model marks `Human` approves a Mission.** `POST /mission/v1/approve`
+  accepted any principal in the tenant that held the scope, an Agent or a Machine included, and
+  a Mission so approved set `human_approved` for `MoveMoney`. Approval now refuses an approver
+  whose `kind` is not `Human` (422, nothing recorded), and a Mission a registry already holds
+  from such an approver backs no decision: a decision under it is denied, and its errors say so.
+  The check is the server's, reading `kind` from the model it runs: a model that omits `kind`
+  or spells it another way approves nothing, and a workload caller, which may name only itself
+  as approver, approves nothing unless its own principal is marked `Human`. The `money-gate`
+  proof still covers the flag, not who approved, and whether the caller that names an approver
+  speaks for it rests on the caller posture. Authored by @anivar.
+- **A Mission stops backing decisions once its approver is revoked, expired or loses the scope.** A
+  Mission was held to its approver only at approval, so an approver revoked afterwards, directly
+  or through a delegator, kept setting `human_approved` for `MoveMoney` through every Mission it
+  had approved, across restarts, until each was terminated or expired. Each decision under a
+  Mission now reads the approver from the model the server runs, and a Mission whose approver is
+  revoked, past its expiry or no longer holds the scope the decision needs backs nothing: the
+  decision is denied, and its errors say so. `POST /mission/v1/approve` refuses a revoked approver too.
+  The model is fixed at boot, so a revocation reaches existing Missions at the next restart, as
+  it reaches every other decision.
+  Authored by @anivar.
+- **A principal can no longer approve a Mission for itself.** `POST /mission/v1/approve`, and
+  `decern_identity::mission::approve` under it, refuses an approver that is also the agent, and a
+  Mission recorded that way by an earlier release no longer backs a decision. Such a Mission set
+  `human_approved` for `MoveMoney` with no second principal involved. A deployment that used one id
+  for both gives the approval to another principal in the agent's tenant that the model marks
+  `Human` and that holds the scope. The refusal compares ids only. Authored by @anivar.
+- **The signed-request posture requires `--signed-authority`.** `decern-serve --signed-agent-key` no
+  longer starts without `--signed-authority <AUTHORITY>`, this deployment's host and any port
+  exactly as its signers' requests carry them, and a signed request whose `@authority` differs is
+  refused `401` before any key is consulted. The signature always covered `@authority`, but nothing
+  compared it with this deployment, so two deployments trusting the same agent key and audience
+  accepted each other's captured requests inside the 60-second freshness window. Add the flag with
+  the authority your signers sign for. Authored by @anivar.
+- **A Postgres head store refuses a URL to another host that does not require TLS.** The URL went to
+  the client as given, and the client's default, `sslmode=prefer`, carries on in plaintext when it
+  is told the server has no TLS, which anyone in the network path can say. A `--sharded
+  postgres://…` URL, or one given to `PostgresLedgerHeadStore::new`, that names a host other than
+  this one must now carry `sslmode=require`: without it the server refuses to start, before it
+  connects. A Unix socket, `localhost` and loopback addresses are left alone, judged by `hostaddr`
+  when the URL gives one; a name that only resolves to this host counts as another host. Add
+  `sslmode=require` to the URL of a deployment that crosses hosts. Authored by @anivar.
+- **`decern-serve` bounds what one client can make it hold.** A request's headers must arrive
+  within 10 seconds, the idle wait on a kept-alive connection included, and a request still
+  waiting on its body after 30 seconds is answered `503`; a ledger append already under way
+  finishes first. At most 1,024 connections are held at once, and a stopping server waits 30
+  seconds for requests in progress, where a client that sent half a request could keep a
+  connection, and a stopping process, alive indefinitely. `Signature` is bounded at 8 KiB like the
+  other signature headers, and a repeated label is found without comparing every pair, where a
+  large header cost seconds of work before any key was consulted. An entity type, entity id or
+  action name over 1 KiB is refused with `413 name_too_large`, and a batch that would record more
+  than 16 MiB, its defaults counted once per item that inherits them, is refused whole with `413
+  batch_too_large` before anything is recorded; one 123 KB batch could record 120 MB. Bearer and
+  SPIFFE callers are authenticated before the body is read, so a caller with no credential is
+  refused without the server waiting on its body. An error that quotes the request is cut to 512
+  characters in the answer. Authored by @anivar.
+- **At most 512 requests are decided, searched, recorded, audited or read as a Mission at once.**
+  Each such request runs on a blocking thread and takes one of 512 places; a request that finds them
+  taken is answered `503`, `server_busy`, at once, and a request that ran out of time keeps its
+  place until its work ends. The Postgres head store also bounds its own queue, at 1,024 sections,
+  which the places keep it from reaching. `/healthz` answers `ok` while the places are full, unless
+  the store behind them has failed or stalled. Authored by @anivar.
+- **An anonymous caller can no longer stall every decision through the tree head.**
+  `GET /anchor/v1/tree-head` re-read and re-hashed the whole ledger while holding the lock every
+  append needs, on a thread that serves requests: at 150,000 records, twelve anonymous clients
+  polling it held a decision for 8 seconds on average. It now notes the record count under the
+  lock, reads and hashes that prefix on a blocking thread without it, takes the lock again only
+  to sign, and recomputes at most once a second, serving the last head in between; under the
+  same load a decision took 5 ms. `/audit/v1/subject` reads the log the same way, one
+  projection at a time, since each holds the whole log in memory; the rest wait within the
+  30-second request deadline. Decisions, batches and Mission approvals and terminations run on
+  blocking threads too, so a slow fsync no longer holds a thread other requests need, and the
+  request deadline covers them: a decision whose append has not finished by then is answered
+  `503`, and the append still lands.
+  Authored by @anivar.
+- **A control character in a name is refused, and `decern explain` escapes them.** An entity type,
+  entity id or action name was recorded as sent, and `decern explain` printed recorded values as
+  they were, so a name carrying terminal control sequences reached the terminal of whoever read the
+  record. An evaluation, batch item or search whose subject, resource or action name holds a control
+  character is now refused (`400`, `invalid_request`, nothing recorded). `decern explain` writes
+  every control character as its escape, a newline included, in each field it prints, which also
+  covers records written before this release and printed fields the refusal does not reach: the
+  asserted caller, a Mission's reference, the decision subject. The prose form prints neither the
+  context nor a challenge; `--json` prints the whole entry as recorded, where JSON escapes only
+  U+0000 to U+001F. Characters that are not control characters, a direction override for one, are
+  printed as recorded. Authored by @anivar.
+- **The Python and TypeScript clients allow only on the JSON boolean `true`.** They read the
+  answer's `decision` by truthiness, so a response whose `decision` was the string `"false"`, a
+  number or any other non-empty value came back as `allowed`. All three clients now raise an error
+  when `decision` is absent or is not a boolean; the Go client, which already refused a wrong type,
+  no longer reads an absent or `null` decision as a deny. A conformant decision point always sends a
+  boolean, so nothing changes against `decern-serve`. An answer with no `decision`, which each
+  client read as a deny, is now an error too. Authored by @anivar.
+- **The Python client no longer follows a redirect.** `urllib` re-sends the request headers to the
+  redirect target, the bearer token among them. A `3xx` answer is now an error carrying its status
+  code. The TypeScript and Go clients still follow redirects with their runtime's defaults, which
+  this change did not examine. Authored by @anivar.
+- **The ES256 verification path builds on patched constant-time crates.** `crypto-bigint` moves
+  to 0.7.8 and `ctutils` to 0.4.5, for timing variability in operations meant to be constant-time
+  ([RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387)) and non-constant-time mask
+  generation ([RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385)). Both arrive
+  through `p256`, which `decern-serve` uses only to verify ES256 SPIFFE JWT-SVIDs, a public-key
+  operation; nothing in decern holds a P-256 private key. Authored by @anivar.
+- **A `--features postgres` build verifies the database's certificate chain with `rustls-webpki`
+  0.103.16.** The pinned 0.103.15 could accept a certificate path through distrusted emSign
+  intermediates whose private keys are now public
+  ([RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382)). Only a build with the
+  Postgres head store carries that crate; the release binaries and every default build pull no TLS
+  stack and are not affected. Authored by @anivar.
+
+### Known limits in this release
+
+Carried from 0.6.0: bearer validation verifies `EdDSA` only; keys, trust bundles and provider
+key sets load only at startup; no posture keeps a replay cache, so a captured bearer token can
+be used until it expires; and two replicas started together on an empty store under different
+keys both start, each now answering `503` for a shard the other wrote first, with the store
+holding shards under both keys. The AAuth posture now verifies the draft's Ed25519 signature
+profile, and still does not verify ES256, signals no refusal but clock skew with a
+`Signature-Error` code, and requires `content-digest` on a request with a body. Closed since
+0.6.0: the single-file ledger takes a lock, and a Mission's approver is checked at approval and
+at each decision. Stated now:
+
+- `GET /anchor/v1/tree-head` and `GET /audit/v1/subject` read the whole ledger for an answer,
+  and both are open. Rate-limit them at whatever fronts the server. Under `--sharded` both
+  answer `501`.
+- Records removed from the end of a log show only against a tree head kept somewhere the
+  operator cannot reach. A sharded store has none: the server publishes no tree head for a
+  shard and `decern verify --sharded` takes no `--anchor`. Separately, a retired key can still
+  sign a shard its successor has not signed.
+- No command verifies a Postgres store from outside. `decern verify --sharded` reads a
+  directory store only; `decern-serve` checks a Postgres store when it starts, under the key it
+  was given.
+- The Mission approver check reads `kind` from the model the server runs. It is the server's
+  check: the `money-gate` proof covers the approval flag, not who approved, and whether the
+  caller that names an approver speaks for it rests on the caller posture. The model is fixed
+  at start, so a revocation reaches existing Missions at the next restart; an approver's
+  `expiry` acts at the decision.
+- The consent rule knows the names `consent` and `human_approved` only, and `consent` from a
+  PEP, a bearer caller or a trusted front is still the caller's word.
+- A termination answered `503` leaves the Mission terminated in the registry with no record;
+  a retry writes it while the registry still holds the Mission.
+- Under `--sharded postgres://…` each host has its own Mission registry, and the store sets no
+  statement timeout.
+- `decern explain` without `--pubkey` exits 0 and says the signature was not checked. Its prose
+  form escapes control characters and no other; `--json` prints a record as stored.
+- The TypeScript and Go clients follow redirects with their runtime's defaults.
+- `/healthz` makes no call of its own to the disk or the database: it answers `503` only after
+  a decision has met the failure. The server logs nothing after it starts.
+- The Windows build does not protect its files by permission.
+
 ## [0.6.0] - 2026-10-20
 
 This release hardens `decern-serve`'s startup and caller configuration. Configurations 0.5.0

@@ -268,7 +268,7 @@ tamper-evident ledger, and persistence and primitives.
 ## Known limitations
 
 The list below is the standing set. Each release also states what it does **not** claim —
-see [Known limits in 0.6.0](CHANGELOG.md#known-limits-in-this-release), which lists what the
+see [Known limits in 0.7.0](CHANGELOG.md#known-limits-in-this-release), which lists what the
 release still does not claim and carries each earlier release's limits forward.
 
 - **How far a credential constrains the content depends on the posture.** Bearer validation

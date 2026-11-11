@@ -28,7 +28,7 @@ binary to the workflow that built it.
 The notes are the `## [X.Y.Z]` section of `CHANGELOG.md`, copied whole into the GitHub release.
 A section has, in this order:
 
-1. **An opening**, two to four plain sentences: what the release is.
+1. **An opening**, a few plain sentences: what the release is.
 2. **Upgrading from the previous release**: each change that can stop an existing deployment or
    script, most disruptive first, with what the reader sees and what to do. One-way steps, a
    store an older binary can no longer open for one, come first and say so.
@@ -50,10 +50,11 @@ Everything between the section's heading and the next `## [` heading becomes the
 2. **Fold.**
 
    ```sh
-   ./scripts/changelog.sh --release X.Y.Z --date YYYY-MM-DD
+   ./scripts/changelog.sh --release X.Y.Z --no-date
    ```
 
-   Give the date the final tag will carry. Then write the opening, the upgrade section and the
+   The heading carries no date: the tag dates a release, and a date written before the tag can
+   only disagree with it. Then write the opening, the upgrade section and the
    known limits by hand.
 
 3. **Set the version** in:
@@ -65,7 +66,8 @@ Everything between the section's heading and the next `## [` heading becomes the
    - `sdks/typescript/package.json` and both `version` fields of its `package-lock.json`;
    - the README's "Known limits in X" link text.
 
-   The website, `CITATION.cff`, `.zenodo.json` and `SECURITY.md` carry no version. The citation
+   `CITATION.cff`, `.zenodo.json` and `SECURITY.md` carry no version, and the website names one
+   only where it restates the roadmap. The citation
    files must be on `main` before the tag, since the archive reads them from the tagged commit.
 
 4. **Verify**, with no flags, so the proofs run:
@@ -140,8 +142,8 @@ A draft release is not public and is not archived. A published candidate once le
 archive record behind, which is why a candidate is a draft.
 
 Nothing checks the example's manifest and lock, the Python module's `__version__`, the
-TypeScript lock file, the README link text, the presence of the known-limits heading, the
-CHANGELOG date, or that the tagged commit is on `main`. They are on whoever cuts the release.
+TypeScript lock file, the README link text, the presence of the known-limits heading, or that
+the tagged commit is on `main`. They are on whoever cuts the release.
 
 ## Credentials
 
