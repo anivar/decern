@@ -56,8 +56,9 @@ solver on `PATH`; serving answers does not.
 # 1. Prove every invariant over the model's input space (cvc5)
 decern prove
 
-# 2. Run the PDP (writes a tamper-evident ledger); this walkthrough is its own caller
-decern-serve --ledger /tmp/decern.jsonl --trust-proxy &
+# 2. Run the PDP (writes a tamper-evident ledger); this walkthrough is its own caller.
+#    --key keeps the signing key: without it a restart refuses the ledger it already wrote.
+decern-serve --ledger /tmp/decern.jsonl --key /tmp/decern.key --trust-proxy &
 
 # 3. Decide over HTTP (AuthZEN-shaped) — corp reads a claim it owns
 curl -s localhost:8080/access/v1/evaluation -H 'content-type: application/json' -d '{
@@ -109,7 +110,7 @@ the kernel derives in Rust before the prover runs, and say so:
 
 Every decision lands in an append-only, Ed25519-signed, hash-chained ledger, and is served
 **only if its record was written** — an unrecordable decision returns 503, never a bare
-allow. A crash-torn tail heals; truncating history at or below an anchor's size is detected
+allow. A crash-torn tail heals; truncating history below an anchor's size is detected
 against that anchor.
 
 <p align="center"><img src="docs/img/decision-flow.png" alt="decern decision flow: one of five postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" width="900"></p>
@@ -182,7 +183,8 @@ read from its running configuration so the claim cannot drift from the binary.
 `decern-serve` also serves a **Mission lifecycle**: an approver grants an agent a scoped,
 fail-closed-attenuated authorization context — "these scopes, until this time." A Mission
 exceeding what its approver holds is refused, as is one from an approver the model does not mark
-`Human`, one from a revoked approver, one an approver grants itself, and one for an agent that is not a principal in the approver's tenant. A Mission
+`Human`, one from a revoked approver, one an approver grants itself, and one for an agent that
+is not a principal in the approver's tenant. A Mission
 backs a decision only in its approver's tenant, and only while the approver, in the model the
 server runs, is unrevoked, unexpired and holds the scope the decision needs; that model is fixed
 at boot, so a revocation reaches existing Missions at the next restart. Every accepted transition
@@ -200,8 +202,8 @@ Under a Mission, for `MoveMoney`, `human_approved` therefore means a principal o
 other than the agent, is named as the approver. Whether the caller that named it spoke for that
 principal rests on the caller posture, and the proofs cover the flag, not who approved. `kind`
 is the model's word and one spelling: a model that omits it, or writes `human`, approves
-nothing. A workload caller may name only itself as approver, so one whose principal is not
-marked `Human` approves nothing either; its approvals come through a PEP.
+nothing. A workload caller not listed in `--pep` may name only itself as approver, so one whose
+principal is not marked `Human` approves nothing either; its approvals come through a PEP.
 
 decern records an approval it is given and holds decisions to it; it does not render one. The
 approval screen, the consent record and the tokens belong outside decern, and the enforcement
@@ -240,8 +242,8 @@ and decern has not been through the OpenID Foundation's certification program.
 A PEP that spells entity types its own way maps them with
 `--authzen-type-alias user=Principal`. What it says about a party (`properties`) reaches a
 policy as `context.subject`, `context.resource` and `context.action` where the model declares
-it, and only from a caller bound as a PEP — a workload bound to itself may not describe one
-through `properties`, nor carry `consent` or `human_approved` in `context`.
+it, from a PEP, a bearer caller or a trusted front — a workload bound to itself may not describe
+one through `properties`, nor carry `consent` or `human_approved` in `context`.
 `--public-url` turns on `/.well-known/authzen-configuration`.
 
 `--sharded <dir>` replaces the single file with a per-tenant sharded ledger several
@@ -249,14 +251,17 @@ processes on one host extend safely (`flock` head store); `--sharded postgres://
 same across hosts (`--features postgres` — the one optional TLS dependency, not built into
 the release binaries). `--sharded` requires `--key`, the key every replica signs with, and
 `--retired-key` names each key it replaced; a store whose records a key in neither signed refuses
-to start. A `postgres://` URL also needs `--missions-per-host`, the deployment's word, which the server cannot check, that a Mission's requests and its termination go to the host that holds it. Audit a directory store with `decern verify --sharded <dir>`; a Postgres head store has
+to start. A `postgres://` URL also needs `--missions-per-host`, the deployment's word,
+which the server cannot check, that a Mission's requests and its termination go to the host that
+holds it, and a URL that names another host must carry `sslmode=require`. Audit a directory
+store with `decern verify --sharded <dir> --pubkey <kid>`; a Postgres head store has
 no `decern verify` path. What a deployment has to supply around the server — TLS, key rollover, logging,
 retention, high availability — is in [docs/CLI.md](docs/CLI.md#what-a-deployment-supplies).
 
 ## Architecture
 
 Two binaries over seven small crates: a proven decision core, an SMT proof harness, a
-tamper-evident ledger, and pure-Rust persistence and primitives.
+tamper-evident ledger, and persistence and primitives.
 
 <p align="center"><img src="docs/img/architecture.png" alt="decern architecture: decern and decern-serve (five postures) over the kernel, identity, proof, ledger, store, and crypto crates" width="860"></p>
 
@@ -269,8 +274,10 @@ release still does not claim and carries each earlier release's limits forward.
 - **How far a credential constrains the content depends on the posture.** Bearer validation
   and `--trust-proxy` do not constrain it at all, because a gateway legitimately asks about
   other parties — so a bearer token issued to a workload carries no bind. The workload
-  postures bind a caller to itself unless it is listed in `--pep`. `--require-mission` is what
-  makes decision approval server-derived. `/audit/v1/subject` stays outside the guard on
+  postures bind a caller to itself unless it is listed in `--pep`. `MoveMoney` needs a Mission
+  under every configuration, and the server then sets `human_approved` from the grant;
+  `--require-mission` extends the Mission requirement to every other decision and strips
+  caller-sent `human_approved` and `consent`. `consent` is never server-derived. `/audit/v1/subject` stays outside the guard on
   purpose with the handle as its only access control, and nothing checks how hard a handle is
   to guess: issue handles that cannot be guessed, never one handle for two parties, treat them
   as secrets and rate-limit that route at whatever fronts the server. The full map is in
@@ -317,7 +324,7 @@ release still does not claim and carries each earlier release's limits forward.
 
 Welcome, from people and from agents. Start at
 [ARCHITECTURE.md](ARCHITECTURE.md#where-to-start-contributing) or the
-[`help wanted`](https://github.com/anivar/decern/labels/help%20wanted) issues. Open an issue
+[open issues](https://github.com/anivar/decern/issues). Open an issue
 first for anything design-changing; just raise a PR for a small, obvious fix. Every change
 passes [`./scripts/verify.sh`](scripts/verify.sh) and is
 [DCO](https://developercertificate.org/) signed off (`git commit -s`). Agent contributors

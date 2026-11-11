@@ -21,7 +21,8 @@ decern prove --model examples/authzen-certification/model
 
 decern-serve --model examples/authzen-certification/model --trust-proxy \
   --authzen-type-alias user=Principal --authzen-type-alias record=Resource \
-  --public-url http://localhost:8080 --ledger /tmp/decern-certification.jsonl
+  --public-url http://localhost:8080 --ledger /tmp/decern-certification.jsonl \
+  --key /tmp/decern-certification.key
 
 curl -s localhost:8080/.well-known/authzen-configuration
 curl -s localhost:8080/access/v1/evaluation -H 'content-type: application/json' -d '{

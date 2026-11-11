@@ -22,7 +22,7 @@ use crate::record::{append_to_backend, record_or_503, shard_for};
 
 // ============================== Mission lifecycle ==============================
 //
-// An approver grants an agent a scoped, provably-attenuated Mission (`decern-identity`).
+// An approver grants an agent a scoped, fail-closed-attenuated Mission (`decern-identity`).
 // Each accepted transition — approve, terminate — is recorded to the tamper-evident
 // ledger before it is reported as succeeded (fail-closed), exactly as a decision is.
 

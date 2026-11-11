@@ -18,7 +18,7 @@ use std::path::PathBuf;
     group(clap::ArgGroup::new("posture").required(false).multiple(false)),
     name = "decern-serve",
     version,
-    about = "Thin proven-decision PDP with a tamper-evident ledger"
+    about = "Thin fail-closed PDP with a tamper-evident ledger"
 )]
 pub(crate) struct Args {
     /// Model directory; omit for the built-in model.

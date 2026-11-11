@@ -137,7 +137,7 @@ echo
 echo "== 11. The ledger names the workload decern itself verified =="
 kill "$SRV" 2>/dev/null || true; wait "$SRV" 2>/dev/null || true
 cargo run -q -p decern-cli -- verify --ledger "$LEDGER" --pubkey "$KID"
-# Only beat 2 reached the kernel; the five refusals never became decisions.
+# Only beat 2 reached the kernel; the refusals never became decisions.
 cargo run -q -p decern-cli -- explain --ledger "$LEDGER" --seq 0 --pubkey "$KID" \
   | grep -E "decision:|asserted_by:"
 # No `iss` claim is required by the spec, so the recorded issuer is derived from the trust

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
-//! decern-serve — a thin PDP: every decision is proven-model-evaluated AND recorded before it is served.
+//! decern-serve — a thin PDP: every decision is evaluated by the kernel and recorded before it
+//! is served. The proofs are `decern prove`'s, over the model it is given; this binary runs none.
 
 mod aauth;
 mod args;

@@ -65,7 +65,7 @@ cargo build --release
 | Value of `--uri-header` | `resource.id` | `"claim1"` |
 | Configured `--resource-type` | `resource.type` | `"Resource"` |
 
-The URI header's value is passed verbatim as the resource id — decern matches it against the ids its model declares, so the gateway maps paths to resource ids (`/claims/claim1` → `claim1`) before forwarding, or the model declares path-shaped ids. A value the model has never heard of denies, which is the correct default.
+The URI header's value is passed verbatim as the resource id — decern matches it against the ids its model declares, so the gateway maps paths to resource ids (`/claims/claim1` → `claim1`) before forwarding, or the model declares path-shaped ids. A value the model has never heard of denies, which is the correct default. A value over 1 KiB, or one holding a control character, is refused by the server (`413`, `400`) and reaches the gateway as `503`, not `403`.
 
 The method header's value is passed verbatim as the action name in the same way. Every gateway example below forwards the HTTP method (`GET`, `POST`), and the builtin model declares no action of that name, so as written each one denies every request: the gateway maps methods to the model's action names before forwarding, or the model declares actions named after methods.
 
@@ -149,7 +149,7 @@ When `decern-serve` and `ext-authz-adapter` run side-by-side on a private networ
 
 ```bash
 # 1. Boot decern-serve declaring proxy trust mode
-decern-serve --ledger /tmp/decern.jsonl --addr 127.0.0.1:8080 --trust-proxy
+decern-serve --ledger /tmp/decern.jsonl --key /tmp/decern.key --addr 127.0.0.1:8080 --trust-proxy
 
 # 2. Boot ext-authz-adapter without a bearer token
 ext-authz-adapter --listen-addr 127.0.0.1:9090 --pdp-url http://127.0.0.1:8080
@@ -208,5 +208,5 @@ The adapter enforces a strict fail-closed contract on every request path:
 | Subject, method, or URI header present more than once | `403 Forbidden` | `x-decern-decision: deny` | No copy can be trusted over another. |
 | PDP unreachable / timeout | `503 Service Unavailable` | `x-decern-decision: unavailable` | Fail-closed on network failure. The deadline covers the body: a PDP that sends its headers and then stalls is answered at the deadline. |
 | PDP body over 64 KiB | `503 Service Unavailable` | `x-decern-decision: unavailable` | Refused at the bound, not read into memory whole. |
-| PDP non-2xx (e.g. ledger fail) | `503 Service Unavailable` | `x-decern-decision: unavailable` | Fail-closed on PDP internal error. |
+| PDP non-2xx (a ledger failure, or a request the server refuses as malformed or oversized) | `503 Service Unavailable` | `x-decern-decision: unavailable` | Fail-closed on any answer that is not a decision. |
 | Malformed JSON body from PDP | `503 Service Unavailable` | `x-decern-decision: unavailable` | Malformed response is never an allow. |

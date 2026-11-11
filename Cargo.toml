@@ -31,7 +31,7 @@ decern-store-postgres = { path = "crates/decern-store-postgres", version = "0.6.
 
 # Postgres backend deps — used ONLY by the optional `decern-store-postgres` crate,
 # never by the core libs or the `decern`/`decern-serve` binaries. rustls is pinned
-# to the pure-Rust `ring` provider (default features off) so the multi-host backend
+# to the `ring` provider (default features off) so the multi-host backend
 # carries exactly one documented compiled-C-FFI stack (see that crate's README) and
 # no cmake-driven `aws-lc-rs` toolchain requirement.
 postgres = "0.19"

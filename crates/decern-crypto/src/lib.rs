@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Anivar Aravind
 #![forbid(unsafe_code)]
-//! decern-crypto — Ed25519 key generation and file handling used by the ledger.
+//! decern-crypto — Ed25519 key generation and file handling used by the ledger, identity and
+//! the server, with SHA-256 helpers and a secret-sealing API no decern binary calls.
 //! Keys are raw 32-byte seeds stored hex-encoded, mode 0600. Key generation
 //! avoids the rand-version treadmill by seeding directly from the OS entropy
 //! source.

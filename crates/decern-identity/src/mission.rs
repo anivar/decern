@@ -12,7 +12,8 @@
 //! **Attenuation is ALWAYS on**: a Mission's `approved_tools` must be a subset of
 //! what the approver actually holds in the graph — an approver cannot approve
 //! authority they do not have — and its expiry cannot outlive theirs. Every Mission
-//! is therefore provably bounded. Tokens minted under a Mission are further
+//! is therefore bounded by its approver, a rule tests hold and no proof covers. Tokens minted
+//! under a Mission are further
 //! attenuated to `approved_tools` and re-read the approver's CURRENT graph node on
 //! every mint — so renewal is re-evaluation, and there is no refresh token to revoke.
 
@@ -134,7 +135,7 @@ pub const HUMAN_KIND: &str = "Human";
 
 /// Approve a Mission against the graph. Fail-closed: every approved tool must be
 /// one the approver actually holds, and the mission cannot outlive the approver's
-/// authority. The returned Mission is therefore provably bounded. An approver that is
+/// authority. The returned Mission is therefore bounded by its approver. An approver that is
 /// revoked, directly or through an ancestor, approves nothing, no principal approves a
 /// Mission for itself, and only a principal the model marks [`HUMAN_KIND`] approves.
 ///

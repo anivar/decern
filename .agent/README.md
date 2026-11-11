@@ -2,8 +2,8 @@
 # .agent
 
 The working method for agents and humans in this repo — how to make a change here, not what
-has been changed. Method only: no project knowledge, no history, no accumulated intel lives
-in this tree.
+has been changed. Method, and one record that moves with the code: the standards registry,
+which says when each specification was last read and which files implement it.
 
 It holds `methods/` — how to make a change, and how to shape one wide enough to need
 shaping (including grounding parallel work from the standards registry) — and `standards/`,

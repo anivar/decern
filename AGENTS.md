@@ -10,8 +10,8 @@ the Cedar model's symbolic input space, and every decision lands in a tamper-evi
   PDP).
   See [ARCHITECTURE.md](ARCHITECTURE.md) for the crate map and where each contribution area lives.
 - `crates/decern-kernel/model/` — the Cedar policy, schema, and entities the kernel loads.
-- [`.agent/`](.agent/README.md) — how work is done here. Method only; no project history,
-  so nothing in it goes stale when the code moves. Which part you want depends on what you
+- [`.agent/`](.agent/README.md) — how work is done here. Method, plus the standards registry,
+  which is the one part that must move with the code. Which part you want depends on what you
   are about to do:
   - Shaping a change: [`methods/`](.agent/methods/README.md), and
     [`graph-orchestration.md`](.agent/methods/graph-orchestration.md) if it is wide enough to
@@ -43,7 +43,7 @@ Run the canonical script (the same gates CI runs) and keep it green:
 ./scripts/verify.sh
 ```
 
-Needs the pinned toolchain, `cargo-deny`, `python3` for the standards check, and **cvc5**
+Needs the pinned toolchain, `cargo-deny`, `python3` for the standards and doc-link checks, and **cvc5**
 for the proofs. See [CONTRIBUTING.md](CONTRIBUTING.md). After the gate, CI runs
 `scripts/smoke.sh target/debug <scratch-dir>` against the debug binaries, end to end; run it
 when a change touches a binary's startup, flags or wiring.
@@ -66,7 +66,8 @@ change; a proof statement must never claim more than the solver checks.
 ## Changelog entry
 If a user would notice the change, add one file to [`changelog.d/`](changelog.d/README.md) in the
 same commit, named `<section>-<slug>.md` — the prefix picks the section, the body is the entry
-verbatim. CI fails a change under `crates/` or `sdks/` that has neither a fragment nor the
+verbatim. CI fails a change under `crates/`, `sdks/`, an example's `src/` or
+`examples/mcp/server.py` that has neither a fragment nor the
 `no-changelog` label. Check it renders with `./scripts/changelog.sh --preview`.
 
 Write it for whoever reads the release notes, not for the reviewer of the diff: what it does, and
@@ -110,7 +111,7 @@ still cost a guarantee:
 
 ## Where not to go
 
-decern decides and records; it does not enforce, issue credentials, or run approval UX. See
+decern decides and records; the binaries do not enforce, issue credentials, or run approval UX. See
 [ROADMAP.md](ROADMAP.md)'s non-goals before starting something large — an OAuth server, a
 gateway, or an approval product inside `decern-serve` will be declined on scope, however good
 the code is.

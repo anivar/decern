@@ -81,8 +81,9 @@ for anything large or design-changing — a short back-and-forth avoids a wasted
 obvious fix, **just raise a PR**. Link the issue you're closing (`Closes #NN`) where there is one.
 
 Where to start: [ARCHITECTURE.md](ARCHITECTURE.md) maps each contribution area to the crate that owns
-it, and [`help wanted`](https://github.com/anivar/decern/labels/help%20wanted) issues are picked to be
-approachable. A PR is reviewed before it merges; see [GOVERNANCE.md](GOVERNANCE.md). The norm is that a PR
+it, and the [open issues](https://github.com/anivar/decern/issues) say what is planned. A PR
+passes CI before it merges; while there is one maintainer, that maintainer's own PRs merge
+without a second reviewer (see [GOVERNANCE.md](GOVERNANCE.md)). The norm is that a PR
 merges only with **every** job green — not only the required ones: a red advisory job is a claim
 about the change that someone has to answer. The maintainer can override that norm deliberately —
 a workflow can be wrong too — and an override is stated on the PR, not stepped around silently.

@@ -7,10 +7,10 @@
 //! record: `hash = SHA-256(entry_bytes ‖ prev_hash)`, signature over `hash`.
 //! Any edit, reorder or in-place deletion breaks the chain; a wholesale
 //! rewrite fails signature verification against the ledger key. What the
-//! chain alone cannot detect is truncation of the *tail* — that is what
-//! `root()` is for: export the head hash and anchor it externally (a
-//! regulator, a notary, another system). Anchored root + intact chain =
-//! complete, unmodified history.
+//! chain alone cannot detect is truncation of the *tail* — that is what a
+//! signed tree head is for: publish it where the operator cannot reach (a
+//! regulator, a notary, another system), and a consistency proof from it
+//! shows nothing up to its size was rewritten or dropped.
 //!
 //! The chain hash covers the EXACT entry bytes as stored on disk (captured
 //! via serde_json's RawValue at verify time), never a re-serialization — so

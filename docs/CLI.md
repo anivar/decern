@@ -94,7 +94,7 @@ decern verify --ledger /tmp/decern.jsonl --chain-only
 |---|---|
 | `--ledger <PATH>` | A single file or a segmented directory. Required unless `--sharded`. |
 | `--sharded <DIR>` | A `flock` head-store directory: every shard is verified, and any failing shard fails the run, as does a directory that holds no shard. The shards are those listed when the run starts, each read as of its own turn, so a shard created after the listing is read next time. For one point in time across shards, stop the writers first. |
-| `--pubkey <HEX>` | Ed25519 public key. Repeatable, once per key that signed the log. A record naming a `kid` is checked against that key and one without against each key given, and a record is refused when its key had already been followed by another key in the same file, segmented ledger or shard. With `--ledger` the output lists each key with the record it started at. Without one, signatures are **not** checked. |
+| `--pubkey <HEX>` | Ed25519 public key. Repeatable, once per key that signed the log. A record naming a `kid` is checked against that key and one without against each key given, and a record is refused when its key had already been followed by another key in the same file, segmented ledger or shard. With `--ledger` the output lists each key with the record it started at. Without one the run fails, unless `--chain-only`. |
 | `--anchor <FILE>` | A tree head published earlier. Also proves nothing at or below the anchored size was rewritten, reordered or dropped. Its signature is checked against `--pubkey`, so it needs one. Not for `--sharded`. |
 | `--chain-only` | Check the hash chain alone, with no key. It shows the log holds together, which whoever wrote it can arrange, and exits 0 on that alone. Not with `--pubkey` or `--anchor`. |
 
@@ -128,50 +128,65 @@ decern explain --ledger /tmp/decern.jsonl --seq 0 --json
 | `--json` | Machine-readable instead of prose. |
 
 The prose form writes each control character in a recorded value as its escape (`\u{1b}`), a
-newline included, so a value cannot act on the terminal or start a line of its own. `--json`
+newline included, so a control character in a value cannot act on the terminal or start a line
+of its own. Characters outside that class, a direction override for one, are printed as recorded. `--json`
 prints the entry as recorded: JSON escapes U+0000 to U+001F and nothing above, so send it to a
 program, not to a terminal.
 
-A denial, read back (from a live run; `asserted_by:` appears under any credential posture —
-bearer, signed request, SPIFFE or AAuth — and is absent under `--trust-proxy`, which verifies
-no caller of its own):
+A denial, read back (from a live run of the built-in model under `--trust-proxy`; an
+`asserted_by:` line appears under any credential posture — bearer, signed request, SPIFFE or
+AAuth — and is absent here, where the server verifies no caller of its own):
 
 ```
 seq:           1
-subject:       Principal:agent-7
-action:        MoveMoney
-resource:      Resource:account9
+timestamp:     1794400886000 (ms since epoch)
+subject:       Principal:agent1
+action:        Read
+resource:      Resource:claim1
 decision:      DENY
 
 chain:
-  prev:       78d312d1b88a75d8441e19920408e3a8438ec2d547e7b5496636ba37a4bed8a6
-  hash:       7bd414059c27b912b87ba359d362830d81a63163c06c7d9ca0c7f5d0ac335205
+  prev:       abfe4a35ce137f838dc47537c379056c0b6311e2f1474064b4b8f5f8ad2d397b
+  hash:       43da0dc7576393a9e98a5f2ff703313e1772d4e497e4a371bdb77e641257bc92
   signature:  yes (verified)
-  signed_by:  46a941e7d9536df4922254a6a3cf983bd90ea3d2264c44390257adca00468fff
+  signed_by:  26dcfbaa135fc3a1a540f967e32759e716b30fcca5b50b3a9b166670e132f2af
 
 reasoning:
-  - F-money
+  - F-decay
 
 bound to:
-  authority    cb03c58cb1f689cc270f99791138dbd913d25bd50c6ee2f70a41206ad795f9be
-  parameters   5b86c3bfd81d4092515553da5c4063222554e8e7b5a053271699e78b4628f04b
+  authority    9f445dc745481b5f486658a61ec1e9dd93fd0d3c78291616efa7aec812934170
+  parameters   3c3bb2cda039da8501c822985d12e799362b7710a3f9dca3a38003c445338cb5
+
+accountable_owner: Principal:corp
+
+note: This explanation is a faithful reading of the recorded entry.
+      It is NOT a re-derivation of policy, and NOT a claim about the present.
+      The chain is verified intact; the signature is verified.
 ```
+
+A denial the server forces, such as `MoveMoney` with no Mission, records no policy reason and
+prints no `reasoning:` block.
 
 It verifies the chain **before** explaining, so a record whose chain does not hold fails loudly
 rather than getting a tidy explanation of a forgery.
 
 What it is not: a re-derivation. It does not re-run policy, and it does not tell you what today's
 directory would decide. It is a faithful reading of what was written down, which is a different and
-narrower thing — and the record says which authority it was decided against (`digests.authority`),
-so you can tell whether that authority is still the one in force. That digest covers the model
+narrower thing — and a decision or search record says which authority it was decided against
+(`digests.authority`), so you can tell whether that authority is still the one in force; a
+`Mission.*` record binds none. That digest covers the model
 `decern-serve` loaded, policy, schema and entities, and not `--require-mission` or the type
 aliases, which also shape a decision, nor the caller posture, which shapes admission and
 `asserted_by`: two servers can share it and differ on those.
 
-The `bound to:` block prints every digest the entry binds. `digests.parameters` is a JCS SHA-256
-over exactly `{subject, action, resource, context, mission, decision_subject}` as the server
-evaluated them — `entry.context` is byte-for-byte the digested context, so the value is
-recomputable from the record alone, by anyone, with any RFC 8785 implementation.
+The `bound to:` block prints every digest the entry binds. On a decision record
+`digests.parameters` is a JCS SHA-256 over exactly
+`{subject, action, resource, context, mission, decision_subject}` as the server evaluated them —
+`entry.context` is byte-for-byte the digested context, so the value is recomputable from the
+record alone, by anyone, with any RFC 8785 implementation. A `Search.*` record digests
+`{search, subject, action, resource, context}`, taken before `context.search` is added to the
+record, and a `Mission.*` record digests `{action, approver, s256, context}`.
 
 ---
 
@@ -189,12 +204,12 @@ decern-serve --ledger /tmp/decern.jsonl --trust-proxy
 | `--authzen-type-alias <REQUEST=MODEL>` | A request entity type and the model entity type it names (`user=Principal`). Repeatable. A PEP spells types in its own terms; the record carries the model's. A type with no alias passes through unchanged. The model type must be one the model's schema declares, or the server does not start. A workload caller bound to itself is matched by id alone; the trust boundary below says what that means for a custom model. |
 | `--public-url <URL>` | This deployment's public base URL, advertised as the policy decision point by `GET /.well-known/authzen-configuration`. `https://`, or `http://` on loopback for a local walkthrough; an origin only. Omit and the document is not served. |
 | `--ledger <PATH>` | Single-file ledger. The default backend. Mutually exclusive with `--sharded`. One process writes it, and a second process opening the same file is refused at startup. On Unix the lock is on the ledger file itself, so it holds by any path, link or mount that reaches the file, and readers such as `decern verify` are not blocked; on Windows it is a `<PATH>.lock` file beside the ledger's canonical path, which a hard link to the ledger, or a link made before the ledger existed, does not share, and the ledger's directory must be writable. On a network filesystem it holds only where the filesystem honours the lock. |
-| `--sharded <DIR_OR_POSTGRES_URL>` | Hosted; requires `--key`, and a `postgres://` URL also `--missions-per-host`. A directory gives a per-shard `flock` head store (several processes, one host). A `postgres://` URL gives a multi-host head store and needs `--features postgres`, which the release binaries are not built with; a URL naming a host other than this one (not a Unix socket, `localhost` or a loopback address) must carry `sslmode=require` or the server refuses to start; the scheme is matched regardless of case, any other scheme is refused, and no message repeats the URL. The URL, any password in it included, is visible in the process list to other users of the host. An append reads the shard's head, not its records. A directory store written by 0.6.0 or earlier is read as it is and converted one shard at a time, at that shard's next append. An earlier release refuses a store holding a shard this release created or finished converting, so stop every replica before upgrading; there is no way back. The first boot against a Postgres store adds a column to `decern_ledger_head`, which needs the role that owns the table, and gives up after 5 seconds behind another session holding it. |
+| `--sharded <DIR_OR_POSTGRES_URL>` | Hosted; requires `--key`, and a `postgres://` URL also `--missions-per-host`. A directory gives a per-shard `flock` head store (several processes, one host). A `postgres://` URL gives a multi-host head store and needs `--features postgres`, which the release binaries are not built with; a URL naming a host other than this one (not a Unix socket, `localhost` or a loopback address, judged by `hostaddr` when the URL gives one) must carry `sslmode=require` or the server refuses to start; the scheme is matched regardless of case, any other scheme is refused, and no message repeats the URL. The URL, any password in it included, is visible in the process list to other users of the host. An append reads the shard's head, not its records. A directory store written by 0.6.0 or earlier is read as it is and converted one shard at a time, at that shard's next append. An earlier release refuses a store holding a shard this release created or finished converting, so stop every replica before upgrading; there is no way back. The first boot against a Postgres store adds a column to `decern_ledger_head`, which needs the role that owns the table, and gives up after 5 seconds behind another session holding it. |
 | `--key <PATH>` | 32-byte hex signing seed, created at `0600` and synced to disk if absent, never overwritten, and refused as the path of `--ledger` or `--missions`, by any spelling or link. A key readable by group or other is **refused**, not loaded — it signs every record and tree head, so a readable copy is enough to forge history that verifies. Both permission rules are Unix only: on Windows a missing key file is refused rather than created, and an existing one is loaded without checking who can read it. Omit for an ephemeral key, which means nothing you record today verifies tomorrow; the startup line says `(ephemeral)`, and a ledger file that is not empty or a `--sharded` store refuses one. A ledger with records is extended only by `--key` with every other key that signed it given as `--retired-key`: a record under a key in neither refuses the start, naming the record's key id, where the record names its key, beside the ones this boot holds, and, for any ledger file that is not empty, a `--key` naming a file that does not exist refuses too, both before anything is written, except that under a Postgres head store that already holds shards, and no `--retired-key`, the key file is created first. An empty ledger file is a new ledger. Under `--sharded` every shard is verified under these keys at boot, chain and every signature, one signature check per record. A store with no shards boots under any key, so two replicas started at once on an empty store under different keys both boot; each then refuses with `503` to record into a shard the other wrote first, and the store holds shards under both keys: start the first replica alone, or give every replica the same key before any starts. A shard another replica creates later is checked at the next restart. |
 | `--retired-key <HEX>` | Public key of a ledger key this deployment rotated away from, as the startup line or `GET /pubkey` printed it while it signed. Repeatable, once per earlier key; requires `--key`, which must then name a key file that already exists. Records it signed keep verifying, and the server never signs with it. Verification refuses a record under it from its successor's first record on, within one log: for a single-file or segmented ledger that is everything after the rotation, while a sharded store is checked shard by shard, so a retired key can still sign a shard its successor has not signed. To rotate, make the new key file first, `(umask 077; openssl rand -hex 32 > new.key)`, then stop the server and start it with `--key new.key` and the old key's id here. A sharded deployment stops every replica and starts each the same way: a replica still on the old key refuses with `503` to record into a shard the new key has signed. To undo a rotation, rotate again to another new key. Do not put a retired key back under `--key`: one a later key has followed in the ledger or in any shard refuses to start. A retired key equal to `--key`'s, or given twice, refuses to start. |
-| `--missions <PATH>` | Mission registry. Default `decern-missions.json` beside the ledger, or in the working directory under `--sharded postgres://…`. It is a file on one host, shared by the processes that open it: under `--sharded postgres://…` a replica on another host has its own, so a Mission approved or terminated on one host is unknown to, or still live on, the others. |
+| `--missions <PATH>` | Mission registry. Default `decern-missions.json` beside a `--ledger` file, inside a `--sharded` directory, or in the working directory under `--sharded postgres://…`. It is a file on one host, shared by the processes that open it: under `--sharded postgres://…` a replica on another host has its own, so a Mission approved or terminated on one host is unknown to, or still live on, the others. |
 | `--missions-per-host` | Required under `--sharded postgres://…`, refused with any other ledger: the deployment's word, which the server cannot check, that it keeps a Mission's requests and its termination on the host whose registry holds it. What one host's registry means is under `--missions`. |
-| `--require-mission` | Refuse any decision that does not name a live Mission. Client-supplied `human_approved` and `consent` are then stripped (from a caller bound to itself they are refused before that, `403 caller_mismatch`); `human_approved` is re-derived from the grant for MoveMoney. `consent` is **not** re-derived — a Mission is an approver's grant, not the resource owner's consent — so this makes on-behalf-of PII access fail closed rather than server-derived. A Mission binds only `Read` (scope `read`), `MoveMoney` (`move_money`) and `AccessPII` (`pii:read`), and under a Mission any other action is denied, so on a custom model this flag denies every action outside those three. |
+| `--require-mission` | Deny, and record as a Deny, any decision that does not name a live Mission. Client-supplied `human_approved` and `consent` are then stripped (from a caller bound to itself they are refused before that, `403 caller_mismatch`); `human_approved` is re-derived from the grant for MoveMoney. `consent` is **not** re-derived — a Mission is an approver's grant, not the resource owner's consent — so this makes on-behalf-of PII access fail closed rather than server-derived. A Mission binds only `Read` (scope `read`), `MoveMoney` (`move_money`) and `AccessPII` (`pii:read`), and under a Mission any other action is denied, so on a custom model this flag denies every action outside those three. |
 | `--standing-issuer-key <HEX>` | An issuer whose standing tokens this deployment accepts. Repeatable. Omit to accept no challenges. |
 | `--bearer-issuer <URL>` | The `iss` an access token must carry, matched exactly. Turns on bearer validation for the guarded routes; requires `--bearer-audience` and at least one `--bearer-issuer-key`. |
 | `--bearer-audience <URI>` | This deployment's resource identifier, which a token's `aud` must contain (RFC 8707 §2). |
@@ -219,10 +234,10 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 
 | Method | Path | Caller | What |
 |---|---|---|---|
-| `POST` | `/access/v1/evaluation` | guarded | The decision. AuthZEN 1.0: `subject`/`resource` `{type,id,properties?}`, `action` `{name,properties?}`, optional `context`; `properties` reach the policies as `context.subject`/`context.resource`/`context.action` where the model declares them, from PEP-bound callers only. A context over 64 KiB as sent, properties included, is 413. `/decide` is an alias. |
-| `POST` | `/access/v1/evaluations` | guarded | Several decisions in one exchange (AuthZEN 1.0 §7). Top-level `subject`/`action`/`resource`/`context` are defaults an item replaces whole; `options.evaluations_semantic` is `execute_all` (default), `deny_on_first_deny` or `permit_on_first_permit`; answers come back in request order. Each evaluated item is admitted, decided and recorded as a single evaluation is, before the batch is served — under `execute_all` as one durable step on the single-file ledger; an item that is not an evaluation, or that this server refuses, is `decision: false` with `context.error` `{status, code, message}` and is not recorded, where a policy deny carries the kernel's `context.errors`. A record that cannot land fails the exchange closed (503) with the items before it already recorded, so a retry records those again, after the restart a single-file ledger that stopped on a write error needs; a registry that cannot be read at an item's settlement lands nothing of an `execute_all` batch on the single-file ledger. Each item is settled under the ledger's lock as it is recorded, as a single decision is, and answered as recorded. Under `deny_on_first_deny` and `permit_on_first_permit` each item is recorded before the next is evaluated and the semantic follows the decision as settled: an item settled to a Deny at the record stops a `deny_on_first_deny` batch and does not end a `permit_on_first_permit` one; on the single-file ledger those two modes record one item per step. At most 1000 items. Without items, this is the single evaluation. |
-| `POST` | `/access/v1/search/subject` | guarded | The subjects of a type that may perform an action on a resource (AuthZEN 1.0 §8.4): every principal of that type is decided as an evaluation would be, over the same prepared context, and the ones permitted come back in the request's type spelling. `subject.id`, if sent, is ignored. A caller bound to itself may not search for subjects. |
-| `POST` | `/access/v1/search/resource` | guarded | The resources of a type a subject may perform an action on (§8.5); `resource.id`, if sent, is ignored. |
+| `POST` | `/access/v1/evaluation` | guarded | The decision. AuthZEN 1.0: `subject`/`resource` `{type,id,properties?}`, `action` `{name,properties?}`, optional `context`; `properties` reach the policies as `context.subject`/`context.resource`/`context.action` where the model declares them, from PEP-bound callers only. A context over 64 KiB, properties included, is 413. `/decide` is an alias. |
+| `POST` | `/access/v1/evaluations` | guarded | Several decisions in one exchange (AuthZEN 1.0 §7). Top-level `subject`/`action`/`resource`/`context` are defaults an item replaces whole; `options.evaluations_semantic` is `execute_all` (default), `deny_on_first_deny` or `permit_on_first_permit`; answers come back in request order. Each evaluated item is admitted, decided and recorded as a single evaluation is, before the batch is served — under `execute_all` as one durable step on the single-file ledger; an item that is not an evaluation, or that this server refuses, is `decision: false` with `context.error` `{status, code, message}` and is not recorded, where a policy deny carries the kernel's `context.errors`. A caller bound to itself that names, describes or asserts consent or approval for another party in any item, or in a default an item inherits, is refused for the whole exchange, `403 caller_mismatch`, with nothing recorded. A record that cannot land fails the exchange closed (503) with the items before it already recorded, so a retry records those again, after the restart a single-file ledger that stopped on a write error needs; a registry that cannot be read at an item's settlement lands nothing of an `execute_all` batch on the single-file ledger. Each item is settled under the ledger's lock as it is recorded, as a single decision is, and answered as recorded. Under `deny_on_first_deny` and `permit_on_first_permit` each item is recorded before the next is evaluated and the semantic follows the decision as settled: an item settled to a Deny at the record stops a `deny_on_first_deny` batch and does not end a `permit_on_first_permit` one; on the single-file ledger those two modes record one item per step. At most 1000 items. Without items, this is the single evaluation. |
+| `POST` | `/access/v1/search/subject` | guarded | The subjects of a type that may perform an action on a resource (AuthZEN 1.0 §8.4): every principal of that type is decided as an evaluation would be, over the same prepared context, and the ones permitted come back in the request's type spelling. `subject.id`, if sent, is held to the name bound in Limits and otherwise ignored. A caller bound to itself may not search for subjects. |
+| `POST` | `/access/v1/search/resource` | guarded | The resources of a type a subject may perform an action on (§8.5); `resource.id`, if sent, is held to the name bound in Limits and otherwise ignored. |
 | `POST` | `/access/v1/search/action` | guarded | The actions the model declares that a subject may perform on a resource (§8.6); `action` is omitted from the request. For all three: no pagination — every result comes in one page, a `page.limit` is accepted and a `page.token` is 400, since this server issued none; a search binds no Mission (refused, 422 `search_under_mission`, under `--require-mission` or with a `context.mission`); a `decision_subject` or a challenge in the context is dropped, nothing being decided about anyone, once admission has held a named handle to the caller's bind as on an evaluation; an action a decision would refuse for want of a Mission (`MoveMoney` in the built-in model) is never a result; parity is with what the authority records, since a fact that lives only in a request's `properties` for the searched side cannot be supplied; `properties` on the searched side describe every candidate (a subject search with `subject.properties` asks which subjects, so described, would be permitted — it is not a filter); an `action` sent to an action search is 400. Each search is recorded once under `Search.Subject`/`Search.Resource`/`Search.Action` with the result ids (up to 1000) and the count, over the context pruned to what the searched action declares (an action search: what any action declares; an unknown action: the clock alone); a subject search's record names no subject and lands in the resource's tenant's shard; its `decision` is `true` — the search ran — with no reasons, so a count of allows must exclude `Search.*`; its parameters digest is over the inputs, so a verifier recomputing it strips `context.search` first. |
 | `GET` | `/pubkey` | open | `kid`, the key records are signed with now, and `keys`, every key a record may be verified under: the `--retired-key` keys in the order given, then `kid`. `keys` changes when the deployment rotates; a verifier passes each of them to `decern verify --pubkey`. |
 | `GET` | `/anchor/v1/tree-head` | open | A signed commitment to the log's current state — publish it somewhere you do not control. Recomputed at most once a second, holding the lock appends need only to count the records and to sign; between, the last head is served. |
@@ -230,9 +245,9 @@ unavailable ledger degrades into refusals rather than into unrecorded permission
 | `GET` | `/directory/v1/principals/{id}/descendants` | guarded | Who else loses authority if this principal is revoked. |
 | `POST` | `/mission/v1/approve` | guarded | Grant a scoped, fail-closed-attenuated Mission. Refused (422, nothing recorded) when it exceeds the approver's scopes or expiry, when the approver is not a principal the model marks `Human`, is revoked, directly or through a delegator, or is the agent itself, or when the agent is not a principal in the approver's tenant. A body that is not an approval request is refused in the same JSON shape, with 400, 413, 415 or 422. A Mission backs a decision only about a subject the model names, approved by another principal the model names (compared by id only) and marks `Human`, in the same tenant, and only while that approver is unrevoked, unexpired and holds the decision's scope in the model the server runs. The approval is recorded, then registered: a write the registry cannot complete is answered `503`, one it refuses because the Mission was terminated meanwhile is `409`, both with the approval recorded and not live, and a retry records it again when the registry reads the Mission as not terminated. |
 | `GET` | `/mission/v1/{s256}` | guarded | Its approver, state and expiry, to every established caller — a workload bound to itself included, so a reference a caller can compute or obtain answers who approved what and until when. `active` is the registry's state: whether the Mission backs a given decision is settled when that decision is taken, against the approver's standing then. Unbound because a PEP consults mission state before honoring a grant, and binding the read to the approver would refuse the agent a Mission authorizes. The registry is read on a blocking thread, one of the places the limits below count. |
-| `POST` | `/mission/v1/{s256}/terminate` | guarded | End it. A terminated Mission never revives, and no Allow under it is recorded after its termination on this host: a decision bound to it before and recorded after is recorded, and answered, as a Deny saying so, whose record may precede the termination's own, written after the registry. A `503` for the clock, the registry or the server's places leaves the Mission as it was and nothing recorded. A record the ledger cannot complete is answered `503` with the Mission terminated and its record unwritten; a retry writes it once the ledger records again, while the registry still holds the Mission, which it does for thirty days past its expiry, and a terminate repeated after a `200` writes a second record. |
-| `GET` | `/.well-known/decern-subject-side-disclosure` | open | What this deployment does about challenges and callers, read from its running configuration. A challenge is classified and answered; it is not a re-evaluation or an appeal, and nothing in it changes a decision or reaches the kernel. A challenge that cannot be parsed, or whose standing is not proved, refuses the whole request with `422` and records nothing. |
-| `GET` | `/.well-known/authzen-configuration` | open | AuthZEN 1.0 PDP metadata: the decision point and its evaluation endpoint, when `--public-url` is set; 404 otherwise. |
+| `POST` | `/mission/v1/{s256}/terminate` | guarded | End it. On Unix a terminated Mission never revives (the README states the Windows limit), and no Allow under it is recorded after its termination on this host: a decision bound to it before and recorded after is recorded, and answered, as a Deny saying so, whose record may precede the termination's own, written after the registry. A `503` for the clock, the registry or the server's places leaves the Mission as it was and nothing recorded. A record the ledger cannot complete is answered `503` with the Mission terminated and its record unwritten; a retry writes it once the ledger records again, while the registry still holds the Mission, which it does for thirty days past its expiry, and a terminate repeated after a `200` writes a second record. |
+| `GET` | `/.well-known/decern-subject-side-disclosure` | open | What this deployment does about challenges and callers, read from its running configuration. A challenge is classified and answered; it is not a re-evaluation or an appeal, and nothing in it changes a decision or reaches the kernel. A challenge that cannot be parsed, or whose standing is not proved, refuses the evaluation, or that batch item, with `422` and records nothing. |
+| `GET` | `/.well-known/authzen-configuration` | open | AuthZEN 1.0 PDP metadata: the decision point and its evaluation, evaluations and three search endpoints, when `--public-url` is set; 404 otherwise. |
 | `GET` | `/healthz` | open | `ok`, or `503` once the single-file ledger has stopped after a write error or its lock was poisoned by a panic, once a Postgres head store has found its connection closed or the thread that holds it has stopped, or while a Postgres head store has had one database call running for 30 seconds, a database that stopped answering without closing the connection. A restart recovers the first two; the third clears when the database answers. |
 
 "Guarded" routes require the caller to be established; "open" routes are open by intent — they are
@@ -259,7 +274,7 @@ names one posture:
   expires — a leaked bearer JWT is replayable as-is — this mode requires proof of possession of
   the signing key on every single request, and a captured signature over one POST body cannot
   authorize a different one. A signed agent may additionally only *name itself*: the
-  authenticated agent must equal the AuthZEN `subject`, the mission `approver`, the stored
+  authenticated agent must equal the AuthZEN `subject`, the `decision_subject`, the mission `approver`, the stored
   approver on terminate, and the principal id on `/directory/v1/principals/{id}/descendants`,
   unless it is listed in `--pep`. A mismatch is `403 caller_mismatch` — the credential was
   accepted, the name is not theirs. The same bind covers a request's `properties`, what a PEP
@@ -375,7 +390,7 @@ the context attributes the model's schema declares for that action, the server's
 deciding policy ids, the accountable owner, the Mission named, any decision-subject handle, a
 challenge with the decision it names, the handle the challenger proved standing as, its basis, its
 requested effect, its answer and the answer's basis, and a digest of any evidence sent, and under
-a credential posture the caller's `sub`, `client_id` and `iss`. A Mission approval record keeps
+a credential posture the caller's `sub`, `client_id` and, where an issuer was verified, `iss`. A Mission approval record keeps
 the approver, the agent, the approved scopes and capabilities, the expiry and the `description` as
 sent. Nothing in decern edits or erases a record; one removed by hand from the middle fails a
 verify with the ledger's public key unless every record after it is renumbered, re-chained and
@@ -395,8 +410,8 @@ waiting:
 | Connections at once | 1,024; HTTP/1 serves one request at a time on each | the next waits in the listen queue |
 | Requests being decided, searched, recorded, audited or read as a Mission at once | 512, one per blocking thread; a request that ran out of time keeps its thread until its work ends | the next is answered `503`, `server_busy`, at once |
 | Subject audits at once | 1, each reading the whole log into memory; tree-head recomputes run one at a time beside it | the next waits, within the request deadline |
-| Shutdown after SIGINT or SIGTERM | 30 seconds for requests in progress, then the listener closes | the process exits once every blocking thread has returned; one a stalled database holds is waited for |
-| Request body | 2 MiB | `413` |
+| Shutdown after SIGINT or SIGTERM | no connection is accepted after the signal; 30 seconds for requests in progress, then the listener closes | the process exits once every blocking thread has returned; one a stalled database holds is waited for |
+| Request body | 2 MiB | `413`; under `--trust-proxy` the evaluation, batch and search routes answer `400`, `invalid_request`, and Mission approval `413` |
 | A context, properties included | 64 KiB | `413`, `context_too_large` |
 | An entity type, entity id or action name | 1 KiB, and no control character | `413`, `name_too_large`; `400`, `invalid_request` for a control character |
 | Items in one batch | 1,000 | `400` |
@@ -404,8 +419,10 @@ waiting:
 | `Signature`, `Signature-Input`, `Signature-Key` | 8 KiB each | `401` |
 
 Under bearer and SPIFFE the credential is checked before the body is read; under signed-request
-and AAuth, whose signature covers the body, the body is read first. An error quoting the request
-back, such as an unknown action's name, is cut to 512 characters in the answer.
+and AAuth, whose signature covers the body, the body is read first. A decision or search
+refusal quoting the request back, such as an unknown action's name, is cut to 512 characters in
+the answer, and a `caller_mismatch` to 64. A Mission approval refusal and the `404` for an
+unknown Mission quote ids from the request uncut.
 
 ### What a deployment supplies
 

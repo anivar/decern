@@ -14,7 +14,8 @@ Global `fetch`, zero dependencies — no axios, node-fetch or undici. Node ≥ 2
 ```sh
 npm install decern
 # and a server to ask:
-cargo install decern-server && decern-serve --trust-proxy
+cargo install decern-server && decern-serve --trust-proxy --key decern.key
+# (--key keeps the signing key; without it a restart refuses the ledger it already wrote)
 # and, to check the log afterwards:
 cargo install decern-cli
 ```
@@ -37,10 +38,15 @@ d.errors;  // evaluation failures and server gates (a missing Mission); neither:
 
 Also on the client: `c.pubkey()` (the Ed25519 key id signing the log now; `GET /pubkey` lists
 earlier ones under `keys`) and `c.healthy()`.
-A non-2xx response or transport failure throws `DecernError` with the HTTP status and body, so a
-denial is distinguishable from a misconfigured endpoint. `context` reaches the policies wherever
-the model's schema declares it, apart from keys the server reserves for the caller, the Mission
-and the challenge. The server sets `now` from its own clock, and records the accountable owner
+`DecernError` is thrown on a non-2xx response, with the HTTP status and body, so a denial is
+distinguishable from a misconfigured endpoint; on a transport failure or timeout; on a success
+body over 1 MiB, where the runtime's `fetch` gives a stream to count; and on a `decision` that is
+absent or is not a boolean. A success body that is not JSON throws `SyntaxError`. Redirects
+follow the runtime's default. `context` reaches the policies where
+the model's schema declares it, except the keys the server takes for itself: `mission`,
+`decision_subject`, the challenge, `asserted_by`, `subject`, `resource` and `action`. Under a
+Mission the server removes `human_approved` and `consent` and sets `human_approved` itself for
+`MoveMoney`. The server sets `now` from its own clock, and records the accountable owner
 and any verified caller itself, whatever the context says. `token` is sent as `Authorization:
 Bearer <token>` on every request, for a deployment that requires bearer tokens on the evaluation
 endpoint; leave it unset otherwise.
