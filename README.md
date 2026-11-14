@@ -284,7 +284,10 @@ release still does not claim and carries each earlier release's limits forward.
   caller-sent `human_approved` and `consent`. `consent` is never server-derived. `/audit/v1/subject` stays outside the guard on
   purpose with the handle as its only access control, and nothing checks how hard a handle is
   to guess: issue handles that cannot be guessed, never one handle for two parties, treat them
-  as secrets and rate-limit that route at whatever fronts the server. The full map is in
+  as secrets and rate-limit that route at whatever fronts the server. Rate-limit
+  `/anchor/v1/tree-head` there too: neither route asks for a credential, a subject audit reads
+  the whole ledger for every answer, and a tree head reads it each time it recomputes, so both
+  cost more as the ledger grows. The full map is in
   [docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly).
 - **Bearer validation verifies `EdDSA` tokens only.** RFC 9068 §2.1 requires a conforming
   resource server to support RS256, so `decern-serve` applies RFC 9068's checks without being a
