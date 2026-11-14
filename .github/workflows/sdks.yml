@@ -113,5 +113,19 @@ jobs:
       # type check is part of the test step rather than a separate one.
       - run: npm test
 
-      # What a publish would pack, without a registry: the build is already in dist.
-      - run: npm pack --dry-run
+      # What a publish would pack, without a registry: the build is already in dist. The
+      # package must hold every file package.json names as `main`, as `types` and under
+      # `exports`, and nothing under `dist/tests`, where the build writes the compiled tests.
+      - name: npm pack --dry-run
+        run: |
+          npm pack --dry-run --json > "${RUNNER_TEMP}/pack.json"
+          files="$(jq -r '.. | objects | select(has("files")) | .files[].path' "${RUNNER_TEMP}/pack.json")"
+          printf '%s\n' "${files}"
+          wants="$(jq -r '[.main, .types, (.exports | .. | strings)] | map(select(. != null) | ltrimstr("./")) | unique | .[]' package.json)"
+          [ -n "${wants}" ] || { echo "::error::package.json names no entry file"; exit 1; }
+          while IFS= read -r want; do
+            printf '%s\n' "${files}" | grep -qxF -- "${want}" || { echo "::error::the package lacks ${want}"; exit 1; }
+          done <<<"${wants}"
+          if printf '%s\n' "${files}" | grep -q '^dist/tests/'; then
+            echo "::error::the package holds files under dist/tests"; exit 1
+          fi
