@@ -1,66 +1,112 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1384" height="360" viewBox="0 0 1384 360" role="img" aria-label="decern architecture">
-  <rect width="1384" height="360" fill="#F5F7F6"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1384" height="600" viewBox="0 0 1384 600" role="img" aria-label="decern architecture">
+  <rect width="1384" height="600" fill="#F5F7F6"/>
   <style><![CDATA[
     .t { font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; }
   ]]></style>
 
-  <text x="40" y="36" class="t" font-size="11" font-weight="600" fill="#849490">BINARIES</text>
-  <rect x="40" y="52" width="200" height="100" rx="6" fill="#D7E8E3" stroke="#0E7C6B" stroke-width="1.5"/>
-  <text x="140" y="88" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern</text>
-  <text x="140" y="110" text-anchor="middle" class="t" font-size="11" fill="#5E6B67">CLI</text>
-  <text x="140" y="130" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">prove/decide/explain/verify</text>
+  <!-- Every line is a dependency a Cargo.toml declares; `cargo metadata` is the check.
+       Dev-dependencies are left out. A line runs down from a crate to what it depends on. -->
 
-  <rect x="40" y="172" width="200" height="100" rx="6" fill="#D7E8E3" stroke="#0E7C6B" stroke-width="1.5"/>
-  <text x="140" y="208" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-serve</text>
-  <text x="140" y="230" text-anchor="middle" class="t" font-size="11" fill="#5E6B67">AuthZEN PDP</text>
-  <text x="140" y="248" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">fail-closed / 5 postures</text>
+  <text x="40" y="36" class="t" font-size="11" font-weight="600" fill="#849490">HOW TO READ</text>
+  <path d="M40 72 H84" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <circle cx="84" cy="72" r="3.5" fill="#5E6B67"/>
+  <text x="100" y="76" class="t" font-size="10" fill="#5E6B67">depends on</text>
+  <path d="M40 100 H84" stroke="#849490" stroke-width="1.25" stroke-dasharray="4 3" fill="none"/>
+  <text x="100" y="104" class="t" font-size="10" fill="#5E6B67">optional: --features postgres</text>
+  <path d="M40 128 H57 a5 5 0 0 1 10 0 H84" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <text x="100" y="132" class="t" font-size="10" fill="#5E6B67">crosses, no dependency</text>
+  <text x="40" y="172" class="t" font-size="10" fill="#849490">A line runs down from a crate</text>
+  <text x="40" y="188" class="t" font-size="10" fill="#849490">to each crate it depends on.</text>
+  <text x="40" y="212" class="t" font-size="10" fill="#849490">Dev-dependencies are not drawn.</text>
+  <text x="40" y="252" class="t" font-size="10" fill="#5E6B67">2 binaries over 7 libraries</text>
 
-  <text x="280" y="36" class="t" font-size="11" font-weight="600" fill="#849490">PROOF</text>
-  <rect x="280" y="52" width="240" height="88" rx="6" fill="#E4F3EF" stroke="#0E7C6B" stroke-width="1.5"/>
-  <text x="400" y="88" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-proof</text>
-  <text x="400" y="110" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Cedar to cvc5 / 9 invariants</text>
-  <text x="400" y="126" text-anchor="middle" class="t" font-size="10" fill="#849490">symbolic input space</text>
+  <text x="330" y="36" class="t" font-size="11" font-weight="600" fill="#849490">BINARIES</text>
+  <rect x="330" y="52" width="376" height="80" rx="6" fill="#D7E8E3" stroke="#0E7C6B" stroke-width="1.5"/>
+  <text x="518" y="86" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern</text>
+  <text x="518" y="108" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">CLI: prove / decide / explain / verify</text>
 
-  <text x="560" y="36" class="t" font-size="11" font-weight="600" fill="#849490">DECISION CORE</text>
-  <rect x="560" y="52" width="240" height="88" rx="6" fill="#EEF0F8" stroke="#4A5480" stroke-width="1.5"/>
-  <text x="680" y="88" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-kernel</text>
-  <text x="680" y="110" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Cedar authority graph</text>
-  <text x="680" y="126" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">+ decision fn</text>
+  <rect x="736" y="52" width="608" height="80" rx="6" fill="#D7E8E3" stroke="#0E7C6B" stroke-width="1.5"/>
+  <text x="1040" y="86" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-serve</text>
+  <text x="1040" y="108" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">AuthZEN decision point: fail-closed / 5 caller postures</text>
 
-  <rect x="560" y="160" width="240" height="88" rx="6" fill="#EEF0F8" stroke="#4A5480" stroke-width="1.5"/>
-  <text x="680" y="196" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-identity</text>
-  <text x="680" y="218" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Mission: approval</text>
-  <text x="680" y="234" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">+ attenuation</text>
+  <text x="330" y="196" class="t" font-size="11" font-weight="600" fill="#849490">LIBRARIES</text>
+  <rect x="330" y="212" width="231" height="88" rx="6" fill="#E4F3EF" stroke="#0E7C6B" stroke-width="1.5"/>
+  <text x="445" y="246" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-proof</text>
+  <text x="445" y="268" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Cedar to cvc5 / 9 invariants</text>
+  <text x="445" y="284" text-anchor="middle" class="t" font-size="10" fill="#849490">symbolic input space</text>
 
-  <text x="840" y="36" class="t" font-size="11" font-weight="600" fill="#849490">PERSISTENCE + PRIMITIVES</text>
-  <rect x="840" y="52" width="240" height="72" rx="6" fill="#FFFFFF" stroke="#849490" stroke-width="1.25" stroke-dasharray="5 3"/>
-  <text x="960" y="82" text-anchor="middle" class="t" font-size="12" font-weight="600" fill="#5E6B67">decern-store-postgres</text>
-  <text x="960" y="102" text-anchor="middle" class="t" font-size="10" fill="#849490">multi-host (optional)</text>
+  <rect x="591" y="212" width="231" height="88" rx="6" fill="#F3EDE4" stroke="#A67C2A" stroke-width="1.5"/>
+  <text x="706" y="246" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-ledger</text>
+  <text x="706" y="268" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Ed25519-signed hash chain</text>
+  <text x="706" y="284" text-anchor="middle" class="t" font-size="10" fill="#849490">tree heads + anchors</text>
 
-  <rect x="840" y="140" width="240" height="72" rx="6" fill="#E8EAE9" stroke="#5E6B67" stroke-width="1.5"/>
-  <text x="960" y="170" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-crypto</text>
-  <text x="960" y="190" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Ed25519 / SHA-256</text>
+  <rect x="852" y="212" width="231" height="88" rx="6" fill="#EEF0F8" stroke="#4A5480" stroke-width="1.5"/>
+  <text x="967" y="246" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-identity</text>
+  <text x="967" y="268" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Mission: approval</text>
+  <text x="967" y="284" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">+ attenuation</text>
 
-  <rect x="840" y="228" width="240" height="72" rx="6" fill="#E8EAE9" stroke="#5E6B67" stroke-width="1.5"/>
-  <text x="960" y="258" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-store</text>
-  <text x="960" y="278" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">ledger head + MissionRegistry</text>
+  <rect x="1113" y="212" width="231" height="88" rx="6" fill="#FFFFFF" stroke="#849490" stroke-width="1.25" stroke-dasharray="5 3"/>
+  <text x="1228" y="246" text-anchor="middle" class="t" font-size="12" font-weight="600" fill="#5E6B67">decern-store-postgres</text>
+  <text x="1228" y="268" text-anchor="middle" class="t" font-size="10" fill="#849490">multi-host ledger head</text>
+  <text x="1228" y="284" text-anchor="middle" class="t" font-size="10" fill="#849490">(optional)</text>
 
-  <text x="1120" y="36" class="t" font-size="11" font-weight="600" fill="#849490">AUDIT</text>
-  <rect x="1120" y="120" width="220" height="100" rx="6" fill="#F3EDE4" stroke="#A67C2A" stroke-width="1.5"/>
-  <text x="1230" y="162" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-ledger</text>
-  <text x="1230" y="184" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Ed25519 hash-chain</text>
-  <text x="1230" y="200" text-anchor="middle" class="t" font-size="10" fill="#849490">anchor for completeness</text>
+  <text x="40" y="372" class="t" font-size="11" font-weight="600" fill="#849490">FOUNDATION / NO DECERN DEPENDENCIES</text>
+  <rect x="40" y="388" width="250" height="52" rx="6" fill="#EEF0F8" stroke="#4A5480" stroke-width="1.5"/>
+  <text x="165" y="410" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-kernel</text>
+  <text x="165" y="428" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Cedar authority graph + decision fn</text>
 
-  <path d="M240 102 H280" stroke="#849490" stroke-width="1.25" fill="none"/>
-  <path d="M240 222 H560" stroke="#849490" stroke-width="1.25" fill="none"/>
-  <path d="M520 96 H560" stroke="#0E7C6B" stroke-width="1.25" stroke-dasharray="4 3" fill="none"/>
-  <text x="540" y="88" class="t" font-size="9" fill="#0E7C6B">proves</text>
-  <path d="M800 96 H840" stroke="#849490" stroke-width="1.25" fill="none"/>
-  <path d="M800 204 H840" stroke="#849490" stroke-width="1.25" fill="none"/>
-  <path d="M960 124 V140" stroke="#849490" stroke-width="1.25" stroke-dasharray="4 3" fill="none"/>
-  <path d="M960 212 V228" stroke="#849490" stroke-width="1.25" fill="none"/>
-  <path d="M1080 264 H1120" stroke="#849490" stroke-width="1.25" fill="none"/>
-  <path d="M140 272 H1230" stroke="#849490" stroke-width="1" stroke-dasharray="3 3" fill="none"/>
-  <path d="M1230 272 V220" stroke="#849490" stroke-width="1" stroke-dasharray="3 3" fill="none"/>
+  <rect x="40" y="452" width="250" height="52" rx="6" fill="#E8EAE9" stroke="#5E6B67" stroke-width="1.5"/>
+  <text x="165" y="474" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-store</text>
+  <text x="165" y="492" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">ledger head + MissionRegistry</text>
+
+  <rect x="40" y="516" width="250" height="52" rx="6" fill="#E8EAE9" stroke="#5E6B67" stroke-width="1.5"/>
+  <text x="165" y="538" text-anchor="middle" class="t" font-size="13" font-weight="600" fill="#0C0F0E">decern-crypto</text>
+  <text x="165" y="556" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">Ed25519 / SHA-256 / key files</text>
+
+  <!-- Rails: one per foundation crate, as far as its last dependent. -->
+  <path d="M290 414 H1098" stroke="#4A5480" stroke-width="1.5" fill="none"/>
+  <path d="M290 478 H1228" stroke="#5E6B67" stroke-width="1.5" fill="none"/>
+  <path d="M290 542 H1098" stroke="#5E6B67" stroke-width="1.5" fill="none"/>
+
+  <!-- decern (decern-cli): proof, ledger, kernel -->
+  <path d="M445 132 V212" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <path d="M650 132 V212" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <path d="M576 132 V414" stroke="#849490" stroke-width="1.25" fill="none"/>
+
+  <!-- decern-serve (decern-server): ledger, identity, store-postgres (optional), kernel, store, crypto -->
+  <path d="M779 132 V212" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <path d="M967 132 V212" stroke="#849490" stroke-width="1.25" fill="none"/>
+  <path d="M1228 132 V212" stroke="#849490" stroke-width="1.25" stroke-dasharray="4 3" fill="none"/>
+  <path d="M1098 132 V542" stroke="#849490" stroke-width="1.25" fill="none"/>
+
+  <!-- decern-proof: kernel -->
+  <path d="M445 300 V414" stroke="#0E7C6B" stroke-width="1.25" fill="none"/>
+  <text x="455" y="362" class="t" font-size="9" fill="#0E7C6B">proves</text>
+
+  <!-- decern-ledger: store, crypto; it crosses the kernel rail -->
+  <path d="M706 300 V409 a5 5 0 0 1 0 10 V542" stroke="#849490" stroke-width="1.25" fill="none"/>
+
+  <!-- decern-identity: kernel, store, crypto -->
+  <path d="M967 300 V542" stroke="#849490" stroke-width="1.25" fill="none"/>
+
+  <!-- decern-store-postgres: store -->
+  <path d="M1228 300 V478" stroke="#849490" stroke-width="1.25" fill="none"/>
+
+  <!-- A dot is a dependency. -->
+  <g fill="#4A5480">
+    <circle cx="445" cy="414" r="3.5"/>
+    <circle cx="576" cy="414" r="3.5"/>
+    <circle cx="967" cy="414" r="3.5"/>
+    <circle cx="1098" cy="414" r="3.5"/>
+  </g>
+  <g fill="#5E6B67">
+    <circle cx="706" cy="478" r="3.5"/>
+    <circle cx="967" cy="478" r="3.5"/>
+    <circle cx="1098" cy="478" r="3.5"/>
+    <circle cx="1228" cy="478" r="3.5"/>
+    <circle cx="706" cy="542" r="3.5"/>
+    <circle cx="967" cy="542" r="3.5"/>
+    <circle cx="1098" cy="542" r="3.5"/>
+  </g>
 </svg>
