@@ -1,9 +1,11 @@
 # cargo-deny 0.19.x (schema v2) — supply-chain policy.
 # permissive licenses only, crates.io only,
-# vulnerabilities and yanked crates denied (schema-v2 defaults).
+# vulnerabilities denied (the schema-v2 default) and yanked crates denied (set below).
 
 [advisories]
 unmaintained = "all"
+# The schema-v2 default for a yanked crate is a warning, which a passing run does not show.
+yanked = "deny"
 ignore = []
 
 [licenses]
