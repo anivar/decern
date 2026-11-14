@@ -41,9 +41,12 @@ step() {
 # match. GNU grep 3.5 and later reports a match in a binary file on stderr and prints
 # nothing here, so a match that printed nothing fails too. SKIP, when not empty, is an
 # extended regex for output lines (`path:line:`) to drop before deciding; a SKIP grep
-# cannot parse fails the scan.
+# cannot parse fails the scan. Every scan skips a directory named `target`, `.git` or
+# `node_modules`, at any depth: Cargo's build output, a repository's git directory, and the
+# packages an SDK's install leaves behind.
 deny() {
   local skip="$1"; shift
+  set -- "$@" --exclude-dir=target --exclude-dir=.git --exclude-dir=node_modules
   local out rc kept src
   out=$(grep "$@"); rc=$?
   if [ "${rc}" -gt 1 ]; then echo "grep exited ${rc}: grep $*"; return 1; fi
@@ -60,30 +63,29 @@ deny() {
 
 no_lineage() {
   # Bracket classes (e.g. w[z]) keep these patterns from matching themselves.
-  deny '' -rniE '[w]eavez|w[z]-|w[z]_|[p]roprietary|[c]losed.source|[L]icenseRef' . \
-       --exclude-dir=target --exclude-dir=.git || return 1
+  deny '' -rniE '[w]eavez|w[z]-|w[z]_|[p]roprietary|[c]losed.source|[L]icenseRef' . || return 1
   deny '' -rnE '#[0-9]+|[P][0-9]-[0-9]' . \
-       --include='*.rs' --include='*.toml' --exclude-dir=target --exclude-dir=.git || return 1
+       --include='*.rs' --include='*.toml' || return 1
   # Comment-standard denylist (.agent/standards/comments.md), same mechanism as the
   # lineage guard above, over shipped Rust: a comment must not name a sibling crate
   # that does not exist in this workspace, carry a debt marker, or use marketing
   # framing. `-w` keeps the debt-marker scan from tripping on tokens like `\uXXXX`
   # inside a doc comment (and matches a real `TODO`/`HACK` as a whole word).
   deny '' -rnE 'decern[-_](authn|oauth|payment|import)' . \
-       --include='*.rs' --exclude-dir=target --exclude-dir=.git || return 1
+       --include='*.rs' || return 1
   deny '' -rnwE 'TODO|FIXME|HACK|XXX' . \
-       --include='*.rs' --exclude-dir=target --exclude-dir=.git || return 1
+       --include='*.rs' || return 1
   deny '' -rniwE 'moat|wedge|commercial|pitch|headline' . \
-       --include='*.rs' --exclude-dir=target --exclude-dir=.git || return 1
+       --include='*.rs' || return 1
   deny '' -rniE 'adoption unlock' . \
-       --include='*.rs' --exclude-dir=target --exclude-dir=.git || return 1
+       --include='*.rs' || return 1
   # Contributor-facing hygiene guards over shipped Rust: no internal-review
   # process narration, no phantom HTTP-route strings. `--include='*.rs'`
   # excludes this script, so the patterns don't self-match.
   deny '' -rniE 'adversarial[ -]review' . \
-       --include='*.rs' --exclude-dir=target --exclude-dir=.git || return 1
+       --include='*.rs' || return 1
   deny '' -rnE '/admin/v1/|/observe/v1/' . \
-       --include='*.rs' --exclude-dir=target --exclude-dir=.git || return 1
+       --include='*.rs' || return 1
   # The comment standard's rule 5, for the words a grep can hold to it: an absolute
   # claim no code and no solver delivers, in the files the includes below name, each
   # phrase within one line, spaced or hyphenated with an ASCII hyphen. `proven`,
@@ -95,8 +97,7 @@ no_lineage() {
        --include='*.ts' --include='*.js' --include='*.go' --include='*.json' --include='*.yml' --include='*.yaml' \
        --include='*.cedar' --include='*.cedarschema' --include='*.cff' --include='*.txt' \
        --include='*.svg' --include='*.xml' --include='*.mod' \
-       --include='NOTICE' --include='MAINTAINERS' --include='CODEOWNERS' \
-       --exclude-dir=target --exclude-dir=.git --exclude-dir=node_modules || return 1
+       --include='NOTICE' --include='MAINTAINERS' --include='CODEOWNERS' || return 1
   echo "clean"
 }
 
