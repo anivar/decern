@@ -63,5 +63,5 @@
   <path d="M1029 202 V248" stroke="#849490" stroke-width="1.25" stroke-dasharray="4 3" fill="none"/>
   <ellipse cx="1029" cy="278" rx="118" ry="28" fill="#FFFFFF" stroke="#849490" stroke-width="1.25" stroke-dasharray="4 3"/>
   <text x="1029" y="274" text-anchor="middle" class="t" font-size="10" fill="#5E6B67">decern verify</text>
-  <text x="1029" y="288" text-anchor="middle" class="t" font-size="9" fill="#849490">chain + optional --anchor</text>
+  <text x="1029" y="288" text-anchor="middle" class="t" font-size="9" fill="#849490">chain + signatures / --anchor</text>
 </svg>
