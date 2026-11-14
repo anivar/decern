@@ -19,6 +19,10 @@ Cedar's Lean-verified symbolic compiler ([cedar-policy-symcc](https://crates.io/
 and the cvc5 solver. What that covers, and what it deliberately does not, is
 [stated precisely](docs/CLI.md#what-proven-covers).
 
+> **Status.** 0.7.0 is the last feature release of the current design. After it the 0.x line
+> takes security fixes only, and the next line will be built beside it in this repository, to
+> return a signed receipt with every decision; [ROADMAP.md](ROADMAP.md) says how.
+
 <p align="center">
   <a href="https://github.com/anivar/decern/actions/workflows/ci.yml"><img alt="CI" src="https://anivar.net/badge?src=ci&repo=anivar/decern"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/anivar/decern"><img alt="OpenSSF Scorecard" src="https://api.securityscorecards.dev/projects/github.com/anivar/decern/badge"></a>

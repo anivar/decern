@@ -515,9 +515,15 @@ profile, and still does not verify ES256, signals no refusal but clock skew with
 0.6.0: the single-file ledger takes a lock, and a Mission's approver is checked at approval and
 at each decision. Stated now:
 
-- `GET /anchor/v1/tree-head` and `GET /audit/v1/subject` read the whole ledger for an answer,
-  and both are open. Rate-limit them at whatever fronts the server. Under `--sharded` both
-  answer `501`.
+- `GET /audit/v1/subject` reads the whole ledger for every answer, and
+  `GET /anchor/v1/tree-head` reads it each time it recomputes: at most once a second, and only
+  after a record was written. Both are open. Rate-limit them at whatever fronts the server.
+  Under `--sharded` both answer `501`.
+- Under `--sharded`, a start and `decern verify --sharded` read each shard's whole history
+  under that shard's lock, with no time bound. An append to the shard from another process
+  waits meanwhile, and is answered `503` once the wait passes its bound: the 30-second request
+  deadline in a directory store, where the record is still written afterwards, or the 10-second
+  lock wait under `--sharded postgres://…`.
 - Records removed from the end of a log show only against a tree head kept somewhere the
   operator cannot reach. A sharded store has none: the server publishes no tree head for a
   shard and `decern verify --sharded` takes no `--anchor`. Separately, a retired key can still

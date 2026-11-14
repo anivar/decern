@@ -52,7 +52,11 @@ A start fails after 30 seconds without a ready database: a server that does not 
 the connection, one that accepts it and never answers, or a proxy with no backend,
 fails `decern-serve` at start instead of holding it with nothing served; a server that
 answers the connect and the schema check and stalls afterwards holds the boot's own
-verify of each shard, which has no bound. A section waits at most ten seconds for any
+verify of each shard, which has no bound. That verify reads each shard's whole history in
+one section, so it holds the shard's advisory lock until the last record is read, and
+checks the signatures after the commit: a replica started beside serving replicas costs
+them, on a shard whose history takes more than ten seconds to read, a failed section and a
+`503` for each append that waits those ten seconds. A section waits at most ten seconds for any
 lock, its shard's first, as above. One database call that runs for 30 seconds, where a
 lock wait ends at ten and a head read, a write or a commit takes milliseconds, reads
 as a stall: `/healthz` answers `503` while it runs, so a liveness probe restarts a
