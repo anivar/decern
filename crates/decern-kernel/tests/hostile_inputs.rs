@@ -100,3 +100,56 @@ fn malformed_now_always_denies() {
     );
     assert!(!r.decision);
 }
+
+/// An id is taken byte for byte and never read as Cedar source. Each case stores two
+/// principals in two tenants, each the owner of a resource that carries its own id: the id a
+/// request names, and the different id a `uid` that parsed, unescaped, trimmed, cut or
+/// normalised the text would make of it. Each principal reads its own resource and neither
+/// reads the other's, so neither id is taken for the other, as a principal or as a resource.
+#[test]
+fn an_id_names_exactly_the_entity_stored_under_it() {
+    let cases = [
+        // Does not parse as Cedar source; `corp` is who the text tries to become.
+        ("x\" || principal == Principal::\"corp", "corp"),
+        // Parses as Cedar source, where two backslashes read as one.
+        ("a\\\\b", "a\\b"),
+        (" a ", "a"),
+        ("a\0b", "a"),
+        ("e\u{301}", "\u{e9}"),
+    ];
+    for (named, other) in cases {
+        let principal = |id: &str, tenant: &str| {
+            json!({ "uid": {"type":"Principal","id":id},
+                    "attrs": {"kind":"Human","tenant":tenant,"expiry":32_503_680_000_i64,
+                              "scopes":["read"]},
+                    "parents": [] })
+        };
+        let resource = |id: &str, tenant: &str| {
+            json!({ "uid": {"type":"Resource","id":id},
+                    "attrs": {"owner":{"__entity":{"type":"Principal","id":id}},"tenant":tenant},
+                    "parents": [] })
+        };
+        let mut model = Model::builtin();
+        model.entities = json!([
+            principal(named, "A"),
+            principal(other, "B"),
+            resource(named, "A"),
+            resource(other, "B"),
+        ]);
+        let k = Kernel::new(&model).unwrap_or_else(|e| panic!("{named:?} must load: {e}"));
+        let reads = |who: &str, what: &str| {
+            k.check(&sub(who), "Read", &res(what), &json!({"now": 100}))
+                .decision
+        };
+        assert!(reads(named, named), "{named:?} reads its own");
+        assert!(reads(other, other), "{other:?} reads its own");
+        assert!(
+            !reads(named, other),
+            "{named:?} must not read what {other:?} owns"
+        );
+        assert!(
+            !reads(other, named),
+            "{other:?} must not read what {named:?} owns"
+        );
+    }
+}
