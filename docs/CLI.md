@@ -364,10 +364,10 @@ handle, or one used for more than one party, gives whoever guesses or shares it 
 it. Issue handles that cannot be guessed, never one handle for two parties, treat them as secrets,
 and rate-limit this route at whatever fronts the server. Rate-limit `/anchor/v1/tree-head` there
 too: neither route asks for a credential, a subject audit reads the whole ledger for every answer,
-and a tree head reads it each time it recomputes, so both cost more as the ledger grows. The other
-open routes publish on purpose what an operator may still want to keep off a public network: the
-tree head gives the record count, and the subject-side disclosure names the `--pep` entries, trust
-domains and providers this deployment accepts.
+and a tree head reads it each time it recomputes, so both cost more as the ledger grows. Under
+`--sharded` both answer `501`. The other open routes publish on purpose what an operator may still
+want to keep off a public network: the tree head gives the record count, and the subject-side
+disclosure names the `--pep` entries, trust domains and providers this deployment accepts.
 
 ### Pairing with an identity provider
 
