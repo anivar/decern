@@ -6,6 +6,7 @@ publish.workspace = true
 license.workspace = true
 description = "Agent badge intake and approval-backed Mission authority for decern, attenuated to the approver at approval and at every mint."
 repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 decern-crypto = { workspace = true }

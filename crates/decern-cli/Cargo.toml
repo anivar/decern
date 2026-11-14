@@ -6,6 +6,7 @@ publish.workspace = true
 license.workspace = true
 description = "decern command-line tool: prove, decide, verify, explain."
 repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "decern"

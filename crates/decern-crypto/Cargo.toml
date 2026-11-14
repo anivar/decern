@@ -6,6 +6,7 @@ publish.workspace = true
 license.workspace = true
 description = "Ed25519 keys and key files, SHA-256 helpers and XChaCha20-Poly1305 secret sealing shared across decern."
 repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 ed25519-dalek = { workspace = true }

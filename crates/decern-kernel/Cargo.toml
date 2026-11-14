@@ -6,6 +6,7 @@ publish.workspace = true
 license.workspace = true
 description = "Deterministic authorization decision kernel over a Cedar authority graph."
 repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 cedar-policy = { workspace = true }

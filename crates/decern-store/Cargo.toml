@@ -6,6 +6,7 @@ publish.workspace = true
 license.workspace = true
 description = "Persistence traits and file-backed reference stores for the decern ledger and missions."
 repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 serde.workspace = true
