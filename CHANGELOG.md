@@ -78,8 +78,8 @@ Upgrading from 0.6.0:
   stream. The Python client no longer follows a redirect.
 - **Libraries and builds.** `ApprovedMission`'s fields are read through accessors,
   `Ledger::rotate` returns a `Result`, `AssertedBy::iss` is an `Option`, `HeadCursor` and
-  `VerifyReport` each gain a `signers` field, and `cedar-policy` is pinned at `=4.14.0`. A build
-  from source needs Rust 1.99.
+  `VerifyReport` each gain a `signers` field, and `cedar-policy` is pinned at `=4.14.0`. The
+  pinned toolchain is Rust 1.100, and CI tests no older compiler.
 
 ### Added
 
@@ -227,8 +227,9 @@ Upgrading from 0.6.0:
   `fetch` gives a stream. Authored by @anivar.
 - **The kernel decides with Cedar 4.14.0, and the proofs compile through `cedar-policy-symcc`
   0.8.0.** Both are exact pins and move together; 0.6.0 pinned 4.13.0 and 0.7.0. A crate that
-  depends on a decern library and on `cedar-policy` must name `=4.14.0`. A build from source needs
-  Rust 1.99, the toolchain `rust-toolchain.toml` pins, where 0.6.0 pinned 1.97. Authored by @anivar.
+  depends on a decern library and on `cedar-policy` must name `=4.14.0`. The pinned toolchain is
+  Rust 1.100, where 0.6.0 pinned 1.97: the tests and the proofs run on it in CI, the release
+  binaries are built with it, and CI tests no older compiler. Authored by @anivar.
 - **Release binaries are built from the committed `Cargo.lock`.** The release workflow now passes
   `--locked`, so a release build fails when the lock file does not match the manifests, where it
   used to re-resolve the dependencies without saying so. A build from source is unchanged. Authored
