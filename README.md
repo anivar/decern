@@ -287,7 +287,7 @@ release still does not claim and carries each earlier release's limits forward.
   as secrets and rate-limit that route at whatever fronts the server. Rate-limit
   `/anchor/v1/tree-head` there too: neither route asks for a credential, a subject audit reads
   the whole ledger for every answer, and a tree head reads it each time it recomputes, so both
-  cost more as the ledger grows. The full map is in
+  cost more as the ledger grows. Under `--sharded` both answer `501`. The full map is in
   [docs/CLI.md](docs/CLI.md#the-trust-boundary-stated-plainly).
 - **Bearer validation verifies `EdDSA` tokens only.** RFC 9068 §2.1 requires a conforming
   resource server to support RS256, so `decern-serve` applies RFC 9068's checks without being a
