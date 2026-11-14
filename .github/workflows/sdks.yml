@@ -97,8 +97,21 @@ jobs:
           cache: npm
           cache-dependency-path: sdks/typescript/package-lock.json
 
+      # The npm the publish workflow installs, read from that file so the two cannot drift:
+      # a publish cannot be rehearsed, so its npm is tried here on every change.
+      - name: Install the npm a publish uses
+        run: |
+          pin="$(sed -n 's/.*npm install -g npm@\([0-9][0-9.]*\) .*/\1/p' "${GITHUB_WORKSPACE}/.github/workflows/publish-sdks.yml")"
+          [ -n "${pin}" ] || { echo "::error::publish-sdks.yml installs no exact npm version"; exit 1; }
+          npm install -g "npm@${pin}"
+          node --version
+          [ "$(npm --version)" = "${pin}" ] || { echo "::error::npm is $(npm --version), not ${pin}"; exit 1; }
+
       - run: npm ci
 
       # `npm test` runs tsc and then node --test over the emitted dist, so the
       # type check is part of the test step rather than a separate one.
       - run: npm test
+
+      # What a publish would pack, without a registry: the build is already in dist.
+      - run: npm pack --dry-run

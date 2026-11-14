@@ -88,15 +88,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Trusted publishing needs npm >= 11.5.1, which the runner does not ship, so npm is
-      # upgraded. Current npm requires a Node newer than a pinned patch would hold: npm 12
-      # wants ^22.22.2, and a pinned 22.20.0 failed against it. Following the LTS line
-      # keeps the two from drifting apart.
+      # installed at one exact version: the one the 0.6.0 publish ran. A publish cannot be
+      # rehearsed, so this is not the place to meet a new npm for the first time. The
+      # typescript job in sdks.yml reads the version from the line below and runs the same
+      # install, `npm ci`, the build and `npm pack --dry-run` on every pull request, so a
+      # change to it is tried there first. npm 12 wants Node ^22.22.2, ^24.15.0 or >=26, and
+      # a pinned 22.20.0 failed against it, so Node follows the LTS line.
       # No registry-url: it writes an .npmrc expecting a token, and there is no token.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
-      - run: npm install -g npm@latest && node --version && npm --version
+      - run: npm install -g npm@12.2.0 && node --version && npm --version
 
       - name: Build
         working-directory: sdks/typescript
