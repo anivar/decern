@@ -16,8 +16,8 @@ use std::path::Path;
 use std::str::FromStr;
 
 use cedar_policy::{
-    Authorizer, Context, Decision, Entities, EntityId, EntityTypeName, EntityUid, PolicySet,
-    Request, Schema, ValidationMode, Validator,
+    Authorizer, Context, Decision, Entities, EntityId, EntityTypeName, EntityUid, PolicyId,
+    PolicySet, Request, Schema, ValidationMode, Validator,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -160,10 +160,7 @@ impl Kernel {
             let mut named = PolicySet::new();
             for p in policies.policies() {
                 let p = match p.annotation("id") {
-                    Some(id) => p.new_id(id.parse().map_err(|_| {
-                        // PolicyId::from_str is infallible in cedar 4; kept for the type.
-                        KernelError::Policy(format!("invalid @id annotation on {}", p.id()))
-                    })?),
+                    Some(id) => p.new_id(PolicyId::new(id)),
                     None => p.clone(),
                 };
                 let id = p.id().clone();
@@ -450,8 +447,7 @@ fn inject_derived(entities: &Value, dir: &Directory) -> Value {
 /// (quotes, backslashes) cannot inject into the uid grammar.
 fn uid(ty: &str, id: &str) -> Result<EntityUid, String> {
     let tn = EntityTypeName::from_str(ty).map_err(|e| e.to_string())?;
-    let eid = EntityId::from_str(id).map_err(|e| e.to_string())?;
-    Ok(EntityUid::from_type_name_and_id(tn, eid))
+    Ok(EntityUid::from_type_name_and_id(tn, EntityId::new(id)))
 }
 
 /// The stack Cedar evaluation needs. Cedar refuses to evaluate when less than 100 KiB of
