@@ -6,6 +6,7 @@ publish.workspace = true
 license.workspace = true
 description = "decern-serve: a fail-closed, AuthZEN-shaped authorization PDP with a tamper-evident ledger."
 repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "decern-serve"

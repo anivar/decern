@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 publish = true
 description = "Optional Postgres-backed, multi-host LedgerHeadStore for decern. Adds a TLS stack (rustls/ring) to the compiled-native dependencies; binaries built without it carry only cedar's stack-growth helper (psm)."
 

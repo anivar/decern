@@ -6,6 +6,7 @@ publish.workspace = true
 license.workspace = true
 description = "SMT proof harness that machine-checks decern's authorization invariants with cvc5."
 repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 decern-kernel = { workspace = true }

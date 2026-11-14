@@ -6,6 +6,7 @@ publish.workspace = true
 license.workspace = true
 description = "Append-only, Ed25519-signed, hash-chained tamper-evident decision ledger."
 repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 decern-crypto = { workspace = true }
