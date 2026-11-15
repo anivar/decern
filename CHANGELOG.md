@@ -60,7 +60,9 @@ Upgrading from 0.6.0:
   `human_approved` or another party's `decision_subject` gets `403`, and a batch with one such
   item is refused whole: list the workload in `--pep`, or stop sending the keys. A name with a
   control character is `400` and a name over 1 KiB `413`; in a batch that item alone is answered
-  `decision: false`. A batch that would record more than 16 MiB is `413` whole, a `Signature`
+  `decision: false`. A request, `subject`, `resource` or `action` written as a JSON array is
+  `400`, and in a batch that item alone is answered `decision: false`: write each as an object.
+  A batch that would record more than 16 MiB is `413` whole, a `Signature`
   header over 8 KiB is refused, and a `challenge_basis` with a non-string item is `422`.
 - **Deadlines and bounds.** A connection idle for 10 seconds is closed and a request is
   answered `503` at 30 seconds. Past 512 decisions, searches, audits and Mission calls in
@@ -373,6 +375,23 @@ Upgrading from 0.6.0:
 
 ### Security
 
+- **A batch item is admitted as the request it is decided as, and a party that is not a JSON object
+  is refused.** On `POST /access/v1/evaluations`, admission read whom an item names from the item's
+  JSON, and the decision read the same item through a parser that also takes a `subject`,
+  `resource` or `action` from an array of its fields. The two could disagree. Under the
+  signed-request, SPIFFE and AAuth postures a workload not listed in `--pep` could then be
+  answered, and have recorded under its own `asserted_by`, a decision about a principal other than
+  itself, and could describe a party through `properties`. `consent`, `human_approved` and the
+  decision subject were refused as before. Each item that will be decided is now admitted off the
+  parsed request the decision reads, before any item is evaluated. A request, a `subject`, a
+  `resource`, an `action`, a batch's `options` or a search's `page` written as a JSON array is a
+  malformed request for every caller, since AuthZEN 1.0 defines each as an object: `400` for the
+  request, and in a batch an item whose `subject`, `resource` or `action` is an array is that
+  item's `decision: false` with `context.error`. Nothing is recorded for either. A `null` for an
+  optional field is absent, as before. The single
+  evaluation, the searches and the Mission routes already admitted off the parsed request. A batch
+  over the 16 MiB record bound is answered `413` before admission, where a caller bound to itself
+  that also named another party was answered `403`. Authored by @anivar.
 - **A caller bound to itself can no longer assert `consent` or `human_approved`.** Under the
   signed-request, SPIFFE and AAuth postures a workload not listed in `--pep` may name only
   itself, and may not describe a party through `properties`; it could still send

@@ -95,6 +95,15 @@ still cost a guarantee:
   `mission.rs`; `forged_context_asserted_by_is_stripped_from_ledger_entry` is the pattern to
   copy). Adding a field a request can set means deciding, explicitly, which side of that line
   it sits on, and testing the answer.
+- **Admission reads the request the decision reads.** Whom a request names, whether it
+  describes a party and whether it asserts consent or approval are read off the parsed request
+  (`DecideReq::facts`, `admit`), the one the decision is made on. A second reader of the same
+  body can disagree with the first, and the caller's bind then holds for one of them only. A
+  batch item that will be decided is admitted as its parsed request; `batch.rs` reads in place
+  only an item that will decide nothing. An AuthZEN evaluation or search request struct is read from a JSON
+  object and nothing else (`object.rs`): a new one joins `object_only!`, or serde also takes it
+  from an array of its fields. The Mission and token structs are not AuthZEN requests and are
+  not covered here.
 - **The record is written before the answer is served.** An unrecordable decision is a `503`,
   never a bare allow. Any new path that answers must append first.
 - **A standard-facing change starts by re-reading the spec.** Specs move, and memory does

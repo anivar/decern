@@ -180,6 +180,23 @@ impl Authenticated {
     }
 }
 
+/// Whether admission could refuse this caller at all, and so whether a batch must re-read
+/// each item to admit it. Only a workload bound to itself can be refused: a PEP, a bearer
+/// caller, a trusted front and an absent caller name any principal. This is the one place
+/// that decides whether to run admission off the side of `admit`/`admit_named`, so it must
+/// agree with them for every `Bind`; the match is exhaustive, so a `Bind` added later does
+/// not compile here until it is classified, and `self_bound_agrees_with_admission` holds the
+/// two together for the variants that exist.
+pub(crate) fn self_bound(caller: &Option<axum::Extension<Authenticated>>) -> bool {
+    let Some(axum::Extension(who)) = caller else {
+        return false;
+    };
+    match who.bind {
+        Bind::SelfOnly => true,
+        Bind::Any => false,
+    }
+}
+
 /// How much of an attacker-chosen string a refusal may echo, in characters: a principal id
 /// in a 403, an issuer or algorithm name in a 401. Enough to recognise a mismatch or a
 /// misconfiguration; not enough to use the error channel as a reflector.
@@ -392,6 +409,33 @@ fn posture(caller: &Caller) -> &dyn CallerAuth {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `self_bound` gates whether a batch re-reads an item to admit it, off the side of
+    /// `admit_named`. The two must agree: a caller `self_bound` calls refusable is one
+    /// `admit_named` can refuse, and one it calls not is one `admit_named` never refuses.
+    /// A request that names another principal, describes a party, asserts approval and names
+    /// another decision subject is the most admission can object to; if nothing here refuses
+    /// it, nothing does.
+    #[test]
+    fn self_bound_agrees_with_admission() {
+        let callers = [
+            None,
+            Some(Authenticated::new("me", "me", "https://iss.example/")),
+            Some(Authenticated::new("me", "me", "https://iss.example/").self_only()),
+        ];
+        for who in callers {
+            let ext = who.clone().map(axum::Extension);
+            let admission_refuses =
+                crate::decide::admit_named(&ext, Some("other"), true, true, Some("ppid:other"))
+                    .is_some();
+            assert_eq!(
+                self_bound(&ext),
+                admission_refuses,
+                "self_bound and admission disagree for {:?}",
+                who.map(|w| w.bind)
+            );
+        }
+    }
 
     /// A refused principal id is attacker-chosen, and it is echoed back through
     /// `brief`. Truncating it by byte index panics when the cut lands inside a

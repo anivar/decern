@@ -14,7 +14,8 @@ use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::decide::{
-    CONTEXT_TOO_LARGE, DecideReq, Refusal, admit_named, context_too_large, decide_one, evaluate_one,
+    CONTEXT_TOO_LARGE, DecideReq, Refusal, admit, admit_named, context_too_large, decide_one,
+    evaluate_one,
 };
 use crate::record::{Shard, evaluation_body, not_recorded, record_decision, record_decisions};
 
@@ -57,6 +58,7 @@ fn recorded_bytes(top: &BatchReq, items: &[Value], oversize_default: [bool; 4]) 
 /// item of `evaluations`; an item's own key replaces the default whole. Each top-level
 /// field is kept as it arrived, since an item may supply its own and never use it.
 #[derive(Deserialize)]
+#[serde(remote = "Self")]
 pub(crate) struct BatchReq {
     #[serde(default)]
     subject: Option<Value>,
@@ -88,10 +90,14 @@ impl BatchReq {
 /// §7.1.2: PEP-supplied metadata on how to execute. Only the semantic is read; any other
 /// option is ignored, as the specification allows.
 #[derive(Deserialize, Default)]
+#[serde(remote = "Self")]
 struct Options {
     #[serde(default)]
     evaluations_semantic: Option<String>,
 }
+
+// As a single evaluation's: the request and its options are objects (§7.1, §7.1.2).
+crate::object::object_only!(Options, BatchReq);
 
 /// §7.1.2.1: when the exchange stops.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -120,7 +126,7 @@ fn invalid_request(detail: impl Into<String>) -> Response {
 }
 
 /// The value `key` has for `item`: the item's own, or the top-level default behind it.
-/// Borrowed, so admission reads a thousand items without copying a thousand defaults.
+/// Borrowed: a default is not copied into an item to read it, only to decide it.
 fn field<'a>(
     top: &'a BatchReq,
     item: &'a serde_json::Map<String, Value>,
@@ -129,12 +135,13 @@ fn field<'a>(
     item.get(key).or_else(|| top.default_for(key))
 }
 
-/// What admission needs to know about an item, read in place: whom it names, whether
-/// it describes a party through `properties`, whether it asserts consent or approval, and
-/// whom it names as the decision subject.
+/// What admission needs to know about an item that will not be decided, read in place: whom
+/// it names, whether it describes a party through `properties`, whether it asserts consent
+/// or approval, and whom it names as the decision subject. An item that will be decided is
+/// admitted off the parsed request instead, by [`admit`].
 /// An item that is not an object names nobody, and is answered for what it is when its
 /// turn comes. The same four facts [`DecideReq::facts`] reads off a parsed request, which
-/// a test holds them to.
+/// a test holds them to for every item that is an evaluation.
 fn facts<'a>(top: &'a BatchReq, item: &'a Value) -> (Option<&'a str>, bool, bool, Option<&'a str>) {
     let Some(item) = item.as_object() else {
         return (None, false, false, None);
@@ -208,6 +215,14 @@ fn undecided_answer(status: StatusCode, code: &str, message: String) -> Answer {
     }
 }
 
+/// Whether `item` inherits a default too large to evaluate. It is then answered for that
+/// without the default being copied into it.
+fn inherits_oversize(item: &Value, oversize_default: [bool; 4]) -> bool {
+    KEYS.iter()
+        .zip(oversize_default)
+        .any(|(key, oversize)| oversize && !item.as_object().is_some_and(|o| o.contains_key(*key)))
+}
+
 /// Item `i`, answered.
 fn answer(
     st: &AppState,
@@ -242,9 +257,9 @@ fn answer(
 ///
 /// Without an `evaluations` array, or with an empty one, this is the single Access
 /// Evaluation over the top-level fields, answered in that shape (§7.1). With items, every
-/// item is admitted first — a caller that may not name or describe a party, or assert
-/// consent or approval, in one of them, evaluation or not, is refused for the whole batch
-/// before anything is evaluated or recorded — and then the
+/// item is admitted before any is evaluated — a caller that may not name or describe a
+/// party, or assert consent or approval, in one of them, evaluation or not, is refused for
+/// the whole batch before anything is evaluated or recorded — and then the
 /// items are evaluated in order under the requested semantic. An item that is not an
 /// evaluation, or that this server refuses, is answered `decision: false` with the reason
 /// in its context (§7.2.1) and, having decided nothing, is not recorded. Every decision
@@ -294,17 +309,6 @@ fn evaluate_all(
         ));
     }
 
-    // Admission for every item — an evaluation or not — before any item is evaluated,
-    // read off the items and the defaults in place: a refusal is for the whole exchange,
-    // costs no copies, and comes before a single record has landed.
-    for item in items {
-        let (subject_id, describes, asserts, decision_subject) = facts(&top, item);
-        if let Some(refusal) = admit_named(caller, subject_id, describes, asserts, decision_subject)
-        {
-            return refusal;
-        }
-    }
-
     // A default too large to evaluate — a context, or a party whose `properties` are —
     // is answered per item without being copied into each; an item that brings its own
     // value for that key is judged on that.
@@ -316,15 +320,47 @@ fn evaluate_all(
         )
         .into_response();
     }
+
+    // Admission for every item — an evaluation or not — before any item is evaluated: a
+    // refusal is for the whole exchange and comes before a single record has landed. Only a
+    // caller bound to itself can be refused (`self_bound`), so for anyone else this is
+    // skipped and no item is copied to read it. An item that will be decided is admitted as
+    // the request it will be decided as, which the same `merged` builds for the decision, so
+    // the two cannot read an item differently. An item that is not an evaluation, or that
+    // inherits a default too large to copy, decides nothing; it still names whom it names,
+    // and that is read in place. What this loop copies is bounded by the 16 MiB above, one
+    // item at a time.
+    if crate::caller::self_bound(caller) {
+        for (i, item) in items.iter().enumerate() {
+            let request = if inherits_oversize(item, oversize_default) {
+                None
+            } else {
+                merged(&top, Some(i), item).ok()
+            };
+            let refusal = match &request {
+                Some(request) => admit(caller, request),
+                None => {
+                    let (subject_id, describes, asserts, decision_subject) = facts(&top, item);
+                    admit_named(caller, subject_id, describes, asserts, decision_subject)
+                }
+            };
+            if let Some(refusal) = refusal {
+                return refusal;
+            }
+        }
+    }
     let mut results = Vec::with_capacity(items.len());
     let mut decided = Vec::new();
     let mut decided_items = Vec::new();
     for (i, item) in items.iter().enumerate() {
-        let inherits_an_oversize_default =
-            KEYS.iter().zip(oversize_default).any(|(key, oversize)| {
-                oversize && !item.as_object().is_some_and(|o| o.contains_key(*key))
-            });
-        let mut a = answer(st, caller, &top, i, item, inherits_an_oversize_default);
+        let mut a = answer(
+            st,
+            caller,
+            &top,
+            i,
+            item,
+            inherits_oversize(item, oversize_default),
+        );
         match (&semantic, a.record.take()) {
             // A short-circuit follows the decision as settled: the item is recorded, and its
             // answer fixed, before the next is evaluated, so a Mission terminated since the
@@ -371,9 +407,10 @@ fn evaluate_all(
 mod tests {
     use super::*;
 
-    /// Admission reads an item in place; evaluation parses it. The two must agree on whom
-    /// an item names, whether it describes a party and whether it asserts consent or
-    /// approval, or admission could pass what evaluation then treats differently.
+    /// An item that is an evaluation is admitted off the parsed request; one that is not is
+    /// read in place. The two readers agree on every item that is an evaluation: whom it
+    /// names, whether it describes a party and whether it asserts consent or approval. So
+    /// which of the two an item meets changes no answer.
     #[test]
     fn facts_read_in_place_match_facts_read_off_the_parsed_request() {
         let top: BatchReq = serde_json::from_value(json!({
@@ -404,6 +441,65 @@ mod tests {
             assert_eq!(asserts, parsed_asserts, "{item}");
             assert_eq!(about, parsed_about, "{item}");
         }
+        // The same over parties and contexts in every written form, each as an item's own and
+        // as a default it inherits: an item that parses is read alike by both, and a party
+        // that is not an object never parses, so only the in-place reader ever sees one.
+        let object = json!({ "type": "user", "id": "bob" });
+        let parties = [
+            object.clone(),
+            json!({ "type": "user", "id": "bob", "properties": { "role": "admin" } }),
+            json!({ "type": "user", "id": "bob", "properties": null }),
+            json!({ "type": "user", "id": "bob", "id2": "carol", "extra": ["x"] }),
+            json!(["user", "bob"]),
+            json!(["user", "bob", { "role": "admin" }]),
+            json!([]),
+            json!("bob"),
+            json!(7),
+            json!(null),
+        ];
+        let contexts = [
+            json!({}),
+            json!({ "consent": false }),
+            json!({ "decision_subject": { "handle": "ppid:carol" } }),
+            json!({ "decision_subject": ["ppid:carol"] }),
+            json!(["consent"]),
+            json!(null),
+        ];
+        let mut parsed_items = 0;
+        for key in ["subject", "resource"] {
+            for party in &parties {
+                for context in &contexts {
+                    for inherited in [false, true] {
+                        let mut whole = json!({
+                            "subject": object, "action": { "name": "read" }, "resource": object,
+                        });
+                        let mut item = json!({});
+                        let holder = if inherited { &mut whole } else { &mut item };
+                        holder[key] = party.clone();
+                        holder["context"] = context.clone();
+                        let top: BatchReq = serde_json::from_value(whole).unwrap();
+                        let what = format!("{key}={party} context={context} inherited={inherited}");
+                        match merged(&top, Some(0), &item) {
+                            Ok(parsed) => {
+                                assert!(party.is_object(), "{what}: parsed");
+                                assert_eq!(facts(&top, &item), parsed.facts(), "{what}");
+                                parsed_items += 1;
+                            }
+                            Err(_) => assert!(
+                                !party.is_object() || !(context.is_object() || context.is_null()),
+                                "{what}: a well-formed item did not parse"
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            parsed_items,
+            2 * 4 * 5 * 2,
+            "every well-formed item was compared"
+        );
+
         // A decision subject in the defaults reaches every item that names none of its own.
         let about_top: BatchReq = serde_json::from_value(json!({
             "subject": { "type": "user", "id": "alice" },

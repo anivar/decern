@@ -316,6 +316,111 @@ async fn a_batch_is_refused_whole_when_one_item_is_not_the_callers_to_ask() {
     assert!(records_in(&base, &st).is_empty(), "nothing was recorded");
 }
 
+/// AuthZEN 1.0 §5.1 to §5.3: a Subject, a Resource and an Action are each an object. An
+/// item whose party is written any other way is not an evaluation. It is denied in place
+/// and nothing is recorded for it, whether the item carries the party or inherits it, for a
+/// caller bound to itself and for one that may name anyone. A batch without items, which
+/// is the single evaluation, is refused whole.
+#[tokio::test]
+async fn a_batch_item_whose_party_is_not_an_object_is_not_an_evaluation() {
+    let (st, base) = fixture_state();
+    let whole = json!({
+        "subject": { "type": "user", "id": "bob" },
+        "action": { "name": "read" },
+        "resource": { "type": "record", "id": "record-1" },
+    });
+    // Each written as serde would also read the struct: its fields in order.
+    let not_objects = [
+        ("subject", json!(["user", "alice"])),
+        (
+            "subject",
+            json!(["user", "alice", { "department": "Sales" }]),
+        ),
+        ("resource", json!(["record", "record-1"])),
+        (
+            "resource",
+            json!(["record", "record-1", { "status": "archived" }]),
+        ),
+        ("action", json!(["read"])),
+        ("action", json!(["read", { "soft": true }])),
+        ("subject", json!("alice")),
+        ("action", json!(7)),
+        ("resource", json!(null)),
+    ];
+    for bound in [true, false] {
+        for (key, party) in &not_objects {
+            for inherited in [false, true] {
+                let mut body = whole.clone();
+                let item = if inherited {
+                    body[*key] = party.clone();
+                    json!({})
+                } else {
+                    json!({ *key: party })
+                };
+                let what = format!("bound={bound} inherited={inherited} {key}={party}");
+
+                body["evaluations"] = json!([item]);
+                let req: crate::batch::BatchReq = serde_json::from_value(body.clone()).unwrap();
+                let caller = bound.then(|| {
+                    axum::Extension(
+                        crate::caller::Authenticated::new("bob", "bob", "https://iss.example/")
+                            .self_only(),
+                    )
+                });
+                let (status, resp) = body_json(
+                    crate::batch::evaluations(State(st.clone()), caller.clone(), Ok(Json(req)))
+                        .await,
+                )
+                .await;
+                assert_eq!(status, StatusCode::OK, "{what}: {resp}");
+                let answer = &resp["evaluations"][0];
+                assert_eq!(answer["decision"], false, "{what}: {resp}");
+                assert_eq!(answer["context"]["error"]["status"], 400, "{what}: {resp}");
+                assert_eq!(
+                    answer["context"]["error"]["code"], "invalid_request",
+                    "{what}: {resp}"
+                );
+
+                if inherited {
+                    body.as_object_mut().unwrap().remove("evaluations");
+                    let req: crate::batch::BatchReq = serde_json::from_value(body).unwrap();
+                    let (status, resp) = body_json(
+                        crate::batch::evaluations(State(st.clone()), caller, Ok(Json(req))).await,
+                    )
+                    .await;
+                    assert_eq!(status, StatusCode::BAD_REQUEST, "{what}, no items: {resp}");
+                    assert_eq!(resp["error"], "invalid_request", "{what}, no items: {resp}");
+                }
+                assert!(
+                    records_in(&base, &st).is_empty(),
+                    "{what}: nothing recorded"
+                );
+            }
+        }
+    }
+
+    // The request and its options are objects as well.
+    let mut with_options = whole.clone();
+    with_options["evaluations"] = json!([{}]);
+    with_options["options"] = json!(["deny_on_first_deny"]);
+    for body in [
+        json!([whole["subject"], whole["action"], whole["resource"]]),
+        json!([
+            whole["subject"],
+            whole["action"],
+            whole["resource"],
+            {},
+            [{}]
+        ]),
+        with_options,
+    ] {
+        let (status, resp) = evaluations(&st, &body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {resp}");
+        assert_eq!(resp["error"], "invalid_request", "{body}: {resp}");
+    }
+    assert!(records_in(&base, &st).is_empty(), "nothing recorded");
+}
+
 /// A caller bound to itself may not name another party as the decision subject, from the
 /// batch defaults or from an item, as a string or an object; nothing is recorded. An item
 /// whose own `context` replaces a default that named one is decided, and its record carries
@@ -544,6 +649,58 @@ async fn a_batch_that_would_record_past_its_bound_is_refused_whole() {
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{resp}");
     assert_eq!(resp["error"], "batch_too_large", "{resp}");
     assert!(records_in(&base, &st).is_empty());
+
+    // The bound comes before admission, which copies each item's request to read whom it
+    // names. A caller bound to itself whose last item names another principal is answered
+    // for the size: nothing is copied a thousand times to reach the other refusal.
+    let mut naming = body;
+    naming["evaluations"][999] = json!({ "subject": { "type": "user", "id": "bob" } });
+    let req: crate::batch::BatchReq = serde_json::from_value(naming).unwrap();
+    let workload =
+        crate::caller::Authenticated::new("alice", "alice", "https://iss.example/").self_only();
+    let (status, resp) = body_json(
+        crate::batch::evaluations(
+            State(st.clone()),
+            Some(axum::Extension(workload)),
+            Ok(Json(req)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{resp}");
+    assert_eq!(resp["error"], "batch_too_large", "{resp}");
+    assert!(records_in(&base, &st).is_empty());
+}
+
+/// A caller bound to itself that names another principal in an item is refused for the
+/// whole exchange even when that item inherits a default too large to copy: admission reads
+/// the name in place, so the item is not quietly answered `413` on its own. Nothing is
+/// recorded.
+#[tokio::test]
+async fn a_self_only_caller_naming_another_in_an_item_with_an_oversize_default_is_refused_whole() {
+    let (st, base) = fixture_state();
+    let pad = "p".repeat(65 * 1024);
+    let body = json!({
+        "action": { "name": "read" },
+        "resource": { "type": "record", "id": "record-1" },
+        "context": { "pad": pad },
+        "evaluations": [{ "subject": { "type": "user", "id": "bob" } }],
+    });
+    let req: crate::batch::BatchReq = serde_json::from_value(body).unwrap();
+    let workload =
+        crate::caller::Authenticated::new("alice", "alice", "https://iss.example/").self_only();
+    let (status, resp) = body_json(
+        crate::batch::evaluations(
+            State(st.clone()),
+            Some(axum::Extension(workload)),
+            Ok(Json(req)),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(resp["error"], "caller_mismatch", "{resp}");
+    assert!(records_in(&base, &st).is_empty(), "nothing recorded");
 }
 
 /// A caller bound to itself may not assert consent or approval in a batch, from the

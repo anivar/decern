@@ -23,6 +23,7 @@ mod httpsig;
 mod jose;
 mod jwk;
 mod mission;
+mod object;
 mod record;
 mod routes;
 mod search;

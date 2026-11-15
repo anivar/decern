@@ -53,7 +53,8 @@ held to the fully-specified-algorithm rules the draft adopts, Ed25519 only), `bl
 places on the blocking pool every decision, search, record, audit and Mission read takes first),
 `record.rs` (the fail-closed append path), `decide.rs` (the decision handler and its
 derivations), `batch.rs` (AuthZEN batch evaluation), `search.rs` (AuthZEN subject, resource and
-action search), `discovery.rs` (AuthZEN PDP metadata), `deployment.rs` (the type aliases and
+action search), `object.rs` (the rule that an AuthZEN request struct is read from a JSON object
+only), `discovery.rs` (AuthZEN PDP metadata), `deployment.rs` (the type aliases and
 public URL a deployment declares, checked at boot), `audit.rs` (the published reads: pubkey, tree
 head, subject projection, descendants, disclosure), `mission.rs` (the lifecycle), `challenge.rs`
 (the subject-side challenge), `testutil.rs` (shared fixtures), and `authzen_certification/` (the
