@@ -415,6 +415,7 @@ waiting:
 | Shutdown after SIGINT or SIGTERM | no connection is accepted after the signal; 30 seconds for requests in progress, then the listener closes | the process exits once every blocking thread has returned; one a stalled database holds is waited for |
 | Request body | 2 MiB | `413`; under `--trust-proxy` the evaluation, batch and search routes answer `400`, `invalid_request`, and Mission approval `413` |
 | A context, properties included | 64 KiB | `413`, `context_too_large` |
+| A context's nesting, properties included | 64 levels | `413`, `context_too_deep`; a deeper one would record a line no reader could re-parse |
 | An entity type, entity id or action name | 1 KiB, and no control character | `413`, `name_too_large`; `400`, `invalid_request` for a control character |
 | Items in one batch | 1,000 | `400` |
 | What one batch may record: each item's own fields and the defaults it inherits | 16 MiB | `413`, `batch_too_large`, nothing recorded |

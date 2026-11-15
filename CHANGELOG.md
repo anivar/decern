@@ -62,6 +62,8 @@ Upgrading from 0.6.0:
   control character is `400` and a name over 1 KiB `413`; in a batch that item alone is answered
   `decision: false`. A request, `subject`, `resource` or `action` written as a JSON array is
   `400`, and in a batch that item alone is answered `decision: false`: write each as an object.
+  A context, `properties` included, that nests deeper than 64 levels is `413`, and in a batch
+  that item alone is answered `decision: false`.
   A batch that would record more than 16 MiB is `413` whole, a `Signature`
   header over 8 KiB is refused, and a `challenge_basis` with a non-string item is `422`.
 - **Deadlines and bounds.** A connection idle for 10 seconds is closed and a request is
@@ -375,6 +377,20 @@ Upgrading from 0.6.0:
 
 ### Security
 
+- **A context too deep to record is refused, so a request cannot make `decern-serve` unable to
+  start.** A record is one JSON line, re-parsed by every reader — boot verification, `decern
+  verify`, `decern explain` and the subject-side audit. A request whose `context`, `properties`
+  included, nested deeper than the reader's limit was answered and recorded, and the record then
+  could not be read: `decern explain` and the subject audit failed on it, and in the worst shape
+  the ledger would not reopen — a `decern-serve` restarted against it refused to start. A caller
+  that may set a context key the action declares, or any `properties`, controlled the depth. A
+  context, `properties` merged in, that nests deeper than 64 levels is now `413`
+  `context_too_deep` before anything is recorded, on the single evaluation and the searches, and
+  in a batch that item's `decision: false`; so every line written can be read back. The bound
+  is on the context as sent, `properties` included, as the 64 KiB size bound is, so a deep value
+  under a key the action does not declare is refused too, though it would have been dropped
+  before the record. 64 is far above a real context and far below the reader's 128-level limit.
+  Authored by @anivar.
 - **A batch item is admitted as the request it is decided as, and a party that is not a JSON object
   is refused.** On `POST /access/v1/evaluations`, admission read whom an item names from the item's
   JSON, and the decision read the same item through a parser that also takes a `subject`,

@@ -154,6 +154,108 @@ async fn a_request_or_a_party_written_as_an_array_is_400_and_records_nothing() {
     assert!(records_in(&base, &st).is_empty(), "nothing was recorded");
 }
 
+/// A context that nests deeper than a record's readers can re-parse is refused `413`
+/// before anything is recorded, so a request can never write a record that the server
+/// cannot read back — the boot verification, `decern verify`, `explain` and the subject
+/// audit all re-parse each line. A context at the bound is recorded, reads back and reopens. Covers
+/// a plain nest and a `serde_json` `RawValue`-shaped value, which expands on parse.
+#[tokio::test]
+async fn a_context_too_deep_is_refused_and_the_ledger_stays_bootable() {
+    use decern_ledger::Ledger;
+    use ed25519_dalek::SigningKey;
+
+    let (st, base) = fixture_state();
+    let ledger = base.0.join("ledger.jsonl");
+    // The body is built as raw JSON text so `consent` is a nested VALUE, not a string of
+    // brackets. `consent` must be a JSON value here, e.g. `[[0]]` or a RawValue object.
+    let req = |consent: &str| {
+        format!(
+            "{{\"subject\":{{\"type\":\"user\",\"id\":\"alice\"}},\
+             \"action\":{{\"name\":\"read\"}},\
+             \"resource\":{{\"type\":\"record\",\"id\":\"record-1\"}},\
+             \"context\":{{\"consent\":{consent}}}}}"
+        )
+    };
+    let nest = |n: usize| format!("{}0{}", "[".repeat(n), "]".repeat(n));
+    // A RawValue sentinel object whose string is itself nested: serde_json expands it on
+    // parse, so the context the record would carry is deep though the body is small.
+    let raw = |n: usize| {
+        format!(
+            "{{\"$serde_json::private::RawValue\":\"{}0{}\"}}",
+            "[".repeat(n),
+            "]".repeat(n)
+        )
+    };
+
+    for (what, consent) in [
+        // A context the body parser still accepts (under its own 128 limit) but that is too
+        // deep to record: one just over the bound, one well over.
+        ("plain, one over", nest(65)),
+        ("plain, well over", nest(120)),
+        (
+            "rawvalue token",
+            format!("{}{}{}", "[".repeat(40), raw(90), "]".repeat(40)),
+        ),
+    ] {
+        let (status, resp) = decision(&st, &req(&consent)).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{what}: {resp}");
+        assert_eq!(
+            resp["context"]["error"]["code"]
+                .as_str()
+                .or_else(|| resp["error"].as_str())
+                .unwrap_or_else(|| panic!("{what}: {resp}")),
+            "context_too_deep",
+            "{what}: {resp}"
+        );
+    }
+    assert!(
+        records_in(&base, &st).is_empty(),
+        "nothing deep was recorded"
+    );
+
+    // The deepest context the bound accepts is recorded, and that record — the nearest a
+    // written line comes to the reader's limit — reads back and the ledger reopens. The context
+    // object and the `consent` key add two levels over the array nesting, so nesting the array
+    // to MAX_CONTEXT_DEPTH - 2 makes a context whose `exceeds_depth` depth is exactly the bound.
+    let at_bound = nest(crate::decide::MAX_CONTEXT_DEPTH - 2);
+    let (status, resp) = decision(&st, &req(&at_bound)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a context at the bound is accepted: {resp}"
+    );
+    assert_eq!(
+        records_in(&base, &st).len(),
+        1,
+        "the at-bound decision is recorded"
+    );
+    decern_ledger::read_verified(&ledger, Some(&st.pubkey), 0, 10)
+        .expect("the recorded line reads back");
+    drop(st);
+    Ledger::open(&ledger, SigningKey::from_bytes(&[11u8; 32])).expect("the ledger reopens");
+}
+
+/// The bound covers `properties`, not just the context keys: `properties` are merged into
+/// the context and recorded, so a deep `subject.properties` is refused the same way. Under
+/// `--trust-proxy` a caller may describe a party.
+#[tokio::test]
+async fn deep_properties_are_refused_like_a_deep_context() {
+    let (st, base) = fixture_state();
+    let deep = format!("{}0{}", "[".repeat(100), "]".repeat(100));
+    let body = format!(
+        "{{\"subject\":{{\"type\":\"user\",\"id\":\"alice\",\"properties\":{{\"tree\":{deep}}}}},\
+         \"action\":{{\"name\":\"read\"}},\
+         \"resource\":{{\"type\":\"record\",\"id\":\"record-1\"}}}}"
+    );
+    let (status, resp) = decision(&st, &body).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{resp}");
+    assert_eq!(resp["error"], "context_too_deep", "{resp}");
+    assert!(
+        records_in(&base, &st).is_empty(),
+        "nothing deep was recorded"
+    );
+}
+
 /// C-2-5: an `X-Request-ID` comes back unchanged; its absence changes nothing.
 #[tokio::test]
 async fn x_request_id_is_echoed_and_its_absence_is_harmless() {

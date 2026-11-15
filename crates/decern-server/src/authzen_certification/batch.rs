@@ -703,6 +703,46 @@ async fn a_self_only_caller_naming_another_in_an_item_with_an_oversize_default_i
     assert!(records_in(&base, &st).is_empty(), "nothing recorded");
 }
 
+/// A batch item whose context nests too deep to record is that item's `decision: false`
+/// with a `413`, and nothing is recorded, so one item can neither brick the ledger nor fail
+/// the others. A shallow item beside it is decided and recorded.
+#[tokio::test]
+async fn a_batch_item_with_a_context_too_deep_is_denied_in_place() {
+    let (st, base) = fixture_state();
+    let deep = format!("{}0{}", "[".repeat(100), "]".repeat(100));
+    let body = format!(
+        "{{\"subject\":{{\"type\":\"user\",\"id\":\"alice\"}},\
+         \"action\":{{\"name\":\"read\"}},\
+         \"resource\":{{\"type\":\"record\",\"id\":\"record-1\"}},\
+         \"evaluations\":[{{\"context\":{{\"consent\":{deep}}}}},{{}}]}}"
+    );
+    let resp = app(st.clone(), open())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/access/v1/evaluations")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, answer) = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["evaluations"][0]["decision"], false, "{answer}");
+    assert_eq!(
+        answer["evaluations"][0]["context"]["error"]["code"], "context_too_deep",
+        "{answer}"
+    );
+    assert_eq!(answer["evaluations"][1]["decision"], true, "{answer}");
+    // Only the shallow item is recorded; the deep one never reached the ledger.
+    assert_eq!(
+        records_in(&base, &st).len(),
+        1,
+        "only the shallow item is recorded"
+    );
+}
+
 /// A caller bound to itself may not assert consent or approval in a batch, from the
 /// defaults or from an item; nothing is recorded.
 #[tokio::test]

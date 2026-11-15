@@ -217,6 +217,12 @@ impl Refusal {
     }
 
     /// A context larger than this server will evaluate or record.
+    /// A context that nests past what a record's readers can re-parse. 413, like the size
+    /// bound, since it is a resource limit on the request, not a malformed one.
+    pub(crate) fn context_too_deep() -> Self {
+        Refusal::payload_too_large("context_too_deep", CONTEXT_TOO_DEEP)
+    }
+
     pub(crate) fn context_too_large() -> Self {
         Refusal::new(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -232,6 +238,35 @@ impl Refusal {
 /// request body.
 pub(crate) const MAX_CONTEXT_BYTES: usize = 64 * 1024;
 pub(crate) const CONTEXT_TOO_LARGE: &str = "context exceeds 64 KiB, properties included";
+
+/// The deepest a context — `properties` merged in — may nest. A record is one JSON line,
+/// and every reader re-parses it: boot verification, `decern verify`, `decern explain` and
+/// the subject-side audit. serde_json refuses to parse past 128 nested levels, and a
+/// recorded line sits a few levels below the context it carries, so a context deeper than
+/// this would write a record no reader could read — a `decern-serve` that recorded one
+/// would refuse to start against its own ledger. A real context is a handful of levels; the
+/// bound is far above that and far below the reader's limit.
+pub(crate) const MAX_CONTEXT_DEPTH: usize = 64;
+pub(crate) const CONTEXT_TOO_DEEP: &str =
+    "context nests deeper than 64 levels, properties included";
+
+/// Whether `value` nests deeper than `max`. Iterative — an explicit stack of
+/// `(value, depth)` — so measuring a hostile value never recurses and cannot itself
+/// overflow the stack. Returns as soon as one branch passes `max`.
+pub(crate) fn exceeds_depth(value: &Value, max: usize) -> bool {
+    let mut stack = vec![(value, 1usize)];
+    while let Some((v, depth)) = stack.pop() {
+        if depth > max {
+            return true;
+        }
+        match v {
+            Value::Array(items) => stack.extend(items.iter().map(|item| (item, depth + 1))),
+            Value::Object(entries) => stack.extend(entries.values().map(|val| (val, depth + 1))),
+            _ => {}
+        }
+    }
+    false
+}
 
 /// The longest entity type, entity id or action name one evaluation may carry. Each is
 /// recorded with the decision, and a batch repeats its defaults in every item.
@@ -485,6 +520,13 @@ pub(crate) fn prepare_context(
     let ctx = kernel_context(context, described, now_s);
     if context_too_large(&ctx) {
         return Err(Refusal::context_too_large());
+    }
+    // A record is re-parsed by every reader; a context deeper than this would write a line
+    // no reader, boot verification included, could read. Checked here, where `properties`
+    // are already merged in, so the single evaluation, the batch and the searches are all
+    // covered by the one path.
+    if exceeds_depth(&ctx, MAX_CONTEXT_DEPTH) {
+        return Err(Refusal::context_too_deep());
     }
     Ok((ctx, now_s, asserted_by))
 }
@@ -2067,6 +2109,37 @@ mod tests {
     /// party's handle plants a record on that party's view. It binds as `subject.id` does:
     /// refused before the kernel, as a string and as an object, while a PEP keeps the
     /// freedom it has for `subject.id`.
+    /// `exceeds_depth` counts nesting iteratively and stops at the bound: a flat value is
+    /// depth 1, a bound of N accepts N and refuses N+1, and a value far past the bound is
+    /// refused without the check itself recursing.
+    #[test]
+    fn exceeds_depth_counts_and_short_circuits() {
+        use serde_json::json;
+        assert!(!exceeds_depth(&json!(true), 1));
+        assert!(!exceeds_depth(&json!({"a": 1}), 2));
+        assert!(exceeds_depth(&json!({"a": 1}), 1));
+        assert!(!exceeds_depth(&json!([[0]]), 3));
+        assert!(exceeds_depth(&json!([[0]]), 2));
+        let mut v = json!(0);
+        for _ in 0..5_000 {
+            v = Value::Array(vec![v]);
+        }
+        assert!(exceeds_depth(&v, MAX_CONTEXT_DEPTH));
+        let mut ok = json!(0);
+        for _ in 0..MAX_CONTEXT_DEPTH - 1 {
+            ok = Value::Array(vec![ok]);
+        }
+        assert!(
+            !exceeds_depth(&ok, MAX_CONTEXT_DEPTH),
+            "depth MAX is accepted"
+        );
+        let over = Value::Array(vec![ok]);
+        assert!(
+            exceeds_depth(&over, MAX_CONTEXT_DEPTH),
+            "depth MAX+1 is refused"
+        );
+    }
+
     #[tokio::test]
     async fn a_self_only_caller_may_not_name_another_decision_subject() {
         let base = mission_base();
