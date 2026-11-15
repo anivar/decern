@@ -37,6 +37,7 @@ pub(crate) const MAX_RECORDED_RESULTS: usize = 1000;
 /// id, if sent, is ignored, as §8.4.1 and §8.5.1 say — and ignored means it reaches
 /// neither the decision nor the record); the inputs carry both.
 #[derive(Deserialize)]
+#[serde(remote = "Self")]
 struct Party {
     #[serde(rename = "type")]
     ty: String,
@@ -47,6 +48,7 @@ struct Party {
 }
 
 #[derive(Deserialize)]
+#[serde(remote = "Self")]
 struct ActionIn {
     name: String,
     #[serde(default)]
@@ -56,12 +58,14 @@ struct ActionIn {
 /// §8.2.1: accepted so a PEP that paginates is not refused; only the token is read, since
 /// a token this server never issued cannot name a page.
 #[derive(Deserialize, Default)]
+#[serde(remote = "Self")]
 struct Page {
     #[serde(default)]
     token: Option<String>,
 }
 
 #[derive(Deserialize)]
+#[serde(remote = "Self")]
 pub(crate) struct SearchReq {
     subject: Party,
     #[serde(default)]
@@ -72,6 +76,10 @@ pub(crate) struct SearchReq {
     #[serde(default)]
     page: Option<Page>,
 }
+
+// As an evaluation's: the request, each party in it and its page are objects (§8.2.1,
+// §8.4.1).
+crate::object::object_only!(Party, ActionIn, Page, SearchReq);
 
 /// Which side a search resolves.
 #[derive(Clone, Copy, PartialEq, Eq)]

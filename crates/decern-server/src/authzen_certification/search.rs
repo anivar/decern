@@ -311,6 +311,59 @@ async fn a_search_missing_what_its_kind_requires_is_400() {
     }
 }
 
+/// AuthZEN 1.0 §5.1 to §5.3 hold for a search as for an evaluation: a request, a party or
+/// a page written as an array of its fields in order is a malformed request, 400, and no
+/// search is run or recorded.
+#[tokio::test]
+async fn a_search_or_a_party_written_as_an_array_is_400_and_records_nothing() {
+    let (st, base) = fixture_state();
+    let alice = json!({ "type": "user", "id": "alice" });
+    let record = json!({ "type": "record", "id": "record-1" });
+    let read = json!({ "name": "read" });
+    for (which, body) in [
+        (
+            "subject",
+            json!({ "subject": ["user"], "action": read, "resource": record }),
+        ),
+        (
+            "subject",
+            json!({ "subject": { "type": "user" }, "action": ["read"], "resource": record }),
+        ),
+        (
+            "subject",
+            json!({ "subject": { "type": "user" }, "action": read,
+                    "resource": ["record", "record-1"] }),
+        ),
+        (
+            "resource",
+            json!({ "subject": ["user", "alice"], "action": read, "resource": { "type": "record" } }),
+        ),
+        (
+            "resource",
+            json!({ "subject": alice, "action": read, "resource": ["record"] }),
+        ),
+        (
+            "action",
+            json!({ "subject": ["user", "alice"], "resource": record }),
+        ),
+        (
+            "action",
+            json!({ "subject": alice, "resource": ["record", "record-1"] }),
+        ),
+        (
+            "subject",
+            json!({ "subject": { "type": "user" }, "action": read, "resource": record,
+                    "page": [] }),
+        ),
+        ("subject", json!([{ "type": "user" }, read, record])),
+    ] {
+        let (status, resp) = search(&st, which, &body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{which} {body}: {resp}");
+        assert_eq!(resp["error"], "invalid_request", "{which} {body}: {resp}");
+    }
+    assert!(records_in(&base, &st).is_empty(), "nothing was recorded");
+}
+
 /// A caller bound to itself may not name another party as the decision subject on a
 /// search either, before the search drops the handle; the same search without it is
 /// answered.

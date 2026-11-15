@@ -22,6 +22,7 @@ use crate::{AppState, challenge};
 /// PEP says about the party, carried into the context under the party's name
 /// (`context.subject`, `context.resource`) where the action's schema declares it.
 #[derive(Deserialize)]
+#[serde(remote = "Self")]
 struct Ref {
     #[serde(rename = "type")]
     ty: String,
@@ -33,6 +34,7 @@ struct Ref {
 /// AuthZEN action: an object with a `name`, and optionally `properties`, carried as
 /// `context.action` where the schema declares it.
 #[derive(Deserialize)]
+#[serde(remote = "Self")]
 struct Action {
     name: String,
     #[serde(default)]
@@ -40,6 +42,7 @@ struct Action {
 }
 
 #[derive(Deserialize)]
+#[serde(remote = "Self")]
 pub(crate) struct DecideReq {
     subject: Ref,
     action: Action,
@@ -49,6 +52,10 @@ pub(crate) struct DecideReq {
     #[serde(default)]
     context: Option<serde_json::Map<String, Value>>,
 }
+
+// The request and each party in it are objects (AuthZEN 1.0 §5.1 to §5.3, §6.1). Admission
+// reads whom a request names off these structs, so they have one reading.
+crate::object::object_only!(Ref, Action, DecideReq);
 
 /// Derive the accountable-owner ("sponsor") for a decision: the pure ROOT of
 /// `subject_id`'s delegation chain, resolved server-side from the directory —
@@ -2080,6 +2087,35 @@ mod tests {
             assert_eq!(status, StatusCode::FORBIDDEN, "{named} {body}");
             assert_eq!(body["error"], "caller_mismatch", "{named}");
         }
+        // A handle written any other way names nobody at admission, so it must name nobody
+        // on the record either: the evaluation refuses it as malformed. An array of the
+        // handle's fields in order is the form a derived reader would also take.
+        for named in [
+            json!(["ppid:carol"]),
+            json!(["ppid:carol", "ppid", "audit"]),
+            json!(7),
+            json!(true),
+        ] {
+            let who =
+                crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")
+                    .self_only();
+            let (status, body) = body_json(
+                decide(
+                    State(st.clone()),
+                    Some(axum::Extension(who)),
+                    Ok(Json(read_as_about("agent-1", named.clone()))),
+                )
+                .await,
+            )
+            .await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{named} {body}");
+        }
+        let ledger = std::fs::read_to_string(base.join("decern-ledger.jsonl")).unwrap_or_default();
+        assert_eq!(
+            ledger.lines().count(),
+            0,
+            "no refusal above recorded anything"
+        );
         // Itself is admitted, and then dropped as redundant: the record carries no
         // decision subject.
         let who = crate::caller::Authenticated::new("agent-1", "agent-1", "https://iss.example/")

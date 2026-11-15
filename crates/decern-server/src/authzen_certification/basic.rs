@@ -113,6 +113,47 @@ async fn a_malformed_request_is_400_in_every_shape_the_scenario_lists() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "no content type");
 }
 
+/// AuthZEN 1.0 §5.1 to §5.3 and §6.1: a Subject, a Resource, an Action and the request
+/// that holds them are each an object. Each written as an array of its fields in order, which a derived reader
+/// would also take, is a malformed request: 400, and nothing is decided or recorded.
+#[tokio::test]
+async fn a_request_or_a_party_written_as_an_array_is_400_and_records_nothing() {
+    let (st, base) = fixture_state();
+    let subject = json!({ "type": "user", "id": "alice" });
+    let action = json!({ "name": "read" });
+    let resource = json!({ "type": "record", "id": "record-1" });
+    let cases = [
+        (
+            "subject",
+            json!({ "subject": ["user", "alice"], "action": action, "resource": resource }),
+        ),
+        (
+            "subject with properties",
+            json!({ "subject": ["user", "alice", { "department": "Sales" }],
+                    "action": action, "resource": resource }),
+        ),
+        (
+            "action",
+            json!({ "subject": subject, "action": ["read"], "resource": resource }),
+        ),
+        (
+            "resource",
+            json!({ "subject": subject, "action": action, "resource": ["record", "record-1"] }),
+        ),
+        ("the request", json!([subject, action, resource])),
+        (
+            "the request, with a context",
+            json!([subject, action, resource, {}]),
+        ),
+    ];
+    for (what, body) in cases {
+        let (status, resp) = decision(&st, &body.to_string()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{what}: {resp}");
+        assert_eq!(resp["error"], "invalid_request", "{what}: {resp}");
+    }
+    assert!(records_in(&base, &st).is_empty(), "nothing was recorded");
+}
+
 /// C-2-5: an `X-Request-ID` comes back unchanged; its absence changes nothing.
 #[tokio::test]
 async fn x_request_id_is_echoed_and_its_absence_is_harmless() {

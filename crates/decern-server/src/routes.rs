@@ -557,6 +557,104 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A signed agent that is not a PEP is bound to itself however a request writes the
+    /// party. Written as an object, another principal is refused for the whole exchange. A
+    /// subject that is not an object is not an AuthZEN subject (§5.1): the single route
+    /// answers the request as malformed, the batch route answers that item as malformed,
+    /// and neither decides or records anything about the principal it names.
+    #[tokio::test]
+    async fn a_signed_agent_bound_to_itself_names_no_other_principal_in_any_written_form() {
+        use tower::ServiceExt;
+
+        const SINGLE: &str = "/access/v1/evaluation";
+        const BATCH: &str = "/access/v1/evaluations";
+        let read = r#""action":{"name":"Read"},"resource":{"type":"Resource","id":"claim1"}"#;
+        let object = r#"{"type":"Principal","id":"corp"}"#;
+        let array = r#"["Principal","corp"]"#;
+        let described = r#"["Principal","corp",{"department":"finance"}]"#;
+        // What is sent, where, the status of the exchange, and the error it or its one
+        // item carries.
+        let cases = [
+            (
+                "an object",
+                SINGLE,
+                format!("{{\"subject\":{object},{read}}}"),
+                403,
+                "caller_mismatch",
+            ),
+            (
+                "an array",
+                SINGLE,
+                format!("{{\"subject\":{array},{read}}}"),
+                400,
+                "invalid_request",
+            ),
+            (
+                "an item's object",
+                BATCH,
+                format!("{{{read},\"evaluations\":[{{\"subject\":{object}}}]}}"),
+                403,
+                "caller_mismatch",
+            ),
+            (
+                "an item's array",
+                BATCH,
+                format!("{{{read},\"evaluations\":[{{\"subject\":{array}}}]}}"),
+                200,
+                "invalid_request",
+            ),
+            (
+                "an item's array that also describes the party",
+                BATCH,
+                format!("{{{read},\"evaluations\":[{{\"subject\":{described}}}]}}"),
+                200,
+                "invalid_request",
+            ),
+            (
+                "a default object an item inherits",
+                BATCH,
+                format!("{{\"subject\":{object},{read},\"evaluations\":[{{}}]}}"),
+                403,
+                "caller_mismatch",
+            ),
+            (
+                "a default array an item inherits",
+                BATCH,
+                format!("{{\"subject\":{array},{read},\"evaluations\":[{{}}]}}"),
+                200,
+                "invalid_request",
+            ),
+        ];
+        let key = SigningKey::from_bytes(&[12u8; 32]);
+        for (what, path, body, status, code) in cases {
+            let base = mission_base();
+            let (st, _pk) = mission_state_at(&base);
+            // agent-1 is not in --pep, so the guard admits it bound to itself.
+            let router = signed_router(st, &key, false);
+            let headers = signed_headers(&key, "POST", path, body.as_bytes());
+            let resp = router
+                .oneshot(request_with("POST", path, &headers, body.as_bytes()))
+                .await
+                .unwrap();
+            let (got, answer) = body_json(resp).await;
+            assert_eq!(got.as_u16(), status, "{what}: {answer}");
+            let error = if status == 200 {
+                assert_eq!(
+                    answer["evaluations"][0]["decision"], false,
+                    "{what}: {answer}"
+                );
+                &answer["evaluations"][0]["context"]["error"]["code"]
+            } else {
+                &answer["error"]
+            };
+            assert_eq!(error, code, "{what}: {answer}");
+            let ledger =
+                std::fs::read_to_string(base.join("decern-ledger.jsonl")).unwrap_or_default();
+            assert_eq!(ledger.lines().count(), 0, "{what}: nothing is recorded");
+            let _ = std::fs::remove_dir_all(&base);
+        }
+    }
+
     /// The Mission read answers every caller the guard admits. A workload bound to itself
     /// reads a Mission approved by someone else and learns its approver, state and expiry.
     #[tokio::test]
