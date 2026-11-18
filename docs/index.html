@@ -115,12 +115,14 @@
      these are a list of nine sentences. */
   @media (max-width: 560px) {
     #rules table tr,
+    #contribute table tr,
     #build table tr {
       display: block;
       border-bottom: 1px solid #E1E7E4;
       padding: 13px 0;
     }
     #rules table td,
+    #contribute table td,
     #build table td {
       display: inline-block;
       width: auto !important;
@@ -129,6 +131,7 @@
     }
     /* The sentence, third in both tables. */
     #rules table td:nth-child(3),
+    #contribute table td:nth-child(3),
     #build table td:nth-child(3) {
       display: block;
       margin-top: 7px !important;
@@ -185,11 +188,12 @@
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
         <h1 style="font:600 clamp(52px,8.5vw,82px)/0.98 'IBM Plex Mono',monospace;letter-spacing:-0.03em;color:#0C0F0E;margin:24px 0 0">decern</h1>
         <p style="font:500 clamp(25px,3.2vw,35px)/1.18 Newsreader,serif;letter-spacing:-0.01em;color:#0C0F0E;margin:24px 0 0;max-width:28ch;text-wrap:pretty">Decide what an agent, a person or a service is allowed to do. Keep proof of every answer.</p>
-        <p style="font:400 17px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:22px 0 0;max-width:60ch;text-wrap:pretty">A solver checks the safety rules across the model's symbolic input space, instead of the handful a test file covers. Every answer goes into a signed, linked log that anyone can check later, and checked against a commitment published where the operator cannot reach, it shows that no record up to it was rewritten or dropped. Nothing gets decided until the deployment states how the caller is established: the server refuses to start until one of five postures is named. Four verify a credential here; the fifth declares that a front already did.</p>
+        <p style="font:400 17px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:22px 0 0;max-width:60ch;text-wrap:pretty">decern answers one question for an agent, a person or a workload: may this principal do this, now? It writes each answer to a signed, hash-chained log before it hands the answer back, so the record exists whether or not anyone was watching. Its nine safety rules are checked by a solver over the model's whole symbolic input space, not on a handful of examples. And the server will not start until the deployment says how its callers are established.</p>
+        <p style="font:400 13px/1.7 'IBM Plex Mono',monospace;color:#5E6B67;margin:22px 0 0;max-width:66ch;border-left:2px solid #0E7C6B;padding-left:14px"><span style="color:#0C0F0E">Where it stands.</span> 0.7.0 is the last feature release of the current design. After it the 0.x line takes security fixes only. The next line is built beside it in this repository. No production deployments are known.</p>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:34px">
-          <a href="https://github.com/anivar/decern" style="display:inline-flex;align-items:center;gap:10px;background:#0E7C6B;color:#FFFFFF;border:1px solid #0E7C6B;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="background:#0A5B4E;border-color:#0A5B4E"><svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="display:block"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>Contribute on GitHub</a>
-          <a href="#contribute" style="display:inline-flex;align-items:center;background:transparent;color:#0C0F0E;border:1px solid #0C0F0E;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="background:#0C0F0E;color:#F5F7F6">Where to start</a>
-          <a href="#start" style="display:inline-flex;align-items:center;background:transparent;color:#0A5B4E;border:1px solid #C4CFCB;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="border-color:#0E7C6B">Install and try it</a>
+          <a href="https://github.com/anivar/decern" style="display:inline-flex;align-items:center;gap:10px;background:#0E7C6B;color:#FFFFFF;border:1px solid #0E7C6B;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="background:#0A5B4E;border-color:#0A5B4E"><svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="display:block"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>Read the code on GitHub</a>
+          <a href="#start" style="display:inline-flex;align-items:center;background:transparent;color:#0C0F0E;border:1px solid #0C0F0E;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="background:#0C0F0E;color:#F5F7F6">Try it on your machine</a>
+          <a href="#contribute" style="display:inline-flex;align-items:center;background:transparent;color:#0A5B4E;border:1px solid #C4CFCB;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="border-color:#0E7C6B">Where the work is</a>
         </div>
       </div>
 
@@ -219,6 +223,14 @@
             <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">no TLS/OpenSSL by default</dd>
           </div>
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
+            <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">0.x line</dt>
+            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">last feature release, then security fixes only</dd>
+          </div>
+          <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
+            <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Adopters</dt>
+            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">none known</dd>
+          </div>
+          <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
             <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Licence</dt>
             <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">Apache-2.0</dd>
           </div>
@@ -241,7 +253,7 @@
         </div>
         <div>
           <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:0;text-wrap:pretty">Tokens and delegation formats settle how permission is described. Whether it holds — that passed-on authority can only get narrower, that a dropped record can be caught, that an answer stayed inside its mandate — is left to whoever builds the system.</p>
-          <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:18px 0 0;text-wrap:pretty">decern fills that gap. People, AI agents and services are one kind of principal here, answered by the same proven function.</p>
+          <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:18px 0 0;text-wrap:pretty">decern is an attempt at the guarantee. People, AI agents and services are one kind of principal here, answered by the same proven function.</p>
         </div>
       </div>
     </div>
@@ -250,27 +262,27 @@
   <section id="how" style="padding:88px 0 0">
     <div style="max-width:1180px;margin:0 auto;padding:0 40px">
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
-        <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">What makes it different</p>
+        <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">What it does</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Prove the rules. Record the answer. Know who asked.</h2>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">What happens to a request, and what you can check afterwards.</h2>
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;margin-top:36px">
-          <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:32px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">01 · Proven, not tested</p>
-            <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">A solver checks every case, not a few</h3>
-            <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">An answer depends only on the request (who asks, for what, with what context), the authority graph, the policy and the time. Because it is that contained, cvc5 can search the model's symbolic input space for one that breaks a rule. Nine rules are checked this way, over the policy rather than the running server. Green means it found nothing.</p>
+          <article style="border:1px solid #C9D3CF;background:#FFFFFF;padding:32px">
+            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">01 · The rules</p>
+            <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">A solver checks every input the model allows</h3>
+            <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">An answer depends only on the request (who asks, for what, with what context), the authority graph, the policy and the time. Because it is that contained, cvc5 can search the model's symbolic input space for one that breaks a rule. Nine rules are checked this way, over the policy rather than the running server. A pass means it found none.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:26px 0 0">
             <p style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-proof · runs in <span style="color:#5E6B67">decern prove</span> and CI only, never on the request path</p>
           </article>
-          <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:32px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">02 · Recorded, not trusted</p>
+          <article style="border:1px solid #C9D3CF;background:#FFFFFF;padding:32px">
+            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">02 · The record</p>
             <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">A log you can check yourself</h3>
             <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Each answer is added to the end of the log, signed, and linked to the one before it. The signature shows a record is genuine and the links show the log holds together; whoever holds the key could still rewrite it, so a tree head kept out of the operator's reach is what shows nothing up to it was dropped or changed. A log torn by a crash repairs itself. You check the file yourself, offline.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:26px 0 0">
             <p style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-ledger · Merkle · JCS canonicalisation · anchors</p>
           </article>
-          <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:32px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">03 · Known, not assumed</p>
-            <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">Refuses to start without a caller posture</h3>
+          <article style="border:1px solid #C9D3CF;background:#FFFFFF;padding:32px">
+            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">03 · The caller</p>
+            <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">It will not start until it knows how callers are established</h3>
             <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Before evaluating anything, decern-serve establishes who is asking — a bearer token, a signed request, a SPIFFE identity, an AAuth agent token, or a declared authenticated front taking responsibility for what it asserts. There is no default identity, and no way to start the server without naming one. The three workload postures go further: unless exempted, such a caller may only name itself. The verified caller is written onto the decision record itself, not inferred afterwards.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:26px 0 0">
             <p style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-server · five caller postures · asserted_by under any credential posture</p>
@@ -285,65 +297,74 @@
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
         <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:72px;align-items:end">
           <div>
-            <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#0E7C6B;margin:0">Open call</p>
+            <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#0E7C6B;margin:0">Where the work is</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-            <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0;max-width:24ch;text-wrap:pretty">What is outside the kernel</h2>
+            <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0;max-width:24ch;text-wrap:pretty">The 0.x line takes security fixes only. The next line is built beside it.</h2>
           </div>
           <div>
-            <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:0;text-wrap:pretty">A proven core is only useful once real systems can reach it — clients, gateways, log backends, policy packs. Those sit outside the kernel on purpose, and they are open.</p>
-            <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">People and agents are both welcome, on the same terms. Every change goes through one gate: <span style="font:500 15px/1 'IBM Plex Mono',monospace">./scripts/verify.sh</span>.</p>
+            <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:0;text-wrap:pretty">decern turns an authorization decision into a receipt. The decision is recorded before it is answered, the receipt comes back with the answer, and anyone who holds it can check it offline against the log's public key. A resource can refuse to act without one.</p>
+            <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">A small proxy sits between an enforcement point and the decision point it already uses. It speaks AuthZEN on both sides, records each decision and returns it with the receipt. It enforces nothing. Cedar stays built in.</p>
           </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;margin-top:40px">
-          <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:26px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Area 01</p>
-            <h3 style="font:600 17px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">A new client SDK</h3>
-            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">Mirror the Go, Python or TypeScript client against the AuthZEN surface in <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">decern-server</span>. Any language.</p>
-          </article>
-          <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:26px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Area 02</p>
-            <h3 style="font:600 17px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Harden the enforcement adapter</h3>
-            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">The HTTP shim shipped in examples/ext_authz_adapter — extend it, or bring the gRPC ext_authz variant — a thin client over the server.</p>
-          </article>
-          <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:26px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Area 03</p>
-            <h3 style="font:600 17px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Authority-graph tooling</h3>
-            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">Authority-graph export — blast-radius shipped; DOT and Mermaid renderings remain over the kernel's directory.</p>
-          </article>
-          <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:26px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Area 04</p>
-            <h3 style="font:600 17px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">A ledger backend</h3>
-            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">Implement the head-store trait in <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">decern-store</span> for your substrate.</p>
-          </article>
-          <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:26px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Area 05</p>
-            <h3 style="font:600 17px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">A new proven property</h3>
-            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">Add the invariant to <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">decern-proof</span> — and the negative control that proves it load-bearing.</p>
-          </article>
-          <article style="border:1px solid #0C0F0E;background:#FFFFFF;padding:26px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Area 06</p>
-            <h3 style="font:600 17px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Model and policy packs</h3>
-            <p style="font:400 14px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0;text-wrap:pretty">Cedar policy, schema and entities for a domain, contributed to <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">crates/decern-kernel/model/</span>.</p>
-          </article>
-        </div>
+        <table style="width:100%;margin-top:40px;border-top:1px solid #0C0F0E">
+          <tbody>
+            <tr>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top;width:44px">0</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top;width:196px">Spikes</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">Each risky assumption is proven or broken before the format is written.</td>
+            </tr>
+            <tr>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">1</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">0.7.0</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">Released from a tag whose release-candidate run passed.</td>
+            </tr>
+            <tr>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">2</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">First slice</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">On a clean machine, the proxy in front of an AuthZEN decision point returns a receipt that verifies offline, in under five minutes.</td>
+            </tr>
+            <tr>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">3</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">Cedar on the new log</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">The built-in model decides through the new crates and a receipt verifies in a browser.</td>
+            </tr>
+            <tr>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">4</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">Facts and grants</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">The new line holds no state outside the log, and the approval rule is proven.</td>
+            </tr>
+            <tr>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">5</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">Proofs, replay, first use</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">A recorded decision replays against its policy, and one outside party has run the quickstart.</td>
+            </tr>
+            <tr>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #0C0F0E;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">6</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #0C0F0E;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">Remove the old line</td>
+              <td style="padding:15px 0;border-bottom:1px solid #0C0F0E;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">main holds the new crates only.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:74ch;text-wrap:pretty">Phases, in order, with no dates. Each phase has a gate, and the steps of a later phase can change when an earlier gate teaches something. If no outside issue, pull request or adopter has appeared by the gate of phase 5, the work stops at the format, its test vectors and the drafts, and phase 6 does not run.</p>
 
         <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);border:1px solid #0C0F0E;margin-top:28px">
           <div style="padding:28px;border-right:1px solid #0C0F0E;background:#EDF3F1">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Getting a change in</p>
-            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">Open an issue first for anything big or design-changing — a short conversation saves a wasted PR. For a small, obvious fix, just send the PR. Agent-written PRs are welcome on the same terms; agents start at <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">AGENTS.md</span>, with the working method and standards in <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">.agent/</span>.</p>
+            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">Each step of the plan is one issue in a milestone; pick one from there. Open an issue first for anything design-changing. For a small, obvious fix, just send the pull request. People and agents are welcome on the same terms: agents start at <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">AGENTS.md</span>, and a person signs off the DCO. A security report goes through <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">SECURITY.md</span>, not an issue.</p>
             <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:20px">
-              <a href="https://github.com/anivar/decern/labels/help%20wanted" style="font:500 13px/1.6 'IBM Plex Mono',monospace">help wanted ↗</a>
-              <a href="https://github.com/anivar/decern/blob/main/ARCHITECTURE.md#where-to-start-contributing" style="font:400 13px/1.6 'IBM Plex Mono',monospace">ARCHITECTURE.md</a>
+              <a href="https://github.com/anivar/decern/milestones" style="font:500 13px/1.6 'IBM Plex Mono',monospace">milestones ↗</a>
+              <a href="https://github.com/anivar/decern/blob/main/ROADMAP.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">ROADMAP.md</a>
               <a href="https://github.com/anivar/decern/blob/main/CONTRIBUTING.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">CONTRIBUTING.md</a>
               <a href="https://github.com/anivar/decern/blob/main/AGENTS.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">AGENTS.md</a>
+              <a href="https://github.com/anivar/decern/blob/main/SECURITY.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">SECURITY.md</a>
             </div>
           </div>
           <div style="padding:28px;background:#FFFFFF">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">The one gate</p>
             <p style="font:400 13px/1.95 'IBM Plex Mono',monospace;color:#0C0F0E;margin:16px 0 0">build · test · cvc5 proofs<br>clippy · fmt · cargo-deny<br>standards guard</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:20px 0 0">
-            <p style="font:400 13.5px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Run it before you open a PR and review holds no surprises.</p>
+            <p style="font:400 13.5px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Every change goes through <span style="font:500 13px/1 'IBM Plex Mono',monospace">./scripts/verify.sh</span>. Run it before you open a pull request.</p>
           </div>
         </div>
       </div>
@@ -427,7 +448,7 @@
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
         <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">One request, start to finish</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Decide. Record. Or refuse.</h2>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">What one request goes through.</h2>
         <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">The answer is handed back only after its record is safely written. If it cannot be recorded you get <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0E7C6B">503</span> — never a bare allow.</p>
 
         <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid #0C0F0E;margin-top:34px">
@@ -461,7 +482,7 @@
         <div style="display:grid;grid-template-columns:minmax(0,1fr) 296px;gap:44px;margin-top:28px;align-items:start">
           
             <figure style="margin:0;border:1px solid #0C0F0E;background:#FFFFFF;padding:24px">
-              <img src="img/decision-flow.png" alt="decern decision flow: one of five postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" style="display:block;width:100%;height:auto">
+              <img src="img/decision-flow.svg" width="1384" height="360" alt="decern decision flow: one of five postures establishes the caller, the proven kernel evaluates, the decision is recorded to the tamper-evident ledger, and it is served with 200 only when the record was written, else 503; an unestablished caller is refused before evaluation" style="display:block;width:100%;height:auto">
             </figure>
           
           <div>
@@ -481,14 +502,14 @@
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
         <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">The ledger</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Change one byte and the log says so.</h2>
-        <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">Alter record 02 below to see what <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">decern verify</span> reports.</p>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">What a tampered log looks like.</h2>
+        <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">Three decisions from one run of the built binaries. Alter record 1 to see what <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">decern verify</span> reports.</p>
 
         <div id="ledger-demo" data-state="clean" style="border:1px solid #0C0F0E;margin-top:34px;background:#FFFFFF">
           <div style="border-bottom:1px solid #0C0F0E;background:#EDF3F1;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
             <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67">/tmp/decern.jsonl</span>
             <div style="display:flex;gap:8px">
-              <button type="button" data-tamper="on" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;color:#8F3A40;background:transparent;border:1px solid #8F3A40;padding:9px 12px;cursor:pointer" style-hover="background:#8F3A40;color:#FFFFFF">Alter record 02</button>
+              <button type="button" data-tamper="on" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;color:#8F3A40;background:transparent;border:1px solid #8F3A40;padding:9px 12px;cursor:pointer" style-hover="background:#8F3A40;color:#FFFFFF">Alter record 1</button>
               <button type="button" data-tamper="off" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;color:#0C0F0E;background:transparent;border:1px solid #0C0F0E;padding:9px 12px;cursor:pointer" style-hover="background:#0C0F0E;color:#F5F7F6">Restore</button>
             </div>
           </div>
@@ -501,79 +522,90 @@
               <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490">Chain</span>
             </div>
             <div style="display:grid;grid-template-columns:56px 84px minmax(190px,1fr) 96px 104px;gap:16px;padding:15px 0;border-bottom:1px solid #E1E7E4;align-items:baseline;min-width:640px">
-              <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">0001</span>
+              <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">0</span>
               <span style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B">allow</span>
               <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E">corp · Read · claim1</span>
-              <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">genesis</span>
+              <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">0000…0000</span>
               <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B">intact</span>
             </div>
             
               <div class="dc-clean" style="display:grid;grid-template-columns:56px 84px minmax(190px,1fr) 96px 104px;gap:16px;padding:15px 0;border-bottom:1px solid #E1E7E4;align-items:baseline;min-width:640px">
-                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">0002</span>
+                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">1</span>
                 <span style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">deny</span>
-                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E">agent-7 · MoveMoney · account9</span>
-                <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">9f3c…a1</span>
+                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E">corpB · Read · claim1</span>
+                <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">3334…55eb</span>
                 <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B">intact</span>
               </div>
             
             
               <div class="dc-tampered" style="display:grid;grid-template-columns:56px 84px minmax(190px,1fr) 96px 104px;gap:16px;padding:15px 0;border-bottom:1px solid #E1E7E4;align-items:baseline;background:#F6EBEB;min-width:640px">
-                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">0002</span>
+                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">1</span>
                 <span style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">allow</span>
-                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">agent-7 · MoveMoney · account9</span>
-                <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">9f3c…a1</span>
+                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">corpB · Read · claim1</span>
+                <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">3334…55eb</span>
                 <span style="font:500 12px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">mismatch</span>
               </div>
             
             <div style="display:grid;grid-template-columns:56px 84px minmax(190px,1fr) 96px 104px;gap:16px;padding:15px 0;align-items:baseline;min-width:640px">
-              <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">0003</span>
-              <span style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B">allow</span>
+              <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">2</span>
+              <span style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">deny</span>
               <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E">corp · Read · claim2</span>
-              <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">41ba…7d</span>
+              <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">39b3…3db7</span>
               
                 <span class="dc-clean" style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B">intact</span>
               
               
-                <span class="dc-tampered" style="font:500 12px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">orphaned</span>
+                <span class="dc-tampered" style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">not reached</span>
               
             </div>
           </div>
           <div style="border-top:1px solid #0C0F0E;background:#0E1513;padding:20px 24px">
             
-              <p class="dc-clean" style="font:400 13px/1.75 'IBM Plex Mono',monospace;color:#8EA09A;margin:0">$ decern verify --ledger /tmp/decern.jsonl --pubkey &lt;kid&gt;<br><span style="color:#34C6AB">chain intact · 3 records · 3/3 signatures valid · exit 0</span></p>
+              <p class="dc-clean" style="font:400 13px/1.75 'IBM Plex Mono',monospace;color:#8EA09A;margin:0;white-space:pre-wrap">$ decern verify --ledger /tmp/decern.jsonl --pubkey 7cf8277f…e0b1
+<span style="color:#34C6AB">OK  3 entries
+    root: 7dfafa0f…ed44
+    signatures: verified
+    signer:     7cf8277f…e0b1 from seq 0</span></p>
             
             
-              <p class="dc-tampered" style="font:400 13px/1.75 'IBM Plex Mono',monospace;color:#8EA09A;margin:0">$ decern verify --ledger /tmp/decern.jsonl --pubkey &lt;kid&gt;<br><span style="color:#E29A96">chain broken at seq 0002 · hash mismatch · later records orphaned · exit 1</span></p>
+              <p class="dc-tampered" style="font:400 13px/1.75 'IBM Plex Mono',monospace;color:#8EA09A;margin:0;white-space:pre-wrap">$ decern verify --ledger /tmp/decern.jsonl --pubkey 7cf8277f…e0b1
+<span style="color:#E29A96">error: TAMPER at seq 1: entry altered (hash mismatch)</span>
+$ echo $?
+<span style="color:#E29A96">1</span></p>
             
           </div>
         </div>
-        <p style="font:400 12px/1.7 'IBM Plex Mono',monospace;letter-spacing:0.02em;color:#849490;margin:14px 0 0;max-width:78ch">Illustration rendered in the browser — hashes abbreviated, no signing key involved. <span style="color:#5E6B67">examples/quickstart.sh</span> runs the real loop: prove, serve, decide, verify, and tamper-is-rejected.</p>
+        <p style="font:400 12px/1.7 'IBM Plex Mono',monospace;letter-spacing:0.02em;color:#849490;margin:14px 0 0;max-width:78ch">Drawn in the browser from one real run: three decisions under <span style="color:#5E6B67">--trust-proxy</span>, then the decision in record 1 edited by hand. Hashes are abbreviated; the output lines are what the binary printed. <span style="color:#5E6B67">examples/quickstart.sh</span> runs the whole loop: prove, serve, decide, verify, and tamper-is-rejected.</p>
         <div style="border:1px solid #0C0F0E;background:#0E1513;margin-top:24px">
           <div style="border-bottom:1px solid #26332F;padding:12px 24px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
             <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#8EA09A">An actual record</span>
-            <span style="font:400 11px/1.5 'IBM Plex Mono',monospace;color:#5F8F83">seq 0 · Ed25519-signed · hash-chained · from a live run</span>
+            <span style="font:400 11px/1.5 'IBM Plex Mono',monospace;color:#5F8F83">seq 0 · Ed25519-signed · hash-chained · from the same run</span>
           </div>
           <div style="padding:20px 24px;overflow-x:auto">
             <pre style="margin:0;font:400 12.5px/1.7 'IBM Plex Mono',monospace;color:#EAF0ED;white-space:pre">{
   "entry": {
-    "seq": 0, "ts_ms": 1786928762000,
+    "seq": 0, "ts_ms": 1795038875000,
     "subject_type": "Principal", "subject_id": "corp",
     "action": "Read",
     "resource_type": "Resource", "resource_id": "claim1",
-    "context": { "now": 1786928762 },
+    "context": { "now": 1795038875 },
     "decision": true, "reasons": ["P-read"],
     "sponsor": { "kind": "Principal", "id": "corp" },
-    "asserted_by": {"sub": "corp", "client_id": "mcp-demo-client", "iss": "https://issuer.example/"},
-    "digests": {"authority": "cb03c58cb1f6…", "parameters": "12ac1a473dc0…"}
+    "digests": {"authority": "9f445dc745481b5f486658a61ec1e9dd93fd0d3c78291616efa7aec812934170",
+                "parameters": "37c1246de32a17c36908fe563ffe3db08fd47a145b1eab2f3561bb3e2b77d1c2"}
   },
   "prev":    "0000000000000000000000000000000000000000000000000000000000000000",
-  "hash":    "5e828eb65f5b7b4a8143b6d21d2befc550f3cd2d8dcdf482e95a10e7609f3549",
-  "sig_b64": "MQ8ZnAwLQ/yQRwhuWRlaChGEr+KE+3X4xe16ui1QcKBpHlsCZ03wxciEexjdpjCWAN3dynrLLZ4yWivGmIEoAA==",
-  "kid":     "163086118c9525e96a1dfa96946c5317abd8bbe1f1fe1d3fa1d017aa9da6f8f0"
+  "hash":    "33346275c3901037979ea3171e1fe70c19750ff75e00951e0d3fc5219d1755eb",
+  "sig_b64": "cz4CWhlRlZgpnKoQK52l/zD+M5BhZ+YpZ//fwsu4uQJR6a26BK7iI9A5q48Q2478fkWf0QnQr+CWykqyqHtqBQ==",
+  "kid":     "7cf8277f091dd3b357bc1023ba8fdfe29cfcf214d97643b6cbb632516698e0b1"
 }</pre>
           </div>
-          <div style="border-top:1px solid #26332F;padding:16px 24px">
-            <p style="margin:0;font:400 13px/1.8 'IBM Plex Mono',monospace;color:#8EA09A">$ decern verify --ledger /tmp/decern.jsonl --pubkey 16308611…<br><span style="color:#34C6AB">OK · 2 entries · root 7bd41405…5205 · signatures verified</span></p>
+          <div style="border-top:1px solid #26332F;padding:16px 24px;overflow-x:auto">
+            <p style="margin:0;font:400 13px/1.8 'IBM Plex Mono',monospace;color:#8EA09A;white-space:pre">$ decern verify --ledger /tmp/decern.jsonl --pubkey 7cf8277f091dd3b357bc1023ba8fdfe29cfcf214d97643b6cbb632516698e0b1
+<span style="color:#34C6AB">OK  3 entries
+    root: 7dfafa0f93687657392927ffbb3cb5120bfde09ee74dd8320312466ec18bed44
+    signatures: verified
+    signer:     7cf8277f091dd3b357bc1023ba8fdfe29cfcf214d97643b6cbb632516698e0b1 from seq 0</span></p>
           </div>
         </div>
 
@@ -623,7 +655,7 @@
 
         
           <figure style="margin:34px 0 0;border:1px solid #0C0F0E;background:#FFFFFF;padding:30px">
-            <img src="img/architecture.png" alt="decern architecture: decern and decern-serve (five postures) over the kernel, identity, proof, ledger, store, and crypto crates" style="display:block;width:100%;height:auto">
+            <img src="img/architecture.svg" width="1384" height="600" alt="decern architecture: decern and decern-serve (five postures) over the kernel, identity, proof, ledger, store, and crypto crates" style="display:block;width:100%;height:auto">
             <figcaption style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:22px 0 0">Crate topology, as shipped in the repository.</figcaption>
           </figure>
         
@@ -700,14 +732,14 @@
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
         <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Start</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Prove it, run it, verify it.</h2>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Try it on your machine.</h2>
         <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">Two binaries: <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">decern</span> to prove and verify, <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">decern-serve</span> to answer requests. You only need cvc5 on <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">PATH</span> for the proofs — not to serve answers.</p>
 
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid #0C0F0E;margin-top:30px">
           <div style="padding:24px;border-right:1px solid #0C0F0E;background:#EDF3F1">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Prebuilt binaries</p>
-            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:12px 0 0;text-wrap:pretty">Prebuilt for Linux (x64/arm64), macOS (Apple Silicon) and Windows (x64) — download the two binaries for your platform from the latest release, check them against SHA256SUMS, name them decern and decern-serve, and put them on your <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">PATH</span>.</p>
-            <p style="margin:16px 0 0"><a href="https://github.com/anivar/decern" style="font:500 13px/1.6 'IBM Plex Mono',monospace">Get it on GitHub ↗</a></p>
+            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:12px 0 0;text-wrap:pretty">Prebuilt, signed binaries for Linux (x64/arm64), macOS (Apple Silicon) and Windows (x64) are on the releases page. Each one carries a Sigstore bundle; how to check a signature is in <a href="https://github.com/anivar/decern/blob/main/SECURITY.md#verifying-a-release">SECURITY.md</a>. Name them decern and decern-serve and put them on your <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">PATH</span>.</p>
+            <p style="margin:16px 0 0"><a href="https://github.com/anivar/decern/releases" style="font:500 13px/1.6 'IBM Plex Mono',monospace">Releases ↗</a></p>
           </div>
           <div style="padding:24px;background:#FFFFFF">
             <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">From source</p>
@@ -720,8 +752,9 @@
           <div style="color:#5F8F83">&#35; 1 · prove every invariant over the model's input space (cvc5)</div>
           <div><span style="color:#34C6AB">decern</span> prove</div>
           <div style="height:19px"></div>
-          <div style="color:#5F8F83">&#35; 2 · run the PDP (writes a tamper-evident ledger)</div>
-          <div><span style="color:#34C6AB">decern-serve</span> --ledger /tmp/decern.jsonl --trust-proxy &amp;</div>
+          <div style="color:#5F8F83">&#35; 2 · run the PDP (writes a tamper-evident ledger); this walkthrough is its own caller.</div>
+          <div style="color:#5F8F83">&#35;&nbsp;&nbsp;&nbsp; --key keeps the signing key: without it a restart refuses the ledger it already wrote.</div>
+          <div><span style="color:#34C6AB">decern-serve</span> --ledger /tmp/decern.jsonl --key /tmp/decern.key --trust-proxy &amp;</div>
           <div style="height:19px"></div>
           <div style="color:#5F8F83">&#35; 3 · decide over HTTP (AuthZEN-shaped) — corp reads a claim it owns</div>
           <div>curl -s localhost:8080/access/v1/evaluation -H 'content-type: application/json' -d '{</div>
@@ -755,7 +788,7 @@
         <p style="font:400 12px/1.7 'IBM Plex Mono',monospace;letter-spacing:0.02em;color:#849490;margin:14px 0 0;max-width:80ch"><span style="color:#5E6B67">--ledger</span> and <span style="color:#5E6B67">--sharded</span> are mutually exclusive, and <code>--sharded</code> requires <code>--key</code>, the key every replica signs with, a <code>postgres://</code> URL also <code>--missions-per-host</code>, and <code>--retired-key</code> names each key it replaced. Audit a directory store with <span style="color:#5E6B67">decern verify --sharded &lt;dir&gt; --pubkey &lt;kid&gt;</span>, with <code>--pubkey</code> once per key <code>GET /pubkey</code> lists under <code>keys</code> — it checks every shard and exits non-zero if any fails; a Postgres head store has no <code>decern verify</code> path. A start, and that verify, read each shard's whole history under the shard's lock, so an append to it waits until the read ends.</p>
         <div style="border:1px solid #0C0F0E;background:#EDF3F1;margin-top:28px;padding:22px 26px">
           <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Integrations &amp; clients</p>
-          <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:12px 0 0;max-width:74ch;text-wrap:pretty">The MCP server (<span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">examples/mcp</span>) has been run end to end against a real MCP client, not curl, with allow, deny and step-up all read back correctly by the model. Alongside it, a forward-auth shim for NGINX, Traefik and Envoy (<span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">examples/ext_authz_adapter</span>) puts the same decision point in front of a gateway. Call a running <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">decern-serve</span> directly from an application with a thin AuthZEN client &mdash; <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">uv add decern</span> (Python), <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">npm install decern</span> (TypeScript) or <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">go get</span> (Go).</p>
+          <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:12px 0 0;max-width:74ch;text-wrap:pretty">Five worked examples ship in the repository, all runnable and CI-tested and none published as crates: <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">examples/mcp</span> consults decern before every tool call, <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">examples/ext_authz_adapter</span> puts it behind NGINX, Traefik or Envoy, and <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">signed-request</span>, <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">spiffe</span> and <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">aauth</span> each run a workload posture end to end. Thin AuthZEN 1.0 clients are published for applications: <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">uv add decern</span> (Python), <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">npm install decern</span> (TypeScript) and <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">go get github.com/anivar/decern/sdks/go</span> (Go).</p>
         </div>
       </div>
     </div>
@@ -766,7 +799,7 @@
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
         <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Who runs this</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Maintained in the open, with the roadmap in the open too.</h2>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">One maintainer, working in the open.</h2>
 
         <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border:1px solid #0C0F0E;margin-top:36px">
           <div style="padding:28px;border-right:1px solid #0C0F0E;background:#EDF3F1">
@@ -783,7 +816,8 @@
                 <p style="font:400 12px/1.6 'IBM Plex Mono',monospace;color:#5E6B67;margin:3px 0 0"><a href="https://anivar.net">anivar.net ↗</a></p>
               </div>
             </div>
-            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;text-wrap:pretty">Review and merge rules are written down in <a href="https://github.com/anivar/decern/blob/main/GOVERNANCE.md">GOVERNANCE.md</a>; disclosure in <a href="https://github.com/anivar/decern/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:18px 0 0;text-wrap:pretty">I maintain decern alone, in the open. No production deployments are known; <a href="https://github.com/anivar/decern/blob/main/ADOPTERS.md">ADOPTERS.md</a> says so and will keep saying so until someone asks to be listed. If you read the code or the proofs and find a hole, open an issue. A security report goes through <a href="https://github.com/anivar/decern/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Review and merge rules are written down in <a href="https://github.com/anivar/decern/blob/main/GOVERNANCE.md">GOVERNANCE.md</a>.</p>
           </div>
         </div>
       </div>
@@ -800,6 +834,7 @@
       <div style="display:flex;gap:20px;flex-wrap:wrap">
         <a href="https://anivar.net/writing/releasing-decern" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Announcement</a>
         <a href="https://github.com/anivar/decern" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Repository</a>
+        <a href="https://github.com/anivar/decern/releases" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Releases</a>
         <a href="https://github.com/anivar/decern/blob/main/ARCHITECTURE.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Architecture</a>
         <a href="https://github.com/anivar/decern/blob/main/ROADMAP.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Roadmap</a>
         <a href="https://github.com/anivar/decern/blob/main/ADOPTERS.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Adopters</a>
