@@ -140,8 +140,9 @@
   .controls{border:1px solid var(--ink);background:var(--panel);padding:14px}
   .cbar{display:flex;gap:7px}
   .cbar button{font:500 12px/1 var(--mono);color:var(--ink);background:var(--panel);border:1px solid var(--ink);padding:10px 12px;cursor:pointer;flex:1}
-  .cbar button.play{flex:1.5}
+  .cbar button.play{flex:1.5;color:var(--bg);background:var(--teal);border-color:var(--teal);font-weight:600}
   .cbar button:hover{background:var(--ink);color:var(--bg)}
+  .cbar button.play:hover{background:var(--teald);border-color:var(--teald);color:var(--bg)}
   .cbar button:disabled{opacity:.35;background:var(--panel);color:var(--ink);cursor:default}
   .track{height:3px;background:var(--line);margin-top:11px}
   .track span{display:block;height:3px;background:var(--teal);width:0;transition:width .3s}
@@ -394,17 +395,17 @@ function buildPipe(){
   s+='<text class="pk" x="36" y="'+(G.py+20)+'">CALLER</text>';
   s+='<text class="pt" x="120" y="'+(G.py+44)+'" text-anchor="middle">Agent · PEP</text>';
   s+='<text class="ps" x="120" y="'+(G.py+61)+'" text-anchor="middle">sends the request</text>';
-  s+='<rect class="pbox" id="p-src" x="262" y="'+G.py+'" width="242" height="'+G.ph+'" rx="6"/>';
-  s+='<text class="pk" id="p-src-k" x="278" y="'+(G.py+20)+'"></text>';
-  s+='<text class="pt" id="p-src-t" x="383" y="'+(G.py+44)+'" text-anchor="middle"></text>';
-  s+='<text class="ps" id="p-src-s" x="383" y="'+(G.py+61)+'" text-anchor="middle"></text>';
+  s+='<rect class="pbox" id="p-src" x="320" y="'+G.py+'" width="242" height="'+G.ph+'" rx="6"/>';
+  s+='<text class="pk" id="p-src-k" x="336" y="'+(G.py+20)+'"></text>';
+  s+='<text class="pt" id="p-src-t" x="441" y="'+(G.py+44)+'" text-anchor="middle"></text>';
+  s+='<text class="ps" id="p-src-s" x="441" y="'+(G.py+61)+'" text-anchor="middle"></text>';
   // Lanes. L1: between the caller and the credential's source. L2: the request into decern-serve.
   // L3: what decern does not call at request time. L4: the answer back to the caller.
   s+='<path class="lane" id="l1" d="" marker-end="url(#eah)"/>';
   s+='<path class="lane" id="l2" d="" marker-end="url(#eah)"/>';
   s+='<text class="lt" id="l2a" x="132" y="138"></text><text class="lt" id="l2b" x="132" y="152"></text>';
   s+='<path class="lane none" id="l3" d=""/>';
-  s+='<text class="lt none" id="l3a" x="392" y="138"></text><text class="lt none" id="l3b" x="392" y="152"></text>';
+  s+='<text class="lt none" id="l3a" x="450" y="138"></text><text class="lt none" id="l3b" x="450" y="152"></text>';
   s+='<path class="lane" id="l4" d="" marker-end="url(#eah)"/>';
   s+='<text class="lt" id="l4a" x="604" y="14" text-anchor="middle"></text>';
   // The server, and the stages every posture shares.
@@ -436,22 +437,23 @@ function layLanes(){
   q('p-src-t').textContent=T.src.t; q('p-src-s').textContent=T.src.s;
   var top=G.py,bot=G.py+G.ph;
   if(front){
-    q('l1').setAttribute('d','M220 '+(top+36)+' H258');
-    q('l2').setAttribute('d','M383 '+bot+' V150 H150 V'+(G.by-4));
-    q('l2a').setAttribute('x',392);q('l2b').setAttribute('x',392);
+    q('l1').setAttribute('d','M220 '+(top+36)+' H316');
+    q('l2').setAttribute('d','M441 '+bot+' V150 H150 V'+(G.by-4));
+    q('l2a').setAttribute('x',450);q('l2b').setAttribute('x',450);
     q('l3').setAttribute('d','');q('l3a').textContent='';q('l3b').textContent='';
   }else{
-    q('l1').setAttribute('d','M262 '+(top+36)+' H224');
+    q('l1').setAttribute('d','M320 '+(top+36)+' H224');
     q('l2').setAttribute('d','M120 '+bot+' V'+(G.by-4));
     q('l2a').setAttribute('x',132);q('l2b').setAttribute('x',132);
-    q('l3').setAttribute('d','M200 '+(G.by-2)+' V166 H383 V'+(bot+4));
+    q('l3').setAttribute('d','M200 '+(G.by-2)+' V166 H441 V'+(bot+4));
     q('l3a').textContent=T.lane[0];q('l3b').textContent=T.lane[1];
   }
   q('l2a').textContent=front?'the request, forwarded':'POST /access/v1/evaluation';
   q('l2b').textContent=front?'caller already established by the front':T.carry;
 }
 function answerPath(stageIndex){
-  var x=sx(stageIndex)+G.bw/2;
+  if(stageIndex===0)return 'M72 '+(G.by-2)+' V'+(G.py+G.ph+4);
+  var x=sx(stageIndex)+10;
   return 'M'+x+' '+(G.by-2)+' V18 H120 V'+(G.py-4);
 }
 function caption(){
@@ -524,8 +526,10 @@ function paint(){
   l('l3').setAttribute('class','lane none'+(atCaller?'':' idle'));
   l('l3a').setAttribute('class','lt none'+(atCaller?'':' idle'));l('l3b').setAttribute('class','lt none'+(atCaller?'':' idle'));
   var l4=l('l4'),l4a=l('l4a');
-  if(stop){l4.setAttribute('d',answerPath(ai));l4.setAttribute('class','lane refuse');l4a.setAttribute('class','lt refuse');l4a.textContent=st.x;}
-  else{l4.setAttribute('d',answerPath(SPINE.length-1));l4.setAttribute('class','lane'+(last?' go':' idle'));l4a.setAttribute('class','lt'+(last?' on':' idle'));l4a.textContent='200 with the decision, or 503';}
+  if(stop){l4.setAttribute('d',answerPath(ai));l4.setAttribute('class','lane refuse');l4a.setAttribute('class','lt refuse');l4a.textContent=st.x;
+    if(ai===0){l4a.setAttribute('x',24);l4a.setAttribute('y',128);l4a.setAttribute('text-anchor','start');}else{l4a.setAttribute('x',604);l4a.setAttribute('y',14);l4a.setAttribute('text-anchor','middle');}}
+  else{l4a.setAttribute('x',604);l4a.setAttribute('y',14);l4a.setAttribute('text-anchor','middle');
+  l4.setAttribute('d',answerPath(SPINE.length-1));l4.setAttribute('class','lane'+(last?' go':' idle'));l4a.setAttribute('class','lt'+(last?' on':' idle'));l4a.textContent='200 with the decision, or 503';}
   // Which postures have been opened, and the way to the next one.
   seen[cur]=true;var opened=ORDER.filter(function(k){return seen[k];}).length;
   seenEl.textContent=opened+' of '+ORDER.length+' opened';
