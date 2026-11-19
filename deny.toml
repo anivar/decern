@@ -6,7 +6,10 @@
 unmaintained = "all"
 # The schema-v2 default for a yanked crate is a warning, which a passing run does not show.
 yanked = "deny"
-ignore = []
+# chrono is unmaintained upstream; it reaches the build only transitively, through
+# cedar-policy's datetime extension, which cedar-policy-symcc turns on and decern cannot
+# turn off (cargo unifies features additively). No safe upgrade exists.
+ignore = [{ id = "RUSTSEC-2026-0543", reason = "chrono unmaintained; transitive via cedar-policy datetime; no safe upgrade; revisit when Cedar moves off chrono" }]
 
 [licenses]
 allow = [
