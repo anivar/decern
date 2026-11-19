@@ -124,7 +124,7 @@
     <section class="intro">
       <p class="eyebrow">Protocol explorer</p>
       <h1>How decern establishes a caller</h1>
-      <p class="lede">decern will not start until the deployment says how its callers are established. The five postures diverge only in how the caller is proven. Everything downstream is the same for all of them: the solver-proven kernel, the recorded decision, the fail-closed serve. Pick a posture and step the request through it.</p>
+      <p class="lede">decern will not start until the deployment names how its callers are established. The five postures differ in how the caller is proven, and that also decides whom the caller may name and what the record says about it. From the kernel on, every request takes the same path: the solver-proven kernel, the recorded decision, the fail-closed serve. Pick a posture and step the request through it.</p>
 
       <div class="tabs" role="tablist" id="tabs"></div>
       <p class="bind" id="bind"></p>
@@ -157,72 +157,83 @@
 var SPINE = ['caller','kernel','decision','record','served'];
 var STAGE = {
   caller:   {k:'01',t:'Caller established',s:'who is asking'},
-  kernel:   {k:'02',t:'Proven kernel',s:'Cedar + 9 cvc5'},
+  kernel:   {k:'02',t:'Proven kernel',s:'Cedar · 9 invariants'},
   decision: {k:'03',t:'Decision',s:'allow / deny'},
   record:   {k:'04',t:'Record',s:'signed, chained'},
   served:   {k:'05',t:'Served',s:'200 / 503'}
 };
 
-// Shared tail — identical for every posture. stage says which pipeline box lights.
+// Shared tail — identical for every posture except the record step, which adds the
+// posture's own rec line. stage says which pipeline box lights.
 var TAIL = [
-  {stage:'kernel',tag:'proven',t:'The proven kernel decides',d:'A deterministic Cedar function answers over the authority graph. The clock is the server’s, never the request’s. Nine safety invariants are machine-checked over the whole model by the cvc5 solver, not sampled.',s:'cvc5 · cedar-policy-symcc'},
+  {stage:'kernel',tag:'proven',t:'The proven kernel decides',d:'A deterministic Cedar function answers over the authority graph. The clock is the server’s, never the request’s. The cvc5 solver checks nine safety invariants over the model’s whole symbolic input space, not a sample of it. Two of them reason over attributes the kernel derives in Rust before the solver runs, and their statements say so.',s:'cvc5 · cedar-policy-symcc'},
   {stage:'decision',tag:'proven',t:'allow or deny',d:'One boolean, with named policy reasons. Fields that are recorded but never decide — the decision subject, who asserted the request, a subject-side challenge — were stripped from the context before the kernel ran.'},
-  {stage:'record',tag:'record',t:'Append, sign, chain',d:'The decision and who is accountable for it are appended to the ledger, Ed25519-signed and hash-chained to the record before it, before any answer leaves the server.',s:'RFC 8032 · RFC 9162'},
+  {stage:'record',tag:'record',t:'Append, sign, chain',d:'The decision and who is accountable for it are appended to the ledger before any answer leaves the server. Each record is Ed25519-signed and hash-chained to the one before it. The chain alone cannot show that its tail was cut off; a signed tree head, kept where the operator cannot reach it, can.',s:'RFC 8032 · RFC 9162'},
   {stage:'served',tag:'out',t:'200, or 503 — never a bare allow',d:'The answer is returned only once its record is safely written. A decision that cannot be recorded is 503. The decision itself may still be a deny; a deny is recorded and served like any answer.'}
 ];
 
 var FLOWS = {
   bearer: {
     label:'bearer', spec:'RFC 9068', bind:'<b>Not self-bound.</b> A bearer PEP may name other parties, so there is no self-bound gate in this flow.',
+    rec:'Under bearer, asserted_by names the token’s sub, client_id and iss.',
     head:[
       {stage:'caller',tag:'caller',t:'Agent presents a bearer token',d:'Authorization: Bearer &lt;JWT&gt;. An RFC 9068 access token, minted by the authorization server the deployment configured.'},
-      {stage:'caller',tag:'caller',t:'decern-serve receives it',d:'--bearer-issuer, --bearer-audience and --bearer-issuer-key are set. Keys are pinned at boot as Ed25519 points, never fetched.'},
-      {stage:'caller',tag:'caller',t:'Validate the JWT',d:'In order: typ is at+jwt; alg is EdDSA, settled before any key is consulted; iss matches exactly; aud contains the resource id; then the signature; then exp and nbf. A failure is 401 invalid_token.',s:'RFC 9068 §4'}
+      {stage:'caller',tag:'caller',t:'decern-serve receives it',d:'--bearer-issuer, --bearer-audience and --bearer-issuer-key are set; --bearer-scope may name scopes every token must carry. Keys are pinned at boot as Ed25519 points, never fetched.'},
+      {stage:'caller',tag:'caller',t:'Validate the JWT',d:'In order: typ is at+jwt; alg is EdDSA, settled before any key is consulted; iss matches exactly; aud contains the resource id; then the signature; then exp and nbf; then sub, client_id, jti and iat must be present. EdDSA only: RFC 9068 makes RS256 mandatory to implement, so decern applies the profile’s checks without conforming to it.',s:'RFC 9068 §4'},
+      {stage:'caller',tag:'caller',t:'Check the scope',d:'Only when --bearer-scope is set: the token’s scope must hold every configured scope. The token is valid; it does not carry enough.'}
     ]
   },
   'signed-request': {
     label:'signed-request', spec:'RFC 9421', bind:'<b>Self-bound.</b> A workload may name only itself unless it is listed in --pep.',
+    rec:'Under signed-request, asserted_by names the agent and no issuer: the token’s iss is the caller’s own claim, so it is not recorded.',
     head:[
       {stage:'caller',tag:'caller',t:'Agent signs the request',d:'An RFC 9421 message signature, label sig1, covering @method, @authority, @path and Signature-Key, plus Content-Digest on a bodied request.',s:'RFC 9421'},
-      {stage:'caller',tag:'caller',t:'decern-serve receives it',d:'--signed-agent-key ID=HEX names the agent and its key; --signed-authority names the authority the signature must cover.'},
-      {stage:'caller',tag:'caller',t:'Verify the signature',d:'Ed25519 only; created at most 60s old and 5s ahead; the signed @authority must equal --signed-authority. The token in Signature-Key is already covered by the outer signature, so its own JWS is not re-verified. A failure is 401 / 403.',s:'RFC 9421 §1.4'},
-      {stage:'caller',tag:'caller',t:'Bind to self',d:'The agent may name only itself unless listed in --pep. The record names no issuer: a signed-request record carries no iss.',s:'operator-of-record'}
+      {stage:'caller',tag:'caller',t:'decern-serve receives it',d:'--signed-agent-key ID=HEX names each agent and its key; --signed-audience names the audience its token must carry; --signed-authority names the authority the signature must cover.'},
+      {stage:'caller',tag:'caller',t:'Read the bound token',d:'Signature-Key carries a compact JWS: typ dpop-bound+jwt, alg EdDSA. Its sub names the agent, its aud must contain --signed-audience, and its cnf key must be a key configured for that agent. The token’s own JWS is not checked against an issuer: the token is one of the components the request signature covers, so changing it breaks that signature.',s:'RFC 7800 cnf'},
+      {stage:'caller',tag:'caller',t:'Verify the signature',d:'Exactly one signature, Ed25519 only; created at most 60 s old and 5 s ahead; the signed @authority must equal --signed-authority. There is no nonce cache: an exact captured request verifies again inside those 60 s, but cannot be reused for a different request.',s:'RFC 9421 §1.4'},
+      {stage:'caller',tag:'caller',t:'Bind to self',d:'The agent may name only itself unless listed in --pep.',s:'operator-of-record'}
     ]
   },
   spiffe: {
     label:'SPIFFE', spec:'JWT-SVID', bind:'<b>Self-bound.</b> A SPIFFE workload may name only itself unless it is listed in --pep.',
+    rec:'Under SPIFFE, asserted_by names the spiffe:// id and, as issuer, the trust domain that vouched for it. An SVID has no required iss, so the issuer comes from the verified sub, never from a claim.',
     head:[
       {stage:'caller',tag:'caller',t:'Workload presents a JWT-SVID',d:'Authorization: Bearer &lt;JWT-SVID&gt;, carrying a spiffe:// identity in its subject.'},
-      {stage:'caller',tag:'caller',t:'decern-serve receives it',d:'A JWK Set and trust domain are pinned at startup; bundles are configured, never fetched.'},
-      {stage:'caller',tag:'caller',t:'Verify the JWT-SVID',d:'ES256 only — EdDSA is refused as outside the SVID’s closed algorithm set; the JOSE header is closed to alg/kid/typ; kid selects a bundle key; sub is the spiffe:// id; the trust domain matches exactly; exp.',s:'SPIFFE JWT-SVID §2–§3'},
+      {stage:'caller',tag:'caller',t:'decern-serve receives it',d:'--spiffe-trust-domain pins a JWK Set for each trust domain at startup; --spiffe-audience names this deployment. Bundles are configured, never fetched.'},
+      {stage:'caller',tag:'caller',t:'Verify the JWT-SVID',d:'ES256 only. The spec permits nine algorithms; decern refuses RSA, which would need an exception for an unpatched timing side channel in the rsa crate, and ES384/ES512. The JOSE header is closed to alg, kid and typ, and typ, if present, is JWT or JOSE. kid selects a bundle key; sub is the spiffe:// id and its trust domain must be configured; then the signature, aud against --spiffe-audience, and exp.',s:'SPIFFE JWT-SVID §2–§3'},
       {stage:'caller',tag:'caller',t:'Bind to self',d:'A SPIFFE workload may name only itself unless listed in --pep.',s:'operator-of-record'}
     ]
   },
   aauth: {
     label:'AAuth', spec:'draft-hardt -11', bind:'<b>Self-bound.</b> A verified agent is a workload: it may name only itself unless listed in --pep. parent_agent is shape-checked and never reaches the kernel.',
+    rec:'Under AAuth, asserted_by names the agent id and, as issuer, its provider.',
     head:[
       {stage:'caller',tag:'caller',t:'Agent calls with an agent token and a signed request',d:'An aa-agent+jwt is carried in the Signature-Key header under the jwt scheme, and the request is signed to the AAuth signature profile. The resource half of agent identity access only.',s:'draft-hardt §4.2.1'},
       {stage:'caller',tag:'caller',t:'decern-serve receives it',d:'--aauth-provider pins the issuer’s JWK Set; --aauth-audience names the authority the request must carry. An agent token has no aud, so the audience is configured.'},
       {stage:'caller',tag:'caller',t:'Resolve the provider',d:'The token’s issuer must be a configured provider (its dwk names aauth-agent.json). An agent whose provider is not configured is refused before any cryptography runs. Providers are pinned, not discovered.',s:'§11.4, §11.5.2'},
-      {stage:'caller',tag:'caller',t:'Verify the agent token',d:'The header names the fully-specified Ed25519 — the polymorphic EdDSA is refused; sub is an agent id aauth:local@domain inside the provider’s domain; jti is required; a lifetime over 24h is refused; iat must be within the skew window.',s:'§11.3.1, §5'},
+      {stage:'caller',tag:'caller',t:'Verify the agent token',d:'The header names the fully-specified Ed25519 — the polymorphic EdDSA is refused; sub is an agent id aauth:local@domain inside the provider’s domain; exp is checked and an nbf honoured; iat may be at most 60 s ahead of this clock; a lifetime over 24 h is refused. jti is required and its shape checked, but it is not used to detect replay.',s:'§11.3.1, §5'},
       {stage:'caller',tag:'caller',t:'Check the token signature',d:'The agent token’s own JWS verifies against the pinned provider key, which carries a fully-specified alg consistent with its kty and crv.',s:'§11.5.1'},
-      {stage:'caller',tag:'caller',t:'Verify the request signature',d:'The RFC 9421 signature verifies against the key the token’s cnf confirms — holding the token is not enough. @authority must equal --aauth-audience; Content-Digest is required on a bodied request; created may be ±60s of this clock, else Signature-Error: clock_skew.',s:'§11.3 · RFC 7800'},
+      {stage:'caller',tag:'caller',t:'Verify the request signature',d:'The RFC 9421 signature verifies against the key the token’s cnf confirms — holding the token is not enough. @authority must equal --aauth-audience; Content-Digest is required on a bodied request; created may be up to 60 s either side of this clock. There is no nonce cache: an exact captured request verifies again inside that window.',s:'§11.3 · RFC 7800'},
       {stage:'caller',tag:'caller',t:'Bind to self',d:'The agent is a workload: it may name only itself unless listed in --pep. parent_agent is shape-checked and never reaches the kernel.',s:'§5.3.3'}
     ]
   },
   'trust-proxy': {
     label:'trust-proxy', spec:'declared front', bind:'<b>Not self-bound.</b> A trusted front may name other parties, so there is no self-bound gate in this flow.',
+    rec:'Under --trust-proxy there is no asserted_by column.',
     head:[
-      {stage:'caller',tag:'caller',t:'A declared front authenticated the caller',d:'An authenticating gateway sits in front of decern-serve and takes responsibility for who it asserts.'},
-      {stage:'caller',tag:'caller',t:'decern-serve trusts the front',d:'--trust-proxy: no credential is verified here, because the front already did. It is the one posture that verifies nothing locally.'},
-      {stage:'caller',tag:'caller',t:'Record who asserted',d:'The subject the front vouches for (and the client, and the issuer where a token was checked) is written to asserted_by on the record — recorded for accountability, never a gate, never changing the answer.'}
+      {stage:'caller',tag:'caller',t:'A declared front established the caller',d:'Something in front of decern-serve — an authenticating proxy, a service mesh, or the OS boundary around a local walkthrough — has already established who is calling.'},
+      {stage:'caller',tag:'caller',t:'decern-serve trusts the front',d:'--trust-proxy: no credential is verified here, because the front already did. The flag is the operator’s statement of that. It is the one posture that verifies nothing locally.'},
+      {stage:'caller',tag:'caller',t:'No caller on the record',d:'With no verified identity, the record carries no asserted_by column. An asserted_by that the request puts in its context is removed before the kernel runs, so it cannot stand in for one. Only the front knows who called.'}
     ]
   }
 };
 var ORDER = ['bearer','signed-request','spiffe','aauth','trust-proxy'];
 
 var cur='aauth', idx=0, timer=null;
-function steps(){ return FLOWS[cur].head.concat(TAIL); }
+function steps(){
+  var f=FLOWS[cur];
+  return f.head.concat(TAIL.map(function(t){ return t.stage==='record'?Object.assign({},t,{d:t.d+' '+f.rec}):t; }));
+}
 
 var tabsEl=d('tabs'),pipeEl=d('pipe'),stepsEl=d('steps'),panelEl=d('panel'),bindEl=d('bind'),
     progEl=d('prog'),fillEl=d('fill'),playBtn=d('play'),prevBtn=d('prev'),nextBtn=d('next'),reBtn=d('restart');
