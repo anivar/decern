@@ -5,8 +5,7 @@
 decern fills a gap decide-only policy engines leave open: a decision you can prove, record and contest. It is the reference implementation of a contestability layer for authorization — who a decision is about (decision-subject), who is answerable for it (operator-of-record), and how it is contested (the subject-side challenge, S-ARAP) — built on profiles authored in the IETF and the OpenID AuthZEN Working Group. Built and maintained by Anivar A. Aravind (https://anivar.net).
 
 ## Pages
-- [Home](https://decern.anivar.net/): what decern is, how it works, the contestability triad, the architecture, and how to run it.
-- [Protocol explorer](https://decern.anivar.net/explorer.html): step through how decern establishes a caller under each of its five postures — bearer, signed-request, SPIFFE, AAuth, and a trusted front — and what happens to the request.
+- [Home](https://decern.anivar.net/): what decern is, how it works, an interactive protocol explorer that steps through how a caller is established under each of the five postures (bearer, signed-request, SPIFFE, AAuth, trusted front) and what happens to the request, the contestability triad, the architecture, and how to run it.
 
 ## Source and documentation
 - [Repository](https://github.com/anivar/decern)

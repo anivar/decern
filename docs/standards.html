@@ -23,10 +23,13 @@
     --teal:#0E7C6B;--teald:#0A5B4E;--amber:#A67C2A;--line:#E1E7E4;--panel:#FFFFFF;--soft:#EDF3F1;
     --mono:'Geist Mono',ui-monospace,Menlo,monospace;--sans:'Geist',system-ui,sans-serif;
   }
+  html{scrollbar-gutter:stable}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
   a{color:var(--teald)}
-  .wrap{max-width:1180px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left,0px))}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 max(40px,env(safe-area-inset-left,0px))}
+  @media(max-width:900px){.wrap{padding:0 max(22px,env(safe-area-inset-left,0px))}}
+  @media(max-width:400px){.wrap{padding:0 max(16px,env(safe-area-inset-left,0px))}}
   header.top{border-bottom:1px solid var(--ink)}
   header.top .wrap{height:66px;display:flex;align-items:center;gap:26px}
   .brand{display:flex;align-items:center;gap:11px;text-decoration:none}
