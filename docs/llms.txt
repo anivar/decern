@@ -1,0 +1,25 @@
+# decern
+
+> A deterministic authorization decision point, in Rust. decern answers whether an agent, a person or a workload may do something, now. It proves its safety rules hold across the whole model with the cvc5 solver (not by sampling), records every decision in an Ed25519-signed, hash-chained ledger before it is served, and lets the party a decision was about verify and challenge it. Apache-2.0.
+
+decern fills a gap decide-only policy engines leave open: a decision you can prove, record and contest. It is the reference implementation of a contestability layer for authorization — who a decision is about (decision-subject), who is answerable for it (operator-of-record), and how it is contested (the subject-side challenge, S-ARAP) — built on profiles authored in the IETF and the OpenID AuthZEN Working Group. Built and maintained by Anivar A. Aravind (https://anivar.net).
+
+## Pages
+- [Home](https://decern.anivar.net/): what decern is, how it works, an interactive protocol explorer that steps through how a caller is established under each of the five postures (bearer, signed-request, SPIFFE, AAuth, trusted front) and what happens to the request, the contestability triad, the architecture, and how to run it.
+
+## Source and documentation
+- [Repository](https://github.com/anivar/decern)
+- [Commands (CLI reference)](https://github.com/anivar/decern/blob/main/docs/CLI.md)
+- [Architecture](https://github.com/anivar/decern/blob/main/ARCHITECTURE.md)
+- [Roadmap](https://github.com/anivar/decern/blob/main/ROADMAP.md)
+- [Standards registry](https://github.com/anivar/decern/blob/main/.agent/standards/registry.yaml): every spec decern implements, with each deviation named.
+- [Security policy](https://github.com/anivar/decern/blob/main/SECURITY.md)
+
+## Standards decern implements
+- AuthZEN 1.0 (OpenID): the authorization API surface — single and batch evaluation, search, discovery.
+- Caller postures: RFC 9068 bearer tokens, RFC 9421 signed requests, SPIFFE JWT-SVID, draft-hardt-oauth-aauth-protocol-11 agent tokens, or a declared authenticating front.
+- Contestability profiles (authored by Anivar Aravind): draft-aravind-oauth-decision-subject, draft-aravind-oauth-operator-of-record, and the Subject-Side Access Challenge Profile (S-ARAP) in the OpenID AuthZEN WG.
+- Ledger: Ed25519 (RFC 8032), Certificate Transparency Merkle tree (RFC 9162), JSON Canonicalization Scheme (RFC 8785).
+
+## What decern is not
+decern decides and records; it does not enforce, issue credentials, or run approval UX. It is not a gateway, a firewall for tool calls, or an authorization server.

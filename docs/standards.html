@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>decern — standards conformance</title>
+<meta name="description" content="The specifications decern implements or verifies, and exactly what it does not. Drawn from the standards registry the code is held to.">
+<link rel="canonical" href="https://decern.anivar.net/standards.html">
+<link rel="icon" type="image/svg+xml" href="img/decern-mark.svg">
+<meta property="og:type" content="website">
+<meta property="og:title" content="decern — standards conformance">
+<meta property="og:description" content="The specifications decern implements or verifies, and exactly what it does not.">
+<meta property="og:url" content="https://decern.anivar.net/standards.html">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","name":"decern standards conformance","description":"The specifications decern implements or verifies, and exactly what it does not.","url":"https://decern.anivar.net/standards.html","isPartOf":{"@type":"WebSite","name":"decern","url":"https://decern.anivar.net/"},"author":{"@type":"Person","name":"Anivar A. Aravind","url":"https://anivar.net"}}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#F5F7F6;--ink:#0C0F0E;--mut:#5E6B67;--faint:#849490;
+    --teal:#0E7C6B;--teald:#0A5B4E;--amber:#A67C2A;--line:#E1E7E4;--panel:#FFFFFF;--soft:#EDF3F1;
+    --mono:'Geist Mono',ui-monospace,Menlo,monospace;--sans:'Geist',system-ui,sans-serif;
+  }
+  html{scrollbar-gutter:stable}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  a{color:var(--teald)}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 max(40px,env(safe-area-inset-left,0px))}
+  @media(max-width:900px){.wrap{padding:0 max(22px,env(safe-area-inset-left,0px))}}
+  @media(max-width:400px){.wrap{padding:0 max(16px,env(safe-area-inset-left,0px))}}
+  header.top{border-bottom:1px solid var(--ink)}
+  header.top .wrap{height:66px;display:flex;align-items:center;gap:26px}
+  .brand{display:flex;align-items:center;gap:11px;text-decoration:none}
+  .brand span{font:600 19px/1 var(--mono);letter-spacing:-.01em;color:var(--ink)}
+  .back{margin-left:auto;font:500 12px/1 var(--mono);letter-spacing:.04em;color:var(--mut);text-decoration:none}
+  .back:hover{color:var(--ink)}
+  .intro{padding:40px 0 0}
+  .eyebrow{font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin:0}
+  h1{font:600 clamp(28px,4.5vw,40px)/1.04 var(--mono);letter-spacing:-.02em;margin:14px 0 0}
+  .lede{font:400 16px/1.6 var(--sans);color:var(--mut);margin:16px 0 0;max-width:76ch;text-wrap:pretty}
+  .lede a{color:var(--teald)}
+  section.grp{margin:44px 0 0}
+  h2{font:600 20px/1.3 var(--sans);letter-spacing:-.01em;margin:0 0 4px}
+  .grp>p{font:400 13.5px/1.6 var(--sans);color:var(--mut);margin:0 0 14px}
+  table{width:100%;border-collapse:collapse;border-top:1px solid var(--ink)}
+  td{padding:14px 18px 14px 0;border-bottom:1px solid var(--line);vertical-align:top}
+  td.spec{font:500 13.5px/1.5 var(--mono);color:var(--ink);width:280px}
+  td.spec a{color:var(--teald);text-decoration:none}
+  td.spec a:hover{text-decoration:underline}
+  td.spec small{display:block;font:400 11px/1.4 var(--mono);color:var(--faint);margin-top:4px;letter-spacing:0}
+  td.does{font:400 14px/1.55 var(--sans);color:var(--ink)}
+  td.dev{font:400 13px/1.5 var(--sans);color:var(--amber);width:300px}
+  td.dev.none{color:var(--faint)}
+  @media(max-width:760px){td.spec,td.dev{width:auto}table,tbody,tr,td{display:block}td{border-bottom:0;padding:4px 0}tr{border-bottom:1px solid var(--line);padding:14px 0;display:block}td.dev{color:var(--amber);margin-top:4px}}
+  .foot{margin:48px 0 64px;border-top:1px solid var(--line);padding-top:20px;font:400 13px/1.7 var(--sans);color:var(--mut);max-width:80ch}
+  .foot a{color:var(--teald)}
+</style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="index.html"><img src="img/decern-mark.svg" alt="" width="24" height="24"><span>decern</span></a>
+      <a class="back" href="index.html">← decern.anivar.net</a>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="intro">
+      <p class="eyebrow">Standards conformance</p>
+      <h1>What decern implements, and what it does not</h1>
+      <p class="lede">decern is held to the specifications it touches by a <a href="https://github.com/anivar/decern/blob/main/.agent/standards/registry.yaml">standards registry in the repository</a>, which records, for each spec, what the text requires, what decern does, and when the text was last read. This is the honest map drawn from it. The amber column is the part a product page usually hides: where decern deviates, and why. The full, dated record is in the registry.</p>
+
+      <section class="grp">
+        <h2>The decision API, and contestability</h2>
+        <table><tbody>
+          <tr>
+            <td class="spec"><a href="https://openid.net/specs/authorization-api-1_0.html">AuthZEN 1.0</a><small>OpenID</small></td>
+            <td class="does">The authorization surface: single and batch evaluation, subject/resource/action search, and discovery. Every malformed request is 400; a request is read from a JSON object only.</td>
+            <td class="dev">Search returns every result in one page — pagination is optional in the spec and not implemented. Not put through the OpenID Foundation certification program.</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/">decision-subject</a><small>draft-aravind, IETF OAuth</small></td>
+            <td class="does">Records the party a decision is taken upon as a pseudonymous handle, distinct from who asked and who answers. Stripped before the kernel runs, so it is recorded and never decides; a handle containing an address is refused.</td>
+            <td class="dev none">Authored by the maintainer. Resolving a handle to a person is out of scope.</td>
+          </tr>
+        </tbody></table>
+        <p style="font:400 12.5px/1.6 var(--sans);color:var(--mut);margin:14px 0 0">Two more contestability profiles decern implements are described on the <a href="index.html#contestability">home page</a>: <a href="https://datatracker.ietf.org/doc/draft-aravind-oauth-operator-of-record/">operator-of-record</a> (who is answerable) and the <a href="https://github.com/openid/authzen/pull/608">Subject-Side Access Challenge Profile, S-ARAP</a> (how a decision is contested).</p>
+      </section>
+
+      <section class="grp">
+        <h2>Caller postures</h2>
+        <p>How a deployment establishes who is asking. decern verifies all of these itself, against keys configured at startup, never fetched.</p>
+        <table><tbody>
+          <tr>
+            <td class="spec"><a href="https://www.rfc-editor.org/rfc/rfc9068">RFC 9068</a><small>bearer access tokens</small></td>
+            <td class="does">Validates access tokens in the §4 order: typ, alg before any key, iss, aud, signature, exp/nbf. All §2.2 required claims present.</td>
+            <td class="dev">Verifies EdDSA only, so it applies RFC 9068's checks without being a conforming RFC 9068 resource server — §2.1 requires RS256, which the supply-chain gate refuses. Put the provider in front.</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://www.rfc-editor.org/rfc/rfc9421">RFC 9421</a><small>HTTP message signatures</small></td>
+            <td class="does">Verifies the signed-request and AAuth signature profiles: Ed25519, created-window checks, covered components fixed per profile, and a verifier that refuses any parameter it does not implement.</td>
+            <td class="dev">Verification only; decern issues no signatures. No nonce cache, so a verbatim replay verifies again inside the created window.</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://github.com/spiffe/spiffe/blob/main/standards/JWT-SVID.md">SPIFFE JWT-SVID</a><small>workload identity</small></td>
+            <td class="does">Verifies a JWT-SVID against a JWK Set pinned at startup; trust domains match exactly; the JOSE header is closed to alg/kid/typ.</td>
+            <td class="dev">ES256 only. RS*/PS* need a crate carrying an unpatched advisory the supply-chain gate refuses; EdDSA is outside the SVID's closed algorithm set. Federation and the Workload API are not implemented.</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/">AAuth</a><small>draft-hardt -11, agent tokens</small></td>
+            <td class="does">The resource half of agent identity access: verifies an aa-agent+jwt and its §11.3 signature profile for Ed25519, pins providers, and binds a verified agent to itself.</td>
+            <td class="dev">An individual Internet-Draft, not working-group adopted. Refusals other than clock skew carry no Signature-Error; ES256 is not verified; providers are configured, not discovered. Each departure is named in the registry.</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/">Signature-Key</a><small>draft-hardt</small></td>
+            <td class="does">Carries the token that binds the signing key, as a covered component of the outer signature.</td>
+            <td class="dev none">—</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/">OAuth 2.1</a><small>draft-ietf -15</small></td>
+            <td class="does">The protected-resource half only: bearer presentation and the 401/403 error responses with their challenges.</td>
+            <td class="dev">decern is not an authorization server and implements none of the grant machinery.</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://www.rfc-editor.org/rfc/rfc6750">RFC 6750</a> &middot; <a href="https://www.rfc-editor.org/rfc/rfc8707">RFC 8707</a><small>bearer usage, resource indicators</small></td>
+            <td class="does">The Authorization: Bearer header is the only accepted presentation; every refusal carries a WWW-Authenticate challenge; aud must contain the configured resource identifier, matched exactly.</td>
+            <td class="dev">The form-encoded and query carriers are deliberately not implemented.</td>
+          </tr>
+        </tbody></table>
+      </section>
+
+      <section class="grp">
+        <h2>Tokens and signatures</h2>
+        <table><tbody>
+          <tr>
+            <td class="spec"><a href="https://www.rfc-editor.org/rfc/rfc7515">RFC 7515</a> &middot; <a href="https://www.rfc-editor.org/rfc/rfc7519">RFC 7519</a><small>JWS, JWT</small></td>
+            <td class="does">Compact JWS verified with alg checked before the signature; segments decoded through one strict JOSE reader; NumericDate and aud validation per the JWT rules.</td>
+            <td class="dev">Verification only; decern issues no JWS.</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://www.rfc-editor.org/rfc/rfc9651">RFC 9651</a><small>structured field values</small></td>
+            <td class="does">Signature-Input, Signature and Signature-Key parsed as structured fields by a library, never by hand; a repeated label is refused before it could fold away.</td>
+            <td class="dev none">—</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://www.rfc-editor.org/rfc/rfc7800">RFC 7800</a> &middot; <a href="https://www.rfc-editor.org/rfc/rfc9530">RFC 9530</a><small>proof-of-possession, digest</small></td>
+            <td class="does">The cnf jwk names the key the request signature must be made with, so holding the token is not enough. Content-Digest is a required covered component on a bodied request; only sha-256 is accepted.</td>
+            <td class="dev">Only the jwk confirmation member is implemented; jwe, kid and jku are not.</td>
+          </tr>
+        </tbody></table>
+      </section>
+
+      <section class="grp">
+        <h2>The ledger</h2>
+        <table><tbody>
+          <tr>
+            <td class="spec"><a href="https://www.rfc-editor.org/rfc/rfc8032">RFC 8032</a><small>Ed25519</small></td>
+            <td class="does">Records, checkpoints and tree heads are Ed25519-signed. Every verification uses the strict check, which rejects the small-order keys the permissive equation admits.</td>
+            <td class="dev none">—</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://www.rfc-editor.org/rfc/rfc9162">RFC 9162</a><small>Certificate Transparency 2.0</small></td>
+            <td class="does">The Merkle tree and its inclusion proofs, over leaves that are the per-record chain hashes, with leaf/node domain separation.</td>
+            <td class="dev">Only the tree and its proofs are taken from the RFC. decern is not a certificate log and issues no SCTs.</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://www.rfc-editor.org/rfc/rfc8785">RFC 8785</a><small>JSON Canonicalization</small></td>
+            <td class="does">Every digest is a SHA-256 over a JCS canonical form, so any conformant implementation computes the same digest from the same value.</td>
+            <td class="dev none">—</td>
+          </tr>
+        </tbody></table>
+      </section>
+
+      <section class="grp">
+        <h2>Policy and proof</h2>
+        <table><tbody>
+          <tr>
+            <td class="spec"><a href="https://docs.cedarpolicy.com/">Cedar</a><small>policy language</small></td>
+            <td class="does">The policy, schema and entities are Cedar; the engine is exact-pinned.</td>
+            <td class="dev none">—</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://github.com/cedar-policy/cedar-spec">cedar-policy-symcc</a><small>symbolic compiler</small></td>
+            <td class="does">Compiles the Cedar model to SMT — the Lean-verified symbolic compiler — and the nine invariants are discharged as policy subsumption. The "proven" claim rests on this crate, so it is exact-pinned.</td>
+            <td class="dev none">—</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://cvc5.github.io/">cvc5</a><small>SMT solver</small></td>
+            <td class="does">Discharges the proof obligations. decern prove fails closed if it is absent or a proof does not hold.</td>
+            <td class="dev none">—</td>
+          </tr>
+        </tbody></table>
+      </section>
+
+      <section class="grp">
+        <h2>Delegation, and the examples</h2>
+        <table><tbody>
+          <tr>
+            <td class="spec"><a href="https://www.rfc-editor.org/rfc/rfc8693">RFC 8693</a><small>token exchange</small></td>
+            <td class="does">The delegation model: an attenuated child credential is minted from a delegator's, narrowed to the scopes it holds and capped at its expiry, so a child can never exceed its parent.</td>
+            <td class="dev">The wire protocol is not implemented — there is no /token endpoint. What decern takes is the delegation model, not the HTTP surface.</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://modelcontextprotocol.io/specification/2026-07-28">Model Context Protocol</a><small>MCP</small></td>
+            <td class="does">A stateless Streamable-HTTP server that consults decern before every tool call, with the authorization-failure layering the spec assigns.</td>
+            <td class="dev">Implemented only in examples/mcp — decern's crates carry no MCP surface.</td>
+          </tr>
+          <tr>
+            <td class="spec"><a href="https://nginx.org/en/docs/http/ngx_http_auth_request_module.html">Forward-auth</a><small>NGINX / Traefik / Envoy</small></td>
+            <td class="does">The shared subrequest contract: 200 allows, 403 denies, 503 when no decision could be obtained.</td>
+            <td class="dev">Implemented only in examples/ext_authz_adapter — decern's crates carry no gateway surface.</td>
+          </tr>
+        </tbody></table>
+      </section>
+
+      <p class="foot">The standards registry carries the full conformance text and the date each specification was last read: <a href="https://github.com/anivar/decern/blob/main/.agent/standards/registry.yaml">.agent/standards/registry.yaml</a>. Each release also states what it does not claim, in <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md#known-limits-in-this-release">known limits</a>.</p>
+    </section>
+  </main>
+</body>
+</html>
