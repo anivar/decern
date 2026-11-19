@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>decern — protocol explorer</title>
+<meta name="description" content="Step through how decern establishes a caller under each of its five postures — bearer, signed-request, SPIFFE, AAuth, trusted front — and what happens to the request: proven, recorded, served or refused.">
+<link rel="canonical" href="https://decern.anivar.net/explorer.html">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","name":"decern protocol explorer","description":"Step through how decern establishes a caller under each of its five postures, and what happens to the request: proven, recorded, served or refused.","url":"https://decern.anivar.net/explorer.html","isPartOf":{"@type":"WebSite","name":"decern","url":"https://decern.anivar.net/"},"author":{"@type":"Person","name":"Anivar A. Aravind","url":"https://anivar.net"}}
+</script>
+<link rel="icon" type="image/svg+xml" href="img/decern-mark.svg">
+<meta property="og:type" content="website">
+<meta property="og:title" content="decern — protocol explorer">
+<meta property="og:description" content="Step through how decern establishes a caller under each posture, and what happens to the request.">
+<meta property="og:url" content="https://decern.anivar.net/explorer.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#F5F7F6; --ink:#0C0F0E; --mut:#5E6B67; --faint:#849490;
+    --teal:#0E7C6B; --teald:#0A5B4E; --indigo:#4A5480; --amber:#A67C2A; --red:#B85C5C; --redd:#8B3A3A;
+    --panel:#FFFFFF; --soft:#EDF3F1; --line:#E1E7E4;
+    --mono:'Geist Mono',ui-monospace,Menlo,monospace; --sans:'Geist',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  a{color:var(--teald)}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left,0px))}
+  header.top{border-bottom:1px solid var(--ink)}
+  header.top .wrap{height:66px;display:flex;align-items:center;gap:26px}
+  .brand{display:flex;align-items:center;gap:11px;text-decoration:none}
+  .brand span{font:600 19px/1 var(--mono);letter-spacing:-.01em;color:var(--ink)}
+  .back{margin-left:auto;font:500 12px/1 var(--mono);letter-spacing:.04em;color:var(--mut);text-decoration:none}
+  .back:hover{color:var(--ink)}
+
+  .intro{padding:40px 0 0}
+  .eyebrow{font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin:0}
+  h1{font:600 clamp(28px,4.5vw,40px)/1.04 var(--mono);letter-spacing:-.02em;margin:14px 0 0}
+  .lede{font:400 16px/1.6 var(--sans);color:var(--mut);margin:16px 0 0;max-width:74ch;text-wrap:pretty}
+
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:28px 0 0}
+  .tab{font:500 13px/1 var(--mono);color:var(--mut);background:var(--panel);border:1px solid var(--line);padding:11px 14px;cursor:pointer;text-align:left}
+  .tab small{display:block;font:400 10px/1.3 var(--mono);opacity:.7;margin-top:4px}
+  .tab:hover{border-color:var(--ink);color:var(--ink)}
+  .tab[aria-selected="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  .bind{margin:16px 0 0;font:400 13.5px/1.55 var(--sans);color:var(--mut);max-width:80ch}
+  .bind b{color:var(--ink);font-weight:600}
+
+  /* pipeline: fixed spine of stages, horizontal; wraps on narrow */
+  .pipe{margin:26px 0 0;border:1px solid var(--line);background:var(--panel);padding:20px 16px;overflow-x:auto}
+  .ebox{fill:#FFFFFF;stroke:#C9D3CF;stroke-width:1.5;transition:fill .2s,stroke .2s;cursor:pointer}
+  .ebox:hover{fill:#FBFCFC}
+  .ebox.on{fill:var(--soft);stroke:var(--teal);stroke-width:2}
+  .ebox.dim{opacity:.4}
+  .ek{font-family:var(--mono);font-size:10px;fill:var(--faint)}
+  .et{font-family:var(--sans);font-weight:600;font-size:14px;fill:var(--ink)}
+  .es{font-family:var(--mono);font-size:10px;fill:var(--mut)}
+  .earrow{stroke:var(--mut);stroke-width:1.5;fill:none}
+  .earrow.go{stroke:var(--teal);stroke-dasharray:7 7;animation:emarch 1s linear infinite;marker-end:url(#eaht)}
+  @keyframes emarch{to{stroke-dashoffset:-14}}
+  @media(prefers-reduced-motion:reduce){.earrow.go{animation:none;stroke-dasharray:none}}
+  .stage{flex:1 1 150px;min-width:140px;padding:16px 16px;border-right:1px solid var(--line);position:relative;transition:background .2s;cursor:pointer}
+  .stage:hover:not(.on){background:#FBFCFC}
+  .stage:last-child{border-right:0}
+  .stage .k{font:500 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+  .stage .t{font:600 14px/1.3 var(--sans);color:var(--ink);margin-top:8px}
+  .stage .s{font:400 11px/1.4 var(--mono);color:var(--mut);margin-top:6px}
+  .stage.on{background:var(--soft);box-shadow:inset 0 3px 0 var(--teal)}
+  .stage.ok{box-shadow:inset 0 3px 0 var(--teal)}
+  .stage.deny,.stage.refuse{box-shadow:inset 0 3px 0 var(--red)}
+  .stage.dim{opacity:.45}
+  @media(max-width:720px){.stage{flex:1 1 100%;border-right:0;border-bottom:1px solid var(--line)}.stage:last-child{border-bottom:0}.stage.on{box-shadow:inset 3px 0 0 var(--teal)}}
+
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,360px);gap:24px;margin-top:22px;align-items:start}
+  @media(max-width:820px){.grid{grid-template-columns:minmax(0,1fr)}}
+
+  .steps{border:1px solid var(--line);background:var(--panel)}
+  .step{display:flex;gap:13px;align-items:flex-start;padding:13px 16px;border-top:1px solid var(--line);cursor:pointer}
+  .step:first-child{border-top:0}
+  .step .n{font:500 11px/1.5 var(--mono);color:var(--faint);min-width:18px}
+  .step .b .ti{font:600 13.5px/1.35 var(--sans);color:var(--ink)}
+  .step .b .su{font:400 11.5px/1.45 var(--mono);color:var(--mut);margin-top:3px;word-break:break-word}
+  .step.on{background:var(--soft);box-shadow:inset 3px 0 0 var(--teal)}
+  .step.done{opacity:.6}
+  .step .tag{font:500 9px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:3px 6px;border:1px solid var(--line);color:var(--faint);margin-left:auto;white-space:nowrap}
+  .tag-caller{color:var(--indigo);border-color:var(--indigo)}
+  .tag-proven{color:var(--teal);border-color:var(--teal)}
+  .tag-record{color:var(--teald);border-color:var(--teald)}
+  .tag-out{color:var(--amber);border-color:var(--amber)}
+
+  aside{position:sticky;top:14px;display:flex;flex-direction:column;gap:14px}
+  .controls{border:1px solid var(--ink);background:var(--panel);padding:14px}
+  .cbar{display:flex;gap:7px}
+  .cbar button{font:500 12px/1 var(--mono);color:var(--ink);background:var(--panel);border:1px solid var(--ink);padding:10px 12px;cursor:pointer;flex:1}
+  .cbar button.play{flex:1.5}
+  .cbar button:hover{background:var(--ink);color:var(--bg)}
+  .cbar button:disabled{opacity:.35;background:var(--panel);color:var(--ink);cursor:default}
+  .track{height:3px;background:var(--line);margin-top:11px}
+  .track span{display:block;height:3px;background:var(--teal);width:0;transition:width .3s}
+  .prog{font:400 11px/1.5 var(--mono);color:var(--faint);margin:9px 0 0;letter-spacing:.03em}
+
+  .panel{border:1px solid var(--line);background:var(--panel);padding:18px}
+  .panel .kind{font:500 10px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--teal);margin:0}
+  .panel h3{font:600 16px/1.3 var(--sans);margin:11px 0 0}
+  .panel p{font:400 13.5px/1.6 var(--sans);color:var(--mut);margin:11px 0 0;text-wrap:pretty}
+  .sec{display:inline-block;font:400 11px/1.4 var(--mono);color:var(--mut);background:var(--soft);border:1px solid var(--line);padding:4px 9px;margin:13px 8px 0 0}
+
+  .foot{margin:40px 0 64px;border-top:1px solid var(--line);padding-top:20px;font:400 12.5px/1.7 var(--mono);color:var(--faint);max-width:80ch}
+  .foot b{color:var(--mut);font-weight:500}
+  @media(prefers-reduced-motion:reduce){.track span{transition:none}}
+</style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="index.html"><img src="img/decern-mark.svg" alt="" width="24" height="24"><span>decern</span></a>
+      <a class="back" href="index.html">← back to decern.anivar.net</a>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="intro">
+      <p class="eyebrow">Protocol explorer</p>
+      <h1>How decern establishes a caller</h1>
+      <p class="lede">decern will not start until the deployment says how its callers are established. The five postures diverge only in how the caller is proven; everything downstream — the solver-proven kernel, the recorded decision, the fail-closed serve — is the same for all of them. Pick a posture and step the request through it.</p>
+
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <p class="bind" id="bind"></p>
+
+      <div class="pipe" id="pipe"></div>
+
+      <div class="grid">
+        <div class="steps" id="steps" aria-live="polite"></div>
+        <aside>
+          <div class="controls">
+            <div class="cbar">
+              <button id="prev" type="button" title="Back (←)">◀</button>
+              <button id="play" class="play" type="button">Play</button>
+              <button id="next" type="button" title="Forward (→)">▶</button>
+              <button id="restart" type="button" title="Restart">↻</button>
+            </div>
+            <div class="track"><span id="fill"></span></div>
+            <p class="prog" id="prog"></p>
+          </div>
+          <div class="panel" id="panel"></div>
+        </aside>
+      </div>
+
+      <p class="foot"><b>Grounded in the standards registry the code is held to.</b> Steps and section citations come from decern's own conformance records for RFC 9068, RFC 9421, SPIFFE JWT-SVID and draft-hardt-oauth-aauth-protocol-11. Verification only — decern issues no tokens. This is an explainer; <a href="https://github.com/anivar/decern">read the code</a> for the exact behaviour.</p>
+    </section>
+  </main>
+
+<script>
+// Pipeline spine — the stages every posture shares.
+var SPINE = ['caller','kernel','decision','record','served'];
+var STAGE = {
+  caller:   {k:'01',t:'Caller established',s:'who is asking'},
+  kernel:   {k:'02',t:'Proven kernel',s:'Cedar + 9 cvc5'},
+  decision: {k:'03',t:'Decision',s:'allow / deny'},
+  record:   {k:'04',t:'Record',s:'signed, chained'},
+  served:   {k:'05',t:'Served',s:'200 / 503'}
+};
+
+// Shared tail — identical for every posture. stage says which pipeline box lights.
+var TAIL = [
+  {stage:'kernel',tag:'proven',t:'The proven kernel decides',d:'A deterministic Cedar function answers over the authority graph. The clock is the server’s, never the request’s. Nine safety invariants are machine-checked over the whole model by the cvc5 solver, not sampled.',s:'cvc5 · cedar-policy-symcc'},
+  {stage:'decision',tag:'proven',t:'allow or deny',d:'One boolean, with named policy reasons. Fields that are recorded but never decide — the decision subject, who asserted the request, a subject-side challenge — were stripped from the context before the kernel ran.'},
+  {stage:'record',tag:'record',t:'Append, sign, chain',d:'The decision and who is accountable for it are appended to the ledger, Ed25519-signed and hash-chained to the record before it, before any answer leaves the server.',s:'RFC 8032 · RFC 9162'},
+  {stage:'served',tag:'out',t:'200, or 503 — never a bare allow',d:'The answer is returned only once its record is safely written. A decision that cannot be recorded is 503. The decision itself may still be a deny; a deny is recorded and served like any answer.'}
+];
+
+var FLOWS = {
+  bearer: {
+    label:'bearer', spec:'RFC 9068', bind:'<b>Not self-bound.</b> A bearer PEP may name other parties, so there is no self-bound gate in this flow.',
+    head:[
+      {stage:'caller',tag:'caller',t:'Agent presents a bearer token',d:'Authorization: Bearer &lt;JWT&gt;. An RFC 9068 access token, minted by the authorization server the deployment configured.'},
+      {stage:'caller',tag:'caller',t:'decern-serve receives it',d:'--bearer-issuer, --bearer-audience and --bearer-issuer-key are set. Keys are pinned at boot as Ed25519 points, never fetched.'},
+      {stage:'caller',tag:'caller',t:'Validate the JWT',d:'In order: typ is at+jwt; alg is EdDSA, settled before any key is consulted; iss matches exactly; aud contains the resource id; then the signature; then exp and nbf. A failure is 401 invalid_token.',s:'RFC 9068 §4'}
+    ]
+  },
+  'signed-request': {
+    label:'signed-request', spec:'RFC 9421', bind:'<b>Self-bound.</b> A workload may name only itself unless it is listed in --pep.',
+    head:[
+      {stage:'caller',tag:'caller',t:'Agent signs the request',d:'An RFC 9421 message signature, label sig1, covering @method, @authority, @path and Signature-Key, plus Content-Digest on a bodied request.',s:'RFC 9421'},
+      {stage:'caller',tag:'caller',t:'decern-serve receives it',d:'--signed-agent-key ID=HEX names the agent and its key; --signed-authority names the authority the signature must cover.'},
+      {stage:'caller',tag:'caller',t:'Verify the signature',d:'Ed25519 only; created at most 60s old and 5s ahead; the signed @authority must equal --signed-authority. The token in Signature-Key is already covered by the outer signature, so its own JWS is not re-verified. A failure is 401 / 403.',s:'RFC 9421 §1.4'},
+      {stage:'caller',tag:'caller',t:'Bind to self',d:'The agent may name only itself unless listed in --pep. The record names no issuer: a signed-request record carries no iss.',s:'operator-of-record'}
+    ]
+  },
+  spiffe: {
+    label:'SPIFFE', spec:'JWT-SVID', bind:'<b>Self-bound.</b> A SPIFFE workload may name only itself unless it is listed in --pep.',
+    head:[
+      {stage:'caller',tag:'caller',t:'Workload presents a JWT-SVID',d:'Authorization: Bearer &lt;JWT-SVID&gt;, carrying a spiffe:// identity in its subject.'},
+      {stage:'caller',tag:'caller',t:'decern-serve receives it',d:'A JWK Set and trust domain are pinned at startup; bundles are configured, never fetched.'},
+      {stage:'caller',tag:'caller',t:'Verify the JWT-SVID',d:'ES256 only — EdDSA is refused as outside the SVID’s closed algorithm set; the JOSE header is closed to alg/kid/typ; kid selects a bundle key; sub is the spiffe:// id; the trust domain matches exactly; exp.',s:'SPIFFE JWT-SVID §2–§3'},
+      {stage:'caller',tag:'caller',t:'Bind to self',d:'A SPIFFE workload may name only itself unless listed in --pep.',s:'operator-of-record'}
+    ]
+  },
+  aauth: {
+    label:'AAuth', spec:'draft-hardt -11', bind:'<b>Self-bound.</b> A verified agent is a workload: it may name only itself unless listed in --pep. parent_agent is shape-checked and never reaches the kernel.',
+    head:[
+      {stage:'caller',tag:'caller',t:'Agent calls with an agent token and a signed request',d:'An aa-agent+jwt is carried in the Signature-Key header under the jwt scheme, and the request is signed to the AAuth signature profile. The resource half of agent identity access only.',s:'draft-hardt §4.2.1'},
+      {stage:'caller',tag:'caller',t:'decern-serve receives it',d:'--aauth-provider pins the issuer’s JWK Set; --aauth-audience names the authority the request must carry. An agent token has no aud, so the audience is configured.'},
+      {stage:'caller',tag:'caller',t:'Resolve the provider',d:'The token’s issuer must be a configured provider (its dwk names aauth-agent.json). An agent whose provider is not configured is refused before any cryptography runs. Providers are pinned, not discovered.',s:'§11.4, §11.5.2'},
+      {stage:'caller',tag:'caller',t:'Verify the agent token',d:'The header names the fully-specified Ed25519 — the polymorphic EdDSA is refused; sub is an agent id aauth:local@domain inside the provider’s domain; jti is required; a lifetime over 24h is refused; iat must be within the skew window.',s:'§11.3.1, §5'},
+      {stage:'caller',tag:'caller',t:'Check the token signature',d:'The agent token’s own JWS verifies against the pinned provider key, which carries a fully-specified alg consistent with its kty and crv.',s:'§11.5.1'},
+      {stage:'caller',tag:'caller',t:'Verify the request signature',d:'The RFC 9421 signature verifies against the key the token’s cnf confirms — holding the token is not enough. @authority must equal --aauth-audience; Content-Digest is required on a bodied request; created may be ±60s of this clock, else Signature-Error: clock_skew.',s:'§11.3 · RFC 7800'},
+      {stage:'caller',tag:'caller',t:'Bind to self',d:'The agent is a workload: it may name only itself unless listed in --pep. parent_agent is shape-checked and never reaches the kernel.',s:'§5.3.3'}
+    ]
+  },
+  'trust-proxy': {
+    label:'trust-proxy', spec:'declared front', bind:'<b>Not self-bound.</b> A trusted front may name other parties, so there is no self-bound gate in this flow.',
+    head:[
+      {stage:'caller',tag:'caller',t:'A declared front authenticated the caller',d:'An authenticating gateway sits in front of decern-serve and takes responsibility for who it asserts.'},
+      {stage:'caller',tag:'caller',t:'decern-serve trusts the front',d:'--trust-proxy: no credential is verified here, because the front already did. It is the one posture that verifies nothing locally.'},
+      {stage:'caller',tag:'caller',t:'Record who asserted',d:'The subject the front vouches for (and the client, and the issuer where a token was checked) is written to asserted_by on the record — recorded for accountability, never a gate, never changing the answer.'}
+    ]
+  }
+};
+var ORDER = ['bearer','signed-request','spiffe','aauth','trust-proxy'];
+
+var cur='aauth', idx=0, timer=null;
+function steps(){ return FLOWS[cur].head.concat(TAIL); }
+
+var tabsEl=d('tabs'),pipeEl=d('pipe'),stepsEl=d('steps'),panelEl=d('panel'),bindEl=d('bind'),
+    progEl=d('prog'),fillEl=d('fill'),playBtn=d('play'),prevBtn=d('prev'),nextBtn=d('next'),reBtn=d('restart');
+function d(i){return document.getElementById(i);}
+
+function buildTabs(){
+  ORDER.forEach(function(k){
+    var f=FLOWS[k],b=document.createElement('button');
+    b.className='tab';b.setAttribute('role','tab');b.dataset.key=k;
+    b.innerHTML=f.label+'<small>'+f.spec+'</small>';
+    b.addEventListener('click',function(){stop();cur=k;idx=0;render();});
+    tabsEl.appendChild(b);
+  });
+}
+function buildPipe(){
+  var bw=200,gap=42,x0=20,by=35,bh=92,cy=81;
+  var s='<svg viewBox="0 0 1208 162" preserveAspectRatio="xMidYMid meet" style="display:block;width:100%;min-width:880px;height:auto" role="img" aria-label="decern decision pipeline">';
+  s+='<defs><marker id="eah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 1 L9 5 L0 9 z" fill="#5E6B67"/></marker><marker id="eaht" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 1 L9 5 L0 9 z" fill="#0E7C6B"/></marker></defs>';
+  SPINE.forEach(function(st,i){
+    var x=x0+i*(bw+gap),cx=x+bw/2,g=STAGE[st];
+    s+='<rect class="ebox" data-stage="'+st+'" x="'+x+'" y="'+by+'" width="'+bw+'" height="'+bh+'" rx="6"/>';
+    s+='<text class="ek" x="'+(x+16)+'" y="'+(by+23)+'">'+g.k+'</text>';
+    s+='<text class="et" x="'+cx+'" y="'+(by+55)+'" text-anchor="middle">'+g.t+'</text>';
+    s+='<text class="es" x="'+cx+'" y="'+(by+75)+'" text-anchor="middle">'+g.s+'</text>';
+    if(i<SPINE.length-1){ s+='<path class="earrow" data-arrow="'+i+'" d="M'+(x+bw+4)+' '+cy+' H'+(x+bw+gap-5)+'" marker-end="url(#eah)"/>'; }
+  });
+  s+='</svg>';
+  pipeEl.innerHTML=s;
+  Array.prototype.forEach.call(pipeEl.querySelectorAll('.ebox'),function(b){
+    b.addEventListener('click',function(){stop();var S=steps(),g=b.getAttribute('data-stage');for(var i=0;i<S.length;i++){if(S[i].stage===g){idx=i;break;}}paint();});
+  });
+}
+function buildSteps(){
+  stepsEl.innerHTML='';
+  steps().forEach(function(st,i){
+    var el=document.createElement('div');el.className='step';el.dataset.i=i;
+    el.innerHTML='<div class="n">'+String(i+1).padStart(2,'0')+'</div>'+
+      '<div class="b"><div class="ti">'+st.t+'</div><div class="su">'+st.d.replace(/<[^>]*>/g,'').replace(/&[a-z]+;/g,' ').slice(0,88)+'…</div></div>'+
+      '<div class="tag tag-'+st.tag+'">'+st.tag+'</div>';
+    el.addEventListener('click',function(){stop();idx=i;paint();});
+    stepsEl.appendChild(el);
+  });
+}
+function paint(){
+  var S=steps(),st=S[idx];
+  Array.prototype.forEach.call(stepsEl.children,function(el){
+    var i=+el.dataset.i;el.classList.toggle('on',i===idx);el.classList.toggle('done',i<idx);
+  });
+  // pipeline: highlight the active SVG stage and animate the arrow into it
+  var ai=SPINE.indexOf(st.stage);
+  Array.prototype.forEach.call(pipeEl.querySelectorAll('.ebox'),function(b){
+    var si=SPINE.indexOf(b.getAttribute('data-stage'));
+    b.classList.toggle('on',si===ai);
+    b.classList.toggle('dim',si>ai);
+  });
+  Array.prototype.forEach.call(pipeEl.querySelectorAll('.earrow'),function(a){
+    a.classList.toggle('go',+a.getAttribute('data-arrow')===ai-1);
+  });
+  panelEl.innerHTML='<p class="kind">'+st.stage+' · step '+(idx+1)+' of '+S.length+'</p><h3>'+st.t+'</h3><p>'+st.d+'</p>'+(st.s?'<span class="sec">'+st.s+'</span>':'');
+  progEl.textContent='Step '+(idx+1)+' / '+S.length+'   ·   '+FLOWS[cur].label;
+  fillEl.style.width=(100*(idx+1)/S.length)+'%';
+  prevBtn.disabled=idx===0;nextBtn.disabled=idx===S.length-1;
+  Array.prototype.forEach.call(tabsEl.children,function(b){b.setAttribute('aria-selected',b.dataset.key===cur);});
+  var on=stepsEl.querySelector('.step.on');if(on&&on.scrollIntoView)on.scrollIntoView({block:'nearest'});
+}
+function render(){bindEl.innerHTML=FLOWS[cur].bind;buildSteps();paint();playBtn.textContent='Play';}
+function step(n){var S=steps();idx=Math.max(0,Math.min(S.length-1,idx+n));paint();}
+function play(){if(timer){stop();return;}var S=steps();if(idx>=S.length-1){idx=0;paint();}playBtn.textContent='Pause';timer=setInterval(function(){var S=steps();if(idx>=S.length-1){stop();return;}idx++;paint();},1700);}
+function stop(){if(timer){clearInterval(timer);timer=null;}playBtn.textContent='Play';}
+
+playBtn.addEventListener('click',play);
+prevBtn.addEventListener('click',function(){stop();step(-1);});
+nextBtn.addEventListener('click',function(){stop();step(1);});
+reBtn.addEventListener('click',function(){stop();idx=0;paint();});
+document.addEventListener('keydown',function(e){
+  if(e.key==='ArrowRight'){stop();step(1);e.preventDefault();}
+  else if(e.key==='ArrowLeft'){stop();step(-1);e.preventDefault();}
+  else if(e.key===' '){play();e.preventDefault();}
+});
+
+buildTabs();buildPipe();render();
+</script>
+</body>
+</html>

@@ -15,6 +15,9 @@
 <meta name="description" content="A deterministic authorization kernel for agents, people and services. Nine safety invariants are machine-checked by cvc5 over the model's whole symbolic input space; every decision is recorded in a signed, hash-chained ledger anyone can verify. Rust, Apache-2.0.">
 <meta name="author" content="Anivar A. Aravind">
 <link rel="canonical" href="https://decern.anivar.net/">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareSourceCode","name":"decern","description":"A deterministic authorization decision point in Rust. It proves its safety rules hold over the whole model with the cvc5 solver, records every decision in an Ed25519-signed, hash-chained ledger before serving it, and lets the party a decision was about verify and challenge it.","codeRepository":"https://github.com/anivar/decern","programmingLanguage":"Rust","license":"https://www.apache.org/licenses/LICENSE-2.0","author":{"@type":"Person","name":"Anivar A. Aravind","url":"https://anivar.net"},"url":"https://decern.anivar.net/"}
+</script>
 <link rel="icon" type="image/svg+xml" href="img/decern-mark.svg">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="decern">
@@ -28,7 +31,7 @@
 <meta name="twitter:image" content="https://decern.anivar.net/img/architecture.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
 <style>
   html { scroll-behavior: smooth; }
   body { margin: 0; background: #F5F7F6; color: #0C0F0E; }
@@ -159,23 +162,24 @@
 </style>
 </head>
 <body>
-<div style="background:#F5F7F6;font-family:'IBM Plex Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased">
+<div style="background:#F5F7F6;font-family:'Geist',system-ui,sans-serif;-webkit-font-smoothing:antialiased">
 
   <header style="border-bottom:1px solid #0C0F0E">
     <div style="max-width:1180px;margin:0 auto;padding:0 40px;height:66px;display:flex;align-items:center;gap:32px">
       <a href="#top" style="display:flex;align-items:center;gap:11px;text-decoration:none">
         <img src="img/decern-mark.svg" alt="decern" width="24" height="24" style="display:block">
-        <span style="font:600 19px/1 'IBM Plex Mono',monospace;letter-spacing:-0.01em;color:#0C0F0E">decern</span>
+        <span style="font:600 19px/1 'Geist Mono',monospace;letter-spacing:-0.01em;color:#0C0F0E">decern</span>
       </a>
       <nav style="margin-left:auto;display:flex;gap:26px;align-items:center;flex-wrap:wrap">
-        <a href="#how" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">How</a>
-        <a href="#contribute" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#0E7C6B;text-decoration:none" style-hover="color:#0A5B4E">Contribute</a>
-        <a href="#rules" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Rules</a>
-        <a href="#ledger" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Ledger</a>
-        <a href="#missions" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Missions</a>
-        <a href="#build" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Build</a>
-        <a href="#start" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Start</a>
-        <a href="https://github.com/anivar/decern" style="display:inline-flex;align-items:center;gap:8px;font:500 12px/1 'IBM Plex Sans',sans-serif;color:#0C0F0E;border:1px solid #0C0F0E;padding:9px 14px;text-decoration:none" style-hover="background:#0C0F0E;color:#F5F7F6"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="display:block"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>Repository</a>
+        <a href="#how" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">How</a>
+        <a href="explorer.html" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#0E7C6B;text-decoration:none" style-hover="color:#0A5B4E">Explorer</a>
+        <a href="#contribute" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#0E7C6B;text-decoration:none" style-hover="color:#0A5B4E">Contribute</a>
+        <a href="#rules" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Rules</a>
+        <a href="#ledger" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Ledger</a>
+        <a href="#missions" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Missions</a>
+        <a href="#build" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Build</a>
+        <a href="#start" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Start</a>
+        <a href="https://github.com/anivar/decern" style="display:inline-flex;align-items:center;gap:8px;font:500 12px/1 'Geist',sans-serif;color:#0C0F0E;border:1px solid #0C0F0E;padding:9px 14px;text-decoration:none" style-hover="background:#0C0F0E;color:#F5F7F6"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="display:block"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>Repository</a>
       </nav>
     </div>
   </header>
@@ -184,59 +188,50 @@
     <div style="max-width:1180px;margin:0 auto;padding:0 40px;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:72px;align-items:start">
       <div>
         <img src="img/decern-mark.svg" alt="" width="76" height="76" style="display:block;margin:0 0 26px">
-        <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#0E7C6B;margin:0">Authorization kernel · Rust</p>
+        <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#0E7C6B;margin:0">Authorization kernel · Rust</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h1 style="font:600 clamp(52px,8.5vw,82px)/0.98 'IBM Plex Mono',monospace;letter-spacing:-0.03em;color:#0C0F0E;margin:24px 0 0">decern</h1>
-        <p style="font:500 clamp(25px,3.2vw,35px)/1.18 Newsreader,serif;letter-spacing:-0.01em;color:#0C0F0E;margin:24px 0 0;max-width:28ch;text-wrap:pretty">Decide what an agent, a person or a service is allowed to do. Keep proof of every answer.</p>
-        <p style="font:400 17px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:22px 0 0;max-width:60ch;text-wrap:pretty">decern answers one question for an agent, a person or a workload: may this principal do this, now? It writes each answer to a signed, hash-chained log before it hands the answer back, so the record exists whether or not anyone was watching. Its nine safety rules are checked by a solver over the model's whole symbolic input space, not on a handful of examples. And the server will not start until the deployment says how its callers are established.</p>
-        <p style="font:400 13px/1.7 'IBM Plex Mono',monospace;color:#5E6B67;margin:22px 0 0;max-width:66ch;border-left:2px solid #0E7C6B;padding-left:14px"><span style="color:#0C0F0E">Where it stands.</span> 0.7.0 is the last feature release of the current design. After it the 0.x line takes security fixes only. The next line is built beside it in this repository. No production deployments are known.</p>
+        <h1 style="font:600 clamp(52px,8.5vw,82px)/0.98 'Geist Mono',monospace;letter-spacing:-0.03em;color:#0C0F0E;margin:24px 0 0">decern</h1>
+        <p style="font:500 clamp(25px,3.2vw,35px)/1.18 Newsreader,serif;letter-spacing:-0.01em;color:#0C0F0E;margin:24px 0 0;max-width:28ch;text-wrap:pretty">Authorization you can prove and contest.</p>
+        <p style="font:400 17px/1.62 'Geist',sans-serif;color:#5E6B67;margin:22px 0 0;max-width:60ch;text-wrap:pretty">Software now decides, at machine speed, what agents and people are allowed to do: move this money, read this file, act for this account. decern is the decision point that answers those questions and proves it did so safely. It checks its safety rules hold for every possible request, keeps a tamper-proof record of every decision, and lets the party a decision was about see it and challenge it.</p>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:34px">
-          <a href="https://github.com/anivar/decern" style="display:inline-flex;align-items:center;gap:10px;background:#0E7C6B;color:#FFFFFF;border:1px solid #0E7C6B;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="background:#0A5B4E;border-color:#0A5B4E"><svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="display:block"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>Read the code on GitHub</a>
-          <a href="#start" style="display:inline-flex;align-items:center;background:transparent;color:#0C0F0E;border:1px solid #0C0F0E;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="background:#0C0F0E;color:#F5F7F6">Try it on your machine</a>
-          <a href="#contribute" style="display:inline-flex;align-items:center;background:transparent;color:#0A5B4E;border:1px solid #C4CFCB;padding:12px 20px;font:500 14px/1 'IBM Plex Sans',sans-serif;text-decoration:none" style-hover="border-color:#0E7C6B">Where the work is</a>
+          <a href="https://github.com/anivar/decern" style="display:inline-flex;align-items:center;gap:10px;background:#0E7C6B;color:#FFFFFF;border:1px solid #0E7C6B;padding:12px 20px;font:500 14px/1 'Geist',sans-serif;text-decoration:none" style-hover="background:#0A5B4E;border-color:#0A5B4E"><svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="display:block"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>Read the code on GitHub</a>
+          <a href="#start" style="display:inline-flex;align-items:center;background:transparent;color:#0C0F0E;border:1px solid #0C0F0E;padding:12px 20px;font:500 14px/1 'Geist',sans-serif;text-decoration:none" style-hover="background:#0C0F0E;color:#F5F7F6">Try it on your machine</a>
+          <a href="#contribute" style="display:inline-flex;align-items:center;background:transparent;color:#0A5B4E;border:1px solid #C4CFCB;padding:12px 20px;font:500 14px/1 'Geist',sans-serif;text-decoration:none" style-hover="border-color:#0E7C6B">Where the work is</a>
         </div>
       </div>
 
       <aside style="border:1px solid #0C0F0E;background:#FFFFFF">
         <div style="border-bottom:1px solid #0C0F0E;background:#EDF3F1;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px">
-          <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67">At a glance</span>
+          <span style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67">At a glance</span>
         </div>
         <dl style="margin:0;padding:8px 20px 20px">
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
-            <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Proven</dt>
-            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">9 invariants · cvc5</dd>
+            <dt style="font:500 10px/1.5 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Proven</dt>
+            <dd style="font:400 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;margin:0">9 invariants · cvc5</dd>
           </div>
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
-            <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Recorded</dt>
-            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">Ed25519 · SHA-256 chain</dd>
+            <dt style="font:500 10px/1.5 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Recorded</dt>
+            <dd style="font:400 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;margin:0">Ed25519 · SHA-256 chain</dd>
           </div>
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
-            <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Speaks</dt>
-            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">AuthZEN 1.0 evaluation, batch, search</dd>
+            <dt style="font:500 10px/1.5 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Speaks</dt>
+            <dd style="font:400 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;margin:0">AuthZEN 1.0 evaluation, batch, search</dd>
           </div>
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
-            <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Surface</dt>
-            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">7 libraries · 2 binaries</dd>
+            <dt style="font:500 10px/1.5 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Surface</dt>
+            <dd style="font:400 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;margin:0">7 libraries · 2 binaries</dd>
           </div>
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
-            <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Deps</dt>
-            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">no TLS/OpenSSL by default</dd>
+            <dt style="font:500 10px/1.5 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Deps</dt>
+            <dd style="font:400 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;margin:0">no TLS/OpenSSL by default</dd>
           </div>
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
-            <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">0.x line</dt>
-            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">last feature release, then security fixes only</dd>
-          </div>
-          <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
-            <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Adopters</dt>
-            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">none known</dd>
-          </div>
-          <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0;border-bottom:1px solid #E1E7E4">
-            <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Licence</dt>
-            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">Apache-2.0</dd>
+            <dt style="font:500 10px/1.5 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Licence</dt>
+            <dd style="font:400 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;margin:0">Apache-2.0</dd>
           </div>
           <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:16px;padding:13px 0">
-            <dt style="font:500 10px/1.5 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Author</dt>
-            <dd style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;margin:0">Anivar A. Aravind<br><a href="https://anivar.net" style="font:400 12px/1.7 'IBM Plex Mono',monospace">anivar.net ↗</a></dd>
+            <dt style="font:500 10px/1.5 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490;margin:0">Author</dt>
+            <dd style="font:400 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;margin:0">Anivar A. Aravind<br><a href="https://anivar.net" style="font:400 12px/1.7 'Geist Mono',monospace">anivar.net ↗</a></dd>
           </div>
         </dl>
       </aside>
@@ -247,13 +242,13 @@
     <div style="max-width:1180px;margin:0 auto;padding:0 40px">
       <div style="border-top:1px solid #0C0F0E;padding-top:44px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:72px;align-items:start">
         <div>
-          <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">The problem</p>
+          <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">The problem</p>
           <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-          <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0;max-width:24ch;text-wrap:pretty">Everyone agrees how to write permissions down. Nobody guarantees they hold.</h2>
+          <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0;max-width:24ch;text-wrap:pretty">Writing permissions down is standardised. Guaranteeing they hold is not.</h2>
         </div>
         <div>
-          <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:0;text-wrap:pretty">Tokens and delegation formats settle how permission is described. Whether it holds — that passed-on authority can only get narrower, that a dropped record can be caught, that an answer stayed inside its mandate — is left to whoever builds the system.</p>
-          <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:18px 0 0;text-wrap:pretty">decern is an attempt at the guarantee. People, AI agents and services are one kind of principal here, answered by the same proven function.</p>
+          <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:0;text-wrap:pretty">Tokens and delegation formats settle how permission is described. Whether it holds is left to whoever builds the system: that passed-on authority can only get narrower, that a dropped record can be caught, that an answer stayed inside its mandate.</p>
+          <p style="font:400 16px/1.64 'Geist',sans-serif;color:#0C0F0E;margin:18px 0 0;text-wrap:pretty">decern is the guarantee. People, AI agents and services are one kind of principal here, answered by the same proven function.</p>
         </div>
       </div>
     </div>
@@ -262,32 +257,60 @@
   <section id="how" style="padding:88px 0 0">
     <div style="max-width:1180px;margin:0 auto;padding:0 40px">
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
-        <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">What it does</p>
+        <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">What it does</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">What happens to a request, and what you can check afterwards.</h2>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">What happens to a request, and what you can check afterwards.</h2>
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;margin-top:36px">
           <article style="border:1px solid #C9D3CF;background:#FFFFFF;padding:32px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">01 · The rules</p>
-            <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">A solver checks every input the model allows</h3>
-            <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">An answer depends only on the request (who asks, for what, with what context), the authority graph, the policy and the time. Because it is that contained, cvc5 can search the model's symbolic input space for one that breaks a rule. Nine rules are checked this way, over the policy rather than the running server. A pass means it found none.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">01 · The rules</p>
+            <h3 style="font:600 20px/1.3 'Geist',sans-serif;color:#0C0F0E;margin:16px 0 0">A solver checks every input the model allows</h3>
+            <p style="font:400 15px/1.62 'Geist',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">An answer depends only on the request (who asks, for what, with what context), the authority graph, the policy and the time. Because it is that contained, cvc5 can search the model's symbolic input space for one that breaks a rule. The rules are checked this way, over the policy rather than the running server. A pass means it found none.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:26px 0 0">
-            <p style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-proof · runs in <span style="color:#5E6B67">decern prove</span> and CI only, never on the request path</p>
+            <p style="font:400 11px/1.6 'Geist Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-proof · runs in <span style="color:#5E6B67">decern prove</span> and CI only, never on the request path</p>
           </article>
           <article style="border:1px solid #C9D3CF;background:#FFFFFF;padding:32px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">02 · The record</p>
-            <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">A log you can check yourself</h3>
-            <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Each answer is added to the end of the log, signed, and linked to the one before it. The signature shows a record is genuine and the links show the log holds together; whoever holds the key could still rewrite it, so a tree head kept out of the operator's reach is what shows nothing up to it was dropped or changed. A log torn by a crash repairs itself. You check the file yourself, offline.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">02 · The record</p>
+            <h3 style="font:600 20px/1.3 'Geist',sans-serif;color:#0C0F0E;margin:16px 0 0">A log you can check yourself</h3>
+            <p style="font:400 15px/1.62 'Geist',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Each answer is added to the end of the log, signed, and linked to the one before it. The signature shows a record is genuine and the links show the log holds together; whoever holds the key could still rewrite it, so a tree head kept out of the operator's reach is what shows nothing up to it was dropped or changed. A log torn by a crash repairs itself. You check the file yourself, offline.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:26px 0 0">
-            <p style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-ledger · Merkle · JCS canonicalisation · anchors</p>
+            <p style="font:400 11px/1.6 'Geist Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-ledger · Merkle · JCS canonicalisation · anchors</p>
           </article>
           <article style="border:1px solid #C9D3CF;background:#FFFFFF;padding:32px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">03 · The caller</p>
-            <h3 style="font:600 20px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0">It will not start until it knows how callers are established</h3>
-            <p style="font:400 15px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Before evaluating anything, decern-serve establishes who is asking — a bearer token, a signed request, a SPIFFE identity, an AAuth agent token, or a declared authenticated front taking responsibility for what it asserts. There is no default identity, and no way to start the server without naming one. The three workload postures go further: unless exempted, such a caller may only name itself. The verified caller is written onto the decision record itself, not inferred afterwards.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">03 · The caller</p>
+            <h3 style="font:600 20px/1.3 'Geist',sans-serif;color:#0C0F0E;margin:16px 0 0">It will not start until it knows how callers are established</h3>
+            <p style="font:400 15px/1.62 'Geist',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Before evaluating anything, decern-serve establishes who is asking — a bearer token, a signed request, a SPIFFE identity, an AAuth agent token, or a declared authenticated front taking responsibility for what it asserts. There is no default identity, and no way to start the server without naming one. The three workload postures go further: unless exempted, such a caller may only name itself. The verified caller is written onto the decision record itself, not inferred afterwards.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:26px 0 0">
-            <p style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-server · five caller postures · asserted_by under any credential posture</p>
+            <p style="font:400 11px/1.6 'Geist Mono',monospace;letter-spacing:0.04em;color:#849490;margin:14px 0 0">decern-server · five caller postures · asserted_by under any credential posture</p>
           </article>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="contestability" style="padding:88px 0 0">
+    <div style="max-width:1180px;margin:0 auto;padding:0 40px">
+      <div style="border-top:1px solid #0C0F0E;padding-top:44px">
+        <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#0E7C6B;margin:0">Answerable by design</p>
+        <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Every decision is answerable to the party it lands on.</h2>
+        <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:68ch;text-wrap:pretty">Authored in the open standards bodies and implemented here, the three profiles below make a decision legible to the party it was about.</p>
+        <table style="width:100%;margin-top:34px;border-top:1px solid #0C0F0E">
+          <tbody>
+            <tr>
+              <td style="padding:18px 24px 18px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top;width:206px">Decision subject</td>
+              <td style="padding:18px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">The party a decision is taken <em>upon</em> — a pseudonymous handle, distinct from who asked and who answers, recorded and never deciding. <a href="https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/" style="font-family:'Geist Mono',monospace;font-size:13px">draft-aravind-oauth-decision-subject</a> &middot; IETF OAuth</td>
+            </tr>
+            <tr>
+              <td style="padding:18px 24px 18px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">Operator of record</td>
+              <td style="padding:18px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">Who is answerable for it — the root of the asker's delegation chain, resolved by the server, never taken from the request. <a href="https://datatracker.ietf.org/doc/draft-aravind-oauth-operator-of-record/" style="font-family:'Geist Mono',monospace;font-size:13px">draft-aravind-oauth-operator-of-record</a> &middot; IETF OAuth</td>
+            </tr>
+            <tr>
+              <td style="padding:18px 24px 18px 0;border-bottom:1px solid #0C0F0E;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">Subject-side challenge</td>
+              <td style="padding:18px 0;border-bottom:1px solid #0C0F0E;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">The party a decision was about can contest it, answered on the record, without touching the decision. <a href="https://github.com/openid/authzen/pull/608" style="font-family:'Geist Mono',monospace;font-size:13px">S-ARAP</a> &middot; OpenID AuthZEN</td>
+            </tr>
+          </tbody>
+        </table>
+        <p style="font:400 13px/1.7 'Geist Mono',monospace;color:#849490;margin:20px 0 0;max-width:78ch">All three are being standardized now, in the IETF and the OpenID AuthZEN Working Group. decern implements them today.</p>
       </div>
     </div>
   </section>
@@ -297,74 +320,74 @@
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
         <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:72px;align-items:end">
           <div>
-            <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#0E7C6B;margin:0">Where the work is</p>
+            <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#0E7C6B;margin:0">Where the work is</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-            <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0;max-width:24ch;text-wrap:pretty">The 0.x line takes security fixes only. The next line is built beside it.</h2>
+            <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0;max-width:24ch;text-wrap:pretty">The work is tracked in the open, issue by issue.</h2>
           </div>
           <div>
-            <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:0;text-wrap:pretty">decern turns an authorization decision into a receipt. The decision is recorded before it is answered, the receipt comes back with the answer, and anyone who holds it can check it offline against the log's public key. A resource can refuse to act without one.</p>
-            <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">A small proxy sits between an enforcement point and the decision point it already uses. It speaks AuthZEN on both sides, records each decision and returns it with the receipt. It enforces nothing. Cedar stays built in.</p>
+            <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:0;text-wrap:pretty">None of the next line exists yet; every step of it is an open issue. The direction, in the roadmap's words: decern turns an authorization decision into a receipt. The decision is recorded before it is answered, the receipt comes back with the answer, and anyone who holds it can check it offline against the log's public key. A resource can refuse to act without one.</p>
+            <p style="font:400 16px/1.64 'Geist',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">A small proxy is to sit between an enforcement point and the decision point it already uses, speak AuthZEN on both sides, record each decision and return it with the receipt. It enforces nothing. Cedar stays built in.</p>
           </div>
         </div>
 
         <table style="width:100%;margin-top:40px;border-top:1px solid #0C0F0E">
           <tbody>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top;width:44px">0</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top;width:196px">Spikes</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">Each risky assumption is proven or broken before the format is written.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top;width:44px">0</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top;width:196px">Spikes</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">Each risky assumption is proven or broken before the format is written.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">1</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">0.7.0</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">Released from a tag whose release-candidate run passed.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">1</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">Release</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">Released from a tag whose release-candidate run passed.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">2</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">First slice</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">On a clean machine, the proxy in front of an AuthZEN decision point returns a receipt that verifies offline, in under five minutes.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">2</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">First slice</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">On a clean machine, the proxy in front of an AuthZEN decision point returns a receipt that verifies offline, in under five minutes.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">3</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">Cedar on the new log</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">The built-in model decides through the new crates and a receipt verifies in a browser.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">3</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">Cedar on the new log</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">The built-in model decides through the new crates and a receipt verifies in a browser.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">4</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">Facts and grants</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">The new line holds no state outside the log, and the approval rule is proven.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">4</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">Facts and grants</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">The new line holds no state outside the log, and the approval rule is proven.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">5</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">Proofs, replay, first use</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">A recorded decision replays against its policy, and one outside party has run the quickstart.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">5</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">Proofs, replay, first use</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">A recorded decision replays against its policy, and one outside party has run the quickstart.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #0C0F0E;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">6</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #0C0F0E;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">Remove the old line</td>
-              <td style="padding:15px 0;border-bottom:1px solid #0C0F0E;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">main holds the new crates only.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #0C0F0E;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">6</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #0C0F0E;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">Remove the old line</td>
+              <td style="padding:15px 0;border-bottom:1px solid #0C0F0E;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">main holds the new crates only.</td>
             </tr>
           </tbody>
         </table>
-        <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:74ch;text-wrap:pretty">Phases, in order, with no dates. Each phase has a gate, and the steps of a later phase can change when an earlier gate teaches something. If no outside issue, pull request or adopter has appeared by the gate of phase 5, the work stops at the format, its test vectors and the drafts, and phase 6 does not run.</p>
+        <p style="font:400 14px/1.62 'Geist',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:74ch;text-wrap:pretty">Each row is a phase and the gate it has to pass, in order, with no dates. The steps of a later phase can change when an earlier gate teaches something. If no outside issue, pull request or adopter has appeared by the gate of phase 5, the work stops at the format, its test vectors and the drafts, and phase 6 does not run.</p>
 
         <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);border:1px solid #0C0F0E;margin-top:28px">
           <div style="padding:28px;border-right:1px solid #0C0F0E;background:#EDF3F1">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Getting a change in</p>
-            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">Each step of the plan is one issue in a milestone; pick one from there. Open an issue first for anything design-changing. For a small, obvious fix, just send the pull request. People and agents are welcome on the same terms: agents start at <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">AGENTS.md</span>, and a person signs off the DCO. A security report goes through <span style="font-family:'IBM Plex Mono',monospace;font-size:13px">SECURITY.md</span>, not an issue.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">How to contribute</p>
+            <p style="font:400 14.5px/1.62 'Geist',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">New contributors are welcome, and not only for code: a review, a doc fix, or running the quickstart and filing what broke all help. The roadmap is cut into milestone issues; pick one, or open a pull request straight away for a small, obvious fix. For anything that changes the design, open an issue first — a short conversation saves a wasted PR. People and agents contribute on the same terms: agents start at <span style="font-family:'Geist Mono',monospace;font-size:13px">AGENTS.md</span>, and a person signs off the DCO. A vulnerability is reported privately, as <span style="font-family:'Geist Mono',monospace;font-size:13px">SECURITY.md</span> asks, never as a public issue.</p>
             <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:20px">
-              <a href="https://github.com/anivar/decern/milestones" style="font:500 13px/1.6 'IBM Plex Mono',monospace">milestones ↗</a>
-              <a href="https://github.com/anivar/decern/blob/main/ROADMAP.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">ROADMAP.md</a>
-              <a href="https://github.com/anivar/decern/blob/main/CONTRIBUTING.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">CONTRIBUTING.md</a>
-              <a href="https://github.com/anivar/decern/blob/main/AGENTS.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">AGENTS.md</a>
-              <a href="https://github.com/anivar/decern/blob/main/SECURITY.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">SECURITY.md</a>
+              <a href="https://github.com/anivar/decern/milestones" style="font:500 13px/1.6 'Geist Mono',monospace">milestones ↗</a>
+              <a href="https://github.com/anivar/decern/blob/main/ROADMAP.md" style="font:400 13px/1.6 'Geist Mono',monospace">ROADMAP.md</a>
+              <a href="https://github.com/anivar/decern/blob/main/CONTRIBUTING.md" style="font:400 13px/1.6 'Geist Mono',monospace">CONTRIBUTING.md</a>
+              <a href="https://github.com/anivar/decern/blob/main/AGENTS.md" style="font:400 13px/1.6 'Geist Mono',monospace">AGENTS.md</a>
+              <a href="https://github.com/anivar/decern/blob/main/SECURITY.md" style="font:400 13px/1.6 'Geist Mono',monospace">SECURITY.md</a>
             </div>
           </div>
           <div style="padding:28px;background:#FFFFFF">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">The one gate</p>
-            <p style="font:400 13px/1.95 'IBM Plex Mono',monospace;color:#0C0F0E;margin:16px 0 0">build · test · cvc5 proofs<br>clippy · fmt · cargo-deny<br>standards guard</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">The one gate</p>
+            <p style="font:400 13px/1.95 'Geist Mono',monospace;color:#0C0F0E;margin:16px 0 0">build · test · cvc5 proofs<br>clippy · fmt · cargo-deny<br>standards guard</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:20px 0 0">
-            <p style="font:400 13.5px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Every change goes through <span style="font:500 13px/1 'IBM Plex Mono',monospace">./scripts/verify.sh</span>. Run it before you open a pull request.</p>
+            <p style="font:400 13.5px/1.6 'Geist',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Every change goes through <span style="font:500 13px/1 'Geist Mono',monospace">./scripts/verify.sh</span>. Run it before you open a pull request.</p>
           </div>
         </div>
       </div>
@@ -374,69 +397,69 @@
   <section id="rules" style="padding:88px 0 0">
     <div style="max-width:1180px;margin:0 auto;padding:0 40px">
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
-        <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Rules</p>
+        <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Rules</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Nine rules, checked across the model's symbolic input space.</h2>
-        <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">Each line is the rule in brief; decern prove prints the exact statement, trusted base included.</p>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Every rule is checked across the model's whole symbolic input space.</h2>
+        <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">Each line is the rule in brief; decern prove prints the exact statement, trusted base included.</p>
 
         <table style="width:100%;margin-top:34px;border-top:1px solid #0C0F0E">
           <tbody>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top;width:44px">01</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top;width:196px">money-gate</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">No MoveMoney allow unless the context carries human_approved.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top;width:44px">01</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top;width:196px">money-gate</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">No MoveMoney allow unless the context carries human_approved.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">02</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">isolation</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">No allow ever crosses a tenant boundary.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">02</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">isolation</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">No allow ever crosses a tenant boundary.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">03</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">decay</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">No allow once authority has expired.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">03</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">decay</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">No allow once authority has expired.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">04</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">attenuation-edge</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">No access without ownership, a delegation ancestor, or an explicit grant.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">04</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">attenuation-edge</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">No access without ownership, a delegation ancestor, or an explicit grant.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">05</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">scope-gate</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">Bounded actions require their named scope.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">05</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">scope-gate</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">Bounded actions require their named scope.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">06</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">revocation-gate</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">A revoked principal is allowed nothing.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">06</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">revocation-gate</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">A revoked principal is allowed nothing.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">07</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">residency-gate</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">Residency-labelled resources need matching clearance.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">07</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">residency-gate</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">Residency-labelled resources need matching clearance.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">08</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">role-gate</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">Role-required resources need the role.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">08</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">role-gate</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">Role-required resources need the role.</td>
             </tr>
             <tr>
-              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #0C0F0E;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">09</td>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #0C0F0E;font:500 14px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;vertical-align:top">consent-gate</td>
-              <td style="padding:15px 0;border-bottom:1px solid #0C0F0E;font:400 15px/1.55 'IBM Plex Sans',sans-serif;color:#0C0F0E;vertical-align:top">Non-owned PII needs the context to carry consent.</td>
+              <td style="padding:15px 16px 15px 0;border-bottom:1px solid #0C0F0E;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">09</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #0C0F0E;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">consent-gate</td>
+              <td style="padding:15px 0;border-bottom:1px solid #0C0F0E;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">Non-owned PII needs the context to carry consent.</td>
             </tr>
           </tbody>
         </table>
 
         <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px;margin-top:44px">
           <div style="border:1px solid #E1E7E4;background:#EDF3F1;padding:26px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Negative controls</p>
-            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">Every rule also ships with its opposite: a test that takes the guarantee out of the policy and insists cvc5 <em>does</em> find a counterexample. If that test ever passed quietly, the proof was proving nothing.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Negative controls</p>
+            <p style="font:400 14.5px/1.62 'Geist',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">Every rule also ships with its opposite: a test that takes the guarantee out of the policy and insists cvc5 <em>does</em> find a counterexample. If that test ever passed quietly, the proof was proving nothing.</p>
           </div>
           <div style="border:1px solid #E1E7E4;background:#EDF3F1;padding:26px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">What it does not prove</p>
-            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">cvc5 proves the kernel's rules. It cannot tell whether your policy says what you meant, and it is never a claim that a deployment is secure — the deciding endpoints validate EdDSA-signed RFC 9068 bearer tokens, signed requests, SPIFFE identities or AAuth agent tokens when configured, or run behind a declared authenticating front; the server refuses to start with none stated. Where a rule leans on a derived value, that part is ordinary tested Rust and is written up as such. The full boundary lives in the repository, under <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md#known-limits-in-this-release">known limits in this release ↗</a>.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">What it does not prove</p>
+            <p style="font:400 14.5px/1.62 'Geist',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">cvc5 proves the kernel's rules. It cannot tell whether your policy says what you meant, and it is never a claim that a deployment is secure — the deciding endpoints validate EdDSA-signed RFC 9068 bearer tokens, signed requests, SPIFFE identities or AAuth agent tokens when configured, or run behind a declared authenticating front; the server refuses to start with none stated. Where a rule leans on a derived value, that part is ordinary tested Rust and is written up as such. The full boundary lives in the repository, under <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md#known-limits-in-this-release">known limits in this release ↗</a>.</p>
           </div>
         </div>
       </div>
@@ -446,36 +469,36 @@
   <section id="flow" style="padding:88px 0 0">
     <div style="max-width:1180px;margin:0 auto;padding:0 40px">
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
-        <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">One request, start to finish</p>
+        <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">One request, start to finish</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">What one request goes through.</h2>
-        <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">The answer is handed back only after its record is safely written. If it cannot be recorded you get <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0E7C6B">503</span> — never a bare allow.</p>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">What a request goes through.</h2>
+        <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">The answer is handed back only after its record is safely written. If it cannot be recorded you get <span style="font:500 14px/1 'Geist Mono',monospace;color:#0E7C6B">503</span> — never a bare allow.</p>
 
         <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid #0C0F0E;margin-top:34px">
           <div style="padding:24px 20px;border-right:1px solid #0C0F0E;background:#FFFFFF">
-            <p style="font:400 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">01</p>
-            <p style="font:600 15px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Ask</p>
-            <p style="font:400 13px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:8px 0 0">A request arrives at <span style="font-family:'IBM Plex Mono',monospace;font-size:12px">decern-serve</span>, and the caller is established first — bearer, signed request, SPIFFE, AAuth, or a declared front.</p>
+            <p style="font:400 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">01</p>
+            <p style="font:600 15px/1.32 'Geist',sans-serif;color:#0C0F0E;margin:14px 0 0">Ask</p>
+            <p style="font:400 13px/1.55 'Geist',sans-serif;color:#5E6B67;margin:8px 0 0">A request arrives at <span style="font-family:'Geist Mono',monospace;font-size:12px">decern-serve</span>, and the caller is established first — bearer, signed request, SPIFFE, AAuth, or a declared front.</p>
           </div>
           <div style="padding:24px 20px;border-right:1px solid #0C0F0E;background:#FFFFFF">
-            <p style="font:400 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">02</p>
-            <p style="font:600 15px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Evaluate</p>
-            <p style="font:400 13px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:8px 0 0">The proven kernel answers, using the authority graph. The clock comes from the server, never the request.</p>
+            <p style="font:400 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">02</p>
+            <p style="font:600 15px/1.32 'Geist',sans-serif;color:#0C0F0E;margin:14px 0 0">Evaluate</p>
+            <p style="font:400 13px/1.55 'Geist',sans-serif;color:#5E6B67;margin:8px 0 0">The proven kernel answers, using the authority graph. The clock comes from the server, never the request.</p>
           </div>
           <div style="padding:24px 20px;border-right:1px solid #0C0F0E;background:#FFFFFF">
-            <p style="font:400 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">03</p>
-            <p style="font:600 15px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Record</p>
-            <p style="font:400 13px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:8px 0 0">The answer, plus who is accountable for it, is appended and signed.</p>
+            <p style="font:400 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">03</p>
+            <p style="font:600 15px/1.32 'Geist',sans-serif;color:#0C0F0E;margin:14px 0 0">Record</p>
+            <p style="font:400 13px/1.55 'Geist',sans-serif;color:#5E6B67;margin:8px 0 0">The answer, plus who is accountable for it, is appended and signed.</p>
           </div>
           <div style="padding:24px 20px;border-right:1px solid #0C0F0E;background:#FFFFFF">
-            <p style="font:400 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">04</p>
-            <p style="font:600 15px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Serve or 503</p>
-            <p style="font:400 13px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:8px 0 0">Sent back only if that record was written. Otherwise refused.</p>
+            <p style="font:400 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">04</p>
+            <p style="font:600 15px/1.32 'Geist',sans-serif;color:#0C0F0E;margin:14px 0 0">Serve or 503</p>
+            <p style="font:400 13px/1.55 'Geist',sans-serif;color:#5E6B67;margin:8px 0 0">Sent back only if that record was written. Otherwise refused.</p>
           </div>
           <div style="padding:24px 20px;background:#EDF3F1">
-            <p style="font:400 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">05</p>
-            <p style="font:600 15px/1.32 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0">Verify</p>
-            <p style="font:400 13px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:8px 0 0">Anyone can re-check the links and signatures later, offline — and, with <span style="font-family:'IBM Plex Mono',monospace;font-size:12px">--anchor</span> and a tree head kept out of the operator's reach, that nothing up to it was dropped.</p>
+            <p style="font:400 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;color:#849490;margin:0">05</p>
+            <p style="font:600 15px/1.32 'Geist',sans-serif;color:#0C0F0E;margin:14px 0 0">Verify</p>
+            <p style="font:400 13px/1.55 'Geist',sans-serif;color:#5E6B67;margin:8px 0 0">Anyone can re-check the links and signatures later, offline — and, with <span style="font-family:'Geist Mono',monospace;font-size:12px">--anchor</span> and a tree head kept out of the operator's reach, that nothing up to it was dropped.</p>
           </div>
         </div>
 
@@ -486,11 +509,11 @@
             </figure>
           
           <div>
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Who is answerable</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Who is answerable</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:24px;margin:14px 0 0">
-            <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">A record names an accountable owner: the top of the asker's delegation chain, worked out by the server from its own directory — never taken from the request. A stand-in's record names whoever is finally answerable for it; a top-level principal vouches for itself; a caller the directory does not know gets none.</p>
-            <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">When the caller was established from a verified token, the record also names who asserted the request — the subject and client the server verified, and the issuer where it checked one's signature; a signed request's record names none. That is a separate field from the accountable owner above: one says who is answerable, the other says who spoke.</p>
-            <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">Both are there for accountability, not as a gate. Neither ever changes the answer.</p>
+            <p style="font:400 14px/1.62 'Geist',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">A record names an accountable owner: the top of the asker's delegation chain, worked out by the server from its own directory — never taken from the request. A stand-in's record names whoever is finally answerable for it; a top-level principal vouches for itself; a caller the directory does not know gets none.</p>
+            <p style="font:400 14px/1.62 'Geist',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">When the caller was established from a verified token, the record also names who asserted the request — the subject and client the server verified, and the issuer where it checked one's signature; a signed request's record names none. That is a separate field from the accountable owner above: one says who is answerable, the other says who spoke.</p>
+            <p style="font:400 14px/1.62 'Geist',sans-serif;color:#0C0F0E;margin:14px 0 0;text-wrap:pretty">Both are there for accountability, not as a gate. Neither ever changes the answer.</p>
           </div>
         </div>
       </div>
@@ -500,89 +523,89 @@
   <section id="ledger" style="padding:88px 0 0">
     <div style="max-width:1180px;margin:0 auto;padding:0 40px">
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
-        <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">The ledger</p>
+        <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">The ledger</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">What a tampered log looks like.</h2>
-        <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">Three decisions from one run of the built binaries. Alter record 1 to see what <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">decern verify</span> reports.</p>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">What a tampered log looks like.</h2>
+        <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">Three decisions from one run of the built binaries. Alter record 1 to see what <span style="font:500 14px/1 'Geist Mono',monospace;color:#0C0F0E">decern verify</span> reports.</p>
 
         <div id="ledger-demo" data-state="clean" style="border:1px solid #0C0F0E;margin-top:34px;background:#FFFFFF">
           <div style="border-bottom:1px solid #0C0F0E;background:#EDF3F1;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
-            <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67">/tmp/decern.jsonl</span>
+            <span style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67">/tmp/decern.jsonl</span>
             <div style="display:flex;gap:8px">
-              <button type="button" data-tamper="on" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;color:#8F3A40;background:transparent;border:1px solid #8F3A40;padding:9px 12px;cursor:pointer" style-hover="background:#8F3A40;color:#FFFFFF">Alter record 1</button>
-              <button type="button" data-tamper="off" style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;color:#0C0F0E;background:transparent;border:1px solid #0C0F0E;padding:9px 12px;cursor:pointer" style-hover="background:#0C0F0E;color:#F5F7F6">Restore</button>
+              <button type="button" data-tamper="on" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;color:#8F3A40;background:transparent;border:1px solid #8F3A40;padding:9px 12px;cursor:pointer" style-hover="background:#8F3A40;color:#FFFFFF">Alter record 1</button>
+              <button type="button" data-tamper="off" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;color:#0C0F0E;background:transparent;border:1px solid #0C0F0E;padding:9px 12px;cursor:pointer" style-hover="background:#0C0F0E;color:#F5F7F6">Restore</button>
             </div>
           </div>
           <div style="padding:6px 24px 22px;overflow-x:auto">
             <div style="display:grid;grid-template-columns:56px 84px minmax(190px,1fr) 96px 104px;gap:16px;padding:14px 0;border-bottom:1px solid #E1E7E4;min-width:640px">
-              <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490">Seq</span>
-              <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490">Decision</span>
-              <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490">Recorded</span>
-              <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490">Prev</span>
-              <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490">Chain</span>
+              <span style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490">Seq</span>
+              <span style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490">Decision</span>
+              <span style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490">Recorded</span>
+              <span style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490">Prev</span>
+              <span style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#849490">Chain</span>
             </div>
             <div style="display:grid;grid-template-columns:56px 84px minmax(190px,1fr) 96px 104px;gap:16px;padding:15px 0;border-bottom:1px solid #E1E7E4;align-items:baseline;min-width:640px">
-              <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">0</span>
-              <span style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B">allow</span>
-              <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E">corp · Read · claim1</span>
-              <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">0000…0000</span>
-              <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B">intact</span>
+              <span style="font:400 13px/1.5 'Geist Mono',monospace;color:#5E6B67">0</span>
+              <span style="font:500 13px/1.5 'Geist Mono',monospace;color:#0E7C6B">allow</span>
+              <span style="font:400 13px/1.5 'Geist Mono',monospace;color:#0C0F0E">corp · Read · claim1</span>
+              <span style="font:400 12px/1.5 'Geist Mono',monospace;color:#849490">0000…0000</span>
+              <span style="font:400 12px/1.5 'Geist Mono',monospace;color:#0E7C6B">intact</span>
             </div>
             
               <div class="dc-clean" style="display:grid;grid-template-columns:56px 84px minmax(190px,1fr) 96px 104px;gap:16px;padding:15px 0;border-bottom:1px solid #E1E7E4;align-items:baseline;min-width:640px">
-                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">1</span>
-                <span style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">deny</span>
-                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E">corpB · Read · claim1</span>
-                <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">3334…55eb</span>
-                <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B">intact</span>
+                <span style="font:400 13px/1.5 'Geist Mono',monospace;color:#5E6B67">1</span>
+                <span style="font:500 13px/1.5 'Geist Mono',monospace;color:#5E6B67">deny</span>
+                <span style="font:400 13px/1.5 'Geist Mono',monospace;color:#0C0F0E">corpB · Read · claim1</span>
+                <span style="font:400 12px/1.5 'Geist Mono',monospace;color:#849490">3334…55eb</span>
+                <span style="font:400 12px/1.5 'Geist Mono',monospace;color:#0E7C6B">intact</span>
               </div>
             
             
               <div class="dc-tampered" style="display:grid;grid-template-columns:56px 84px minmax(190px,1fr) 96px 104px;gap:16px;padding:15px 0;border-bottom:1px solid #E1E7E4;align-items:baseline;background:#F6EBEB;min-width:640px">
-                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">1</span>
-                <span style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">allow</span>
-                <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">corpB · Read · claim1</span>
-                <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">3334…55eb</span>
-                <span style="font:500 12px/1.5 'IBM Plex Mono',monospace;color:#8F3A40">mismatch</span>
+                <span style="font:400 13px/1.5 'Geist Mono',monospace;color:#5E6B67">1</span>
+                <span style="font:500 13px/1.5 'Geist Mono',monospace;color:#8F3A40">allow</span>
+                <span style="font:400 13px/1.5 'Geist Mono',monospace;color:#8F3A40">corpB · Read · claim1</span>
+                <span style="font:400 12px/1.5 'Geist Mono',monospace;color:#849490">3334…55eb</span>
+                <span style="font:500 12px/1.5 'Geist Mono',monospace;color:#8F3A40">mismatch</span>
               </div>
             
             <div style="display:grid;grid-template-columns:56px 84px minmax(190px,1fr) 96px 104px;gap:16px;padding:15px 0;align-items:baseline;min-width:640px">
-              <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">2</span>
-              <span style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#5E6B67">deny</span>
-              <span style="font:400 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E">corp · Read · claim2</span>
-              <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">39b3…3db7</span>
+              <span style="font:400 13px/1.5 'Geist Mono',monospace;color:#5E6B67">2</span>
+              <span style="font:500 13px/1.5 'Geist Mono',monospace;color:#5E6B67">deny</span>
+              <span style="font:400 13px/1.5 'Geist Mono',monospace;color:#0C0F0E">corp · Read · claim2</span>
+              <span style="font:400 12px/1.5 'Geist Mono',monospace;color:#849490">39b3…3db7</span>
               
-                <span class="dc-clean" style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B">intact</span>
+                <span class="dc-clean" style="font:400 12px/1.5 'Geist Mono',monospace;color:#0E7C6B">intact</span>
               
               
-                <span class="dc-tampered" style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490">not reached</span>
+                <span class="dc-tampered" style="font:400 12px/1.5 'Geist Mono',monospace;color:#849490">not reached</span>
               
             </div>
           </div>
           <div style="border-top:1px solid #0C0F0E;background:#0E1513;padding:20px 24px">
             
-              <p class="dc-clean" style="font:400 13px/1.75 'IBM Plex Mono',monospace;color:#8EA09A;margin:0;white-space:pre-wrap">$ decern verify --ledger /tmp/decern.jsonl --pubkey 7cf8277f…e0b1
+              <p class="dc-clean" style="font:400 13px/1.75 'Geist Mono',monospace;color:#8EA09A;margin:0;white-space:pre-wrap">$ decern verify --ledger /tmp/decern.jsonl --pubkey 7cf8277f…e0b1
 <span style="color:#34C6AB">OK  3 entries
     root: 7dfafa0f…ed44
     signatures: verified
     signer:     7cf8277f…e0b1 from seq 0</span></p>
             
             
-              <p class="dc-tampered" style="font:400 13px/1.75 'IBM Plex Mono',monospace;color:#8EA09A;margin:0;white-space:pre-wrap">$ decern verify --ledger /tmp/decern.jsonl --pubkey 7cf8277f…e0b1
+              <p class="dc-tampered" style="font:400 13px/1.75 'Geist Mono',monospace;color:#8EA09A;margin:0;white-space:pre-wrap">$ decern verify --ledger /tmp/decern.jsonl --pubkey 7cf8277f…e0b1
 <span style="color:#E29A96">error: TAMPER at seq 1: entry altered (hash mismatch)</span>
 $ echo $?
 <span style="color:#E29A96">1</span></p>
             
           </div>
         </div>
-        <p style="font:400 12px/1.7 'IBM Plex Mono',monospace;letter-spacing:0.02em;color:#849490;margin:14px 0 0;max-width:78ch">Drawn in the browser from one real run: three decisions under <span style="color:#5E6B67">--trust-proxy</span>, then the decision in record 1 edited by hand. Hashes are abbreviated; the output lines are what the binary printed. <span style="color:#5E6B67">examples/quickstart.sh</span> runs the whole loop: prove, serve, decide, verify, and tamper-is-rejected.</p>
+        <p style="font:400 12px/1.7 'Geist Mono',monospace;letter-spacing:0.02em;color:#849490;margin:14px 0 0;max-width:78ch">Drawn in the browser from one real run: three decisions under <span style="color:#5E6B67">--trust-proxy</span>, then the decision in record 1 edited by hand. Hashes are abbreviated; the output lines are what the binary printed. <span style="color:#5E6B67">examples/quickstart.sh</span> runs the whole loop: prove, serve, decide, verify, and tamper-is-rejected.</p>
         <div style="border:1px solid #0C0F0E;background:#0E1513;margin-top:24px">
           <div style="border-bottom:1px solid #26332F;padding:12px 24px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-            <span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#8EA09A">An actual record</span>
-            <span style="font:400 11px/1.5 'IBM Plex Mono',monospace;color:#5F8F83">seq 0 · Ed25519-signed · hash-chained · from the same run</span>
+            <span style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#8EA09A">An actual record</span>
+            <span style="font:400 11px/1.5 'Geist Mono',monospace;color:#5F8F83">seq 0 · Ed25519-signed · hash-chained · from the same run</span>
           </div>
           <div style="padding:20px 24px;overflow-x:auto">
-            <pre style="margin:0;font:400 12.5px/1.7 'IBM Plex Mono',monospace;color:#EAF0ED;white-space:pre">{
+            <pre style="margin:0;font:400 12.5px/1.7 'Geist Mono',monospace;color:#EAF0ED;white-space:pre">{
   "entry": {
     "seq": 0, "ts_ms": 1795038875000,
     "subject_type": "Principal", "subject_id": "corp",
@@ -601,7 +624,7 @@ $ echo $?
 }</pre>
           </div>
           <div style="border-top:1px solid #26332F;padding:16px 24px;overflow-x:auto">
-            <p style="margin:0;font:400 13px/1.8 'IBM Plex Mono',monospace;color:#8EA09A;white-space:pre">$ decern verify --ledger /tmp/decern.jsonl --pubkey 7cf8277f091dd3b357bc1023ba8fdfe29cfcf214d97643b6cbb632516698e0b1
+            <p style="margin:0;font:400 13px/1.8 'Geist Mono',monospace;color:#8EA09A;white-space:pre">$ decern verify --ledger /tmp/decern.jsonl --pubkey 7cf8277f091dd3b357bc1023ba8fdfe29cfcf214d97643b6cbb632516698e0b1
 <span style="color:#34C6AB">OK  3 entries
     root: 7dfafa0f93687657392927ffbb3cb5120bfde09ee74dd8320312466ec18bed44
     signatures: verified
@@ -610,9 +633,9 @@ $ echo $?
         </div>
 
         <div style="margin-top:28px;max-width:74ch">
-          <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Subject-side</p>
+          <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Subject-side</p>
           <hr style="border:0;border-top:1px solid #0E7C6B;width:24px;margin:14px 0 0">
-          <p style="font:400 15px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">The subject named in a record can ask what was decided about them, and each record comes with a proof that it is in the tree head signed with the answer: proof it was recorded, not that nothing about them was left out. <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">GET /audit/v1/subject</span> projects up to 256 decisions whose subject is the given handle straight from the ledger; <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">GET /.well-known/decern-subject-side-disclosure</span> states, in one document, what a subject can ask for and how. Neither route changes an answer — they make the record legible to the one it was about. The audit route asks for no credential and reads the whole ledger for every answer, and <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">GET /anchor/v1/tree-head</span> reads it each time it recomputes, so both cost more as the ledger grows: rate-limit them at whatever fronts the server. Under <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">--sharded</span> both answer <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">501</span>.</p>
+          <p style="font:400 15px/1.64 'Geist',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">The subject named in a record can ask what was decided about them, and each record comes with a proof that it is in the tree head signed with the answer: proof it was recorded, not that nothing about them was left out. <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">GET /audit/v1/subject</span> projects up to 256 decisions whose subject is the given handle straight from the ledger; <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">GET /.well-known/decern-subject-side-disclosure</span> states, in one document, what a subject can ask for and how. Neither route changes an answer — they make the record legible to the one it was about. The audit route asks for no credential and reads the whole ledger for every answer, and <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">GET /anchor/v1/tree-head</span> reads it each time it recomputes, so both cost more as the ledger grows: rate-limit them at whatever fronts the server. Under <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">--sharded</span> both answer <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">501</span>.</p>
         </div>
       </div>
     </div>
@@ -622,15 +645,15 @@ $ echo $?
     <div style="max-width:1180px;margin:0 auto;padding:0 40px">
       <div style="border-top:1px solid #0C0F0E;padding-top:44px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:64px;align-items:start">
         <div>
-          <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Missions</p>
+          <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Missions</p>
           <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-          <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0;max-width:25ch;text-wrap:pretty">These scopes, until this time — and never wider than the approver.</h2>
-          <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;text-wrap:pretty">A principal the model marks Human hands an agent a narrow slice of its authority: named scopes, a deadline. Ask for a scope the approver does not hold, a deadline past their own, an agent outside their tenant, an approver that is not marked Human or that is the agent itself, and the Mission is refused — with nothing recorded.</p>
-          <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">Every accepted step is written to the same log before it is reported as done, and a Mission that has ended never comes back on the host that ended it. Its reference is derived from the approval itself, so re-approving an identical dead grant is refused — a new one has to differ in at least one field.</p>
-          <p style="font:400 13px/1.7 'IBM Plex Mono',monospace;color:#849490;margin:22px 0 0">Registry is durable and local — <span style="color:#5E6B67">--missions &lt;PATH&gt;</span>, default <span style="color:#5E6B67">decern-missions.json</span> beside the ledger. Consulted in-perimeter, no phone-home; under a multi-host ledger each host keeps its own.</p>
+          <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0;max-width:25ch;text-wrap:pretty">An approver grants an agent named scopes and a deadline, never wider than the approver's own authority.</h2>
+          <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:18px 0 0;text-wrap:pretty">A principal the model marks Human hands an agent a narrow slice of its authority: named scopes, a deadline. Ask for a scope the approver does not hold, a deadline past their own, an agent outside their tenant, an approver that is not marked Human or that is the agent itself, and the Mission is refused — with nothing recorded.</p>
+          <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">Every accepted step is written to the same log before it is reported as done, and a Mission that has ended never comes back on the host that ended it. Its reference is derived from the approval itself, so re-approving an identical dead grant is refused — a new one has to differ in at least one field.</p>
+          <p style="font:400 13px/1.7 'Geist Mono',monospace;color:#849490;margin:22px 0 0">Registry is durable and local — <span style="color:#5E6B67">--missions &lt;PATH&gt;</span>, default <span style="color:#5E6B67">decern-missions.json</span> beside the ledger. Consulted in-perimeter, no phone-home; under a multi-host ledger each host keeps its own.</p>
         </div>
-        <div style="border:1px solid #0C0F0E;background:#0E1513;padding:28px 24px;font:400 12.5px/1.85 'IBM Plex Mono',monospace;color:#EAF0ED;overflow-wrap:break-word">
-          <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#8EA09A;margin:0 0 22px">Mission lifecycle</p>
+        <div style="border:1px solid #0C0F0E;background:#0E1513;padding:28px 24px;font:400 12.5px/1.85 'Geist Mono',monospace;color:#EAF0ED;overflow-wrap:break-word">
+          <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#8EA09A;margin:0 0 22px">Mission lifecycle</p>
           <div><span style="color:#34C6AB">POST</span> /mission/v1/approve</div>
           <div style="color:#8EA09A;padding-left:22px">{approver, agent, description, approved_tools, capabilities?, expiry}</div>
           <div style="color:#8EA09A;padding-left:22px">→ {approver, s256, reference}</div>
@@ -648,79 +671,79 @@ $ echo $?
   <section id="build" style="padding:88px 0 0">
     <div style="max-width:1180px;margin:0 auto;padding:0 40px">
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
-        <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">What it is made of</p>
+        <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">What it is made of</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Two binaries over seven small libraries.</h2>
-        <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">The default build pulls no TLS stack, OpenSSL or cmake — though cedar's stacker/psm compiles one small assembly routine via cc. The Postgres head store adds a TLS provider, so it sits behind <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">--features postgres</span>, and is off by default.</p>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Built from small, auditable crates.</h2>
+        <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">The default build pulls no TLS stack, OpenSSL or cmake — though cedar's stacker/psm compiles one small assembly routine via cc. The Postgres head store adds a TLS provider, so it sits behind <span style="font:500 14px/1 'Geist Mono',monospace;color:#0C0F0E">--features postgres</span>, and is off by default.</p>
 
         
           <figure style="margin:34px 0 0;border:1px solid #0C0F0E;background:#FFFFFF;padding:30px">
             <img src="img/architecture.svg" width="1384" height="600" alt="decern architecture: decern and decern-serve (five postures) over the kernel, identity, proof, ledger, store, and crypto crates" style="display:block;width:100%;height:auto">
-            <figcaption style="font:400 11px/1.6 'IBM Plex Mono',monospace;letter-spacing:0.04em;color:#849490;margin:22px 0 0">Crate topology, as shipped in the repository.</figcaption>
+            <figcaption style="font:400 11px/1.6 'Geist Mono',monospace;letter-spacing:0.04em;color:#849490;margin:22px 0 0">Crate topology, as shipped in the repository.</figcaption>
           </figure>
         
 
         <table style="width:100%;margin-top:44px;border-top:1px solid #0C0F0E">
           <tbody>
             <tr>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;vertical-align:top;width:212px">decern-kernel</td>
-              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top;width:80px">lib</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;vertical-align:top">The deterministic decision function — Cedar authority graph, the directory, the check itself. The security core.</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;vertical-align:top;width:212px">decern-kernel</td>
+              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top;width:80px">lib</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'Geist',sans-serif;color:#5E6B67;vertical-align:top">The deterministic decision function — Cedar authority graph, the directory, the check itself. The security core.</td>
             </tr>
             <tr>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;vertical-align:top">decern-proof</td>
-              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">lib</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;vertical-align:top">The SMT harness — compiles the Cedar model symbolically and discharges the nine invariants with cvc5, each with a negative control.</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;vertical-align:top">decern-proof</td>
+              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">lib</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'Geist',sans-serif;color:#5E6B67;vertical-align:top">The SMT harness — compiles the Cedar model symbolically and discharges the nine invariants with cvc5, each with a negative control.</td>
             </tr>
             <tr>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;vertical-align:top">decern-ledger</td>
-              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">lib</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;vertical-align:top">The tamper-evident record — append-only, Ed25519-signed, hash-chained; Merkle, JCS canonicalisation, anchors, single-file and sharded.</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;vertical-align:top">decern-ledger</td>
+              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">lib</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'Geist',sans-serif;color:#5E6B67;vertical-align:top">The tamper-evident record — append-only, Ed25519-signed, hash-chained; Merkle, JCS canonicalisation, anchors, single-file and sharded.</td>
             </tr>
             <tr>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;vertical-align:top">decern-store</td>
-              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">lib</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;vertical-align:top">Persistence traits and reference implementations — the single-host file head store and the durable Mission registry.</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;vertical-align:top">decern-store</td>
+              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">lib</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'Geist',sans-serif;color:#5E6B67;vertical-align:top">Persistence traits and reference implementations — the single-host file head store and the durable Mission registry.</td>
             </tr>
             <tr>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;vertical-align:top">decern-store-postgres</td>
-              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">lib · opt</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;vertical-align:top">Multi-host head store over Postgres advisory locks — the same trait, behind a feature flag the release binaries are built without.</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;vertical-align:top">decern-store-postgres</td>
+              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">lib · opt</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'Geist',sans-serif;color:#5E6B67;vertical-align:top">Multi-host head store over Postgres advisory locks — the same trait, behind a feature flag the release binaries are built without.</td>
             </tr>
             <tr>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;vertical-align:top">decern-identity</td>
-              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">lib</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;vertical-align:top">The Mission core — approval-backed, fail-closed-attenuated authority.</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;vertical-align:top">decern-identity</td>
+              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">lib</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'Geist',sans-serif;color:#5E6B67;vertical-align:top">The Mission core — approval-backed, fail-closed-attenuated authority.</td>
             </tr>
             <tr>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;vertical-align:top">decern-crypto</td>
-              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">lib</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;vertical-align:top">Ed25519 and SHA-256 primitives shared by the ledger and identity.</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;vertical-align:top">decern-crypto</td>
+              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">lib</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'Geist',sans-serif;color:#5E6B67;vertical-align:top">Ed25519 and SHA-256 primitives shared by the ledger and identity.</td>
             </tr>
             <tr>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;vertical-align:top">decern-cli → decern</td>
-              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">bin</td>
-              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;vertical-align:top">prove · decide · explain · verify.</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #E1E7E4;font:500 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;vertical-align:top">decern-cli</td>
+              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #E1E7E4;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">bin</td>
+              <td style="padding:15px 0;border-bottom:1px solid #E1E7E4;font:400 14.5px/1.55 'Geist',sans-serif;color:#5E6B67;vertical-align:top">Builds the <span style="font-family:'Geist Mono',monospace;font-size:13px">decern</span> binary: prove · decide · explain · verify.</td>
             </tr>
             <tr>
-              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #0C0F0E;font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0C0F0E;vertical-align:top">decern-server → decern-serve</td>
-              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #0C0F0E;font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;vertical-align:top">bin</td>
-              <td style="padding:15px 0;border-bottom:1px solid #0C0F0E;font:400 14.5px/1.55 'IBM Plex Sans',sans-serif;color:#5E6B67;vertical-align:top">The fail-closed PDP — evaluate, record, serve — and the Mission lifecycle over decern-identity.</td>
+              <td style="padding:15px 24px 15px 0;border-bottom:1px solid #0C0F0E;font:500 13px/1.5 'Geist Mono',monospace;color:#0C0F0E;vertical-align:top">decern-server</td>
+              <td style="padding:15px 20px 15px 0;border-bottom:1px solid #0C0F0E;font:400 12px/1.5 'Geist Mono',monospace;color:#849490;vertical-align:top">bin</td>
+              <td style="padding:15px 0;border-bottom:1px solid #0C0F0E;font:400 14.5px/1.55 'Geist',sans-serif;color:#5E6B67;vertical-align:top">Builds the <span style="font-family:'Geist Mono',monospace;font-size:13px">decern-serve</span> binary: the fail-closed PDP that evaluates, records and serves, plus the Mission lifecycle over decern-identity.</td>
             </tr>
           </tbody>
         </table>
 
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;margin-top:40px">
           <div style="border:1px solid #E1E7E4;background:#FFFFFF;padding:26px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">HTTP surface</p>
-            <p style="font:400 13px/2 'IBM Plex Mono',monospace;color:#0C0F0E;margin:16px 0 0">POST /access/v1/evaluation<br>POST /decide <span style="color:#849490">(alias)</span><br>POST /access/v1/evaluations<br>POST /access/v1/search/{subject,resource,action}<br>GET&nbsp; /.well-known/authzen-configuration<br>POST /mission/v1/approve <span style="color:#849490">· GET · terminate</span><br>GET&nbsp; /anchor/v1/tree-head<br>GET&nbsp; /audit/v1/subject<br>GET&nbsp; /directory/v1/&hellip;/descendants<br>GET&nbsp; /.well-known/decern-subject-side-disclosure<br>GET&nbsp; /pubkey · /healthz</p>
-            <p style="font:400 13.5px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">Request <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">{subject, action:{name}, resource, context}</span>; response <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">{decision}</span>, with reasons or errors under <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">context</span>.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">HTTP surface</p>
+            <p style="font:400 13px/2 'Geist Mono',monospace;color:#0C0F0E;margin:16px 0 0">POST /access/v1/evaluation<br>POST /decide <span style="color:#849490">(alias)</span><br>POST /access/v1/evaluations<br>POST /access/v1/search/{subject,resource,action}<br>GET&nbsp; /.well-known/authzen-configuration<br>POST /mission/v1/approve <span style="color:#849490">· GET · terminate</span><br>GET&nbsp; /anchor/v1/tree-head<br>GET&nbsp; /audit/v1/subject<br>GET&nbsp; /directory/v1/&hellip;/descendants<br>GET&nbsp; /.well-known/decern-subject-side-disclosure<br>GET&nbsp; /pubkey · /healthz</p>
+            <p style="font:400 13.5px/1.6 'Geist',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">Request <span style="font-family:'Geist Mono',monospace;font-size:12.5px">{subject, action:{name}, resource, context}</span>; response <span style="font-family:'Geist Mono',monospace;font-size:12.5px">{decision}</span>, with reasons or errors under <span style="font-family:'Geist Mono',monospace;font-size:12.5px">context</span>.</p>
           </div>
           <div style="border:1px solid #E1E7E4;background:#FFFFFF;padding:26px">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Clients</p>
-            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">Go, Python and TypeScript SDKs ship in the repository, written against the AuthZEN surface. New SDKs and enforcement adapters are the easiest way in: mirror an existing client, or put a thin gateway in front of the server.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Clients</p>
+            <p style="font:400 13.5px/1.62 'Geist',sans-serif;color:#5E6B67;margin:16px 0 0;text-wrap:pretty">Go, Python and TypeScript SDKs ship in the repository, written against the AuthZEN surface. New SDKs and enforcement adapters are the easiest way in: mirror an existing client, or put a thin gateway in front of the server.</p>
             <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:22px 0 0">
-            <p style="font:400 12px/1.7 'IBM Plex Mono',monospace;color:#849490;margin:14px 0 0"><span style="color:#5E6B67">crates/decern-kernel/model/</span> holds the Cedar policy, schema and entities the kernel loads.</p>
+            <p style="font:400 12px/1.7 'Geist Mono',monospace;color:#849490;margin:14px 0 0"><span style="color:#5E6B67">crates/decern-kernel/model/</span> holds the Cedar policy, schema and entities the kernel loads.</p>
           </div>
         </div>
       </div>
@@ -730,25 +753,25 @@ $ echo $?
   <section id="start" style="padding:88px 0 0">
     <div style="max-width:1180px;margin:0 auto;padding:0 40px">
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
-        <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Start</p>
+        <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Start</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Try it on your machine.</h2>
-        <p style="font:400 16px/1.64 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">Two binaries: <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">decern</span> to prove and verify, <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">decern-serve</span> to answer requests. You only need cvc5 on <span style="font:500 14px/1 'IBM Plex Mono',monospace;color:#0C0F0E">PATH</span> for the proofs — not to serve answers.</p>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Try it on your machine.</h2>
+        <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:64ch;text-wrap:pretty">Two binaries: <span style="font:500 14px/1 'Geist Mono',monospace;color:#0C0F0E">decern</span> to prove and verify, <span style="font:500 14px/1 'Geist Mono',monospace;color:#0C0F0E">decern-serve</span> to answer requests. You only need cvc5 on <span style="font:500 14px/1 'Geist Mono',monospace;color:#0C0F0E">PATH</span> for the proofs — not to serve answers.</p>
 
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid #0C0F0E;margin-top:30px">
           <div style="padding:24px;border-right:1px solid #0C0F0E;background:#EDF3F1">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Prebuilt binaries</p>
-            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:12px 0 0;text-wrap:pretty">Prebuilt, signed binaries for Linux (x64/arm64), macOS (Apple Silicon) and Windows (x64) are on the releases page. Each one carries a Sigstore bundle; how to check a signature is in <a href="https://github.com/anivar/decern/blob/main/SECURITY.md#verifying-a-release">SECURITY.md</a>. Name them decern and decern-serve and put them on your <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">PATH</span>.</p>
-            <p style="margin:16px 0 0"><a href="https://github.com/anivar/decern/releases" style="font:500 13px/1.6 'IBM Plex Mono',monospace">Releases ↗</a></p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Prebuilt binaries</p>
+            <p style="font:400 13.5px/1.62 'Geist',sans-serif;color:#5E6B67;margin:12px 0 0;text-wrap:pretty">Prebuilt, signed binaries for Linux (x64/arm64), macOS (Apple Silicon) and Windows (x64) are on the releases page. Each one carries a Sigstore bundle; how to check a signature is in <a href="https://github.com/anivar/decern/blob/main/SECURITY.md#verifying-a-release">SECURITY.md</a>. Name them decern and decern-serve and put them on your <span style="font-family:'Geist Mono',monospace;font-size:12.5px">PATH</span>.</p>
+            <p style="margin:16px 0 0"><a href="https://github.com/anivar/decern/releases" style="font:500 13px/1.6 'Geist Mono',monospace">Releases ↗</a></p>
           </div>
           <div style="padding:24px;background:#FFFFFF">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">From source</p>
-            <p style="font:400 13px/1.9 'IBM Plex Mono',monospace;color:#0C0F0E;margin:12px 0 0;white-space:pre-wrap">cargo install decern-cli decern-server</p>
-            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:12px 0 0;text-wrap:pretty">Or clone and build with the pinned toolchain from <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">rust-toolchain.toml</span>.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">From source</p>
+            <p style="font:400 13px/1.9 'Geist Mono',monospace;color:#0C0F0E;margin:12px 0 0;white-space:pre-wrap">cargo install decern-cli decern-server</p>
+            <p style="font:400 13.5px/1.62 'Geist',sans-serif;color:#5E6B67;margin:12px 0 0;text-wrap:pretty">Or clone and build with the pinned toolchain from <span style="font-family:'Geist Mono',monospace;font-size:12.5px">rust-toolchain.toml</span>.</p>
           </div>
         </div>
 
-        <div style="background:#0E1513;border:1px solid #0E1513;padding:28px 30px;margin-top:28px;overflow-x:auto;font:400 13px/1.95 'IBM Plex Mono',monospace;color:#EAF0ED">
+        <div style="background:#0E1513;border:1px solid #0E1513;padding:28px 30px;margin-top:28px;overflow-x:auto;font:400 13px/1.95 'Geist Mono',monospace;color:#EAF0ED">
           <div style="color:#5F8F83">&#35; 1 · prove every invariant over the model's input space (cvc5)</div>
           <div><span style="color:#34C6AB">decern</span> prove</div>
           <div style="height:19px"></div>
@@ -770,25 +793,25 @@ $ echo $?
 
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid #0C0F0E;border-top:0">
           <div style="padding:24px;border-right:1px solid #0C0F0E;background:#FFFFFF">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Sovereign · one process</p>
-            <p style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;margin:14px 0 0">--ledger &lt;PATH&gt;</p>
-            <p style="font:400 13.5px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0">One ledger file. Binds loopback by default; starting requires the caller posture to be named — bearer, signed request, SPIFFE, AAuth, or a declared front.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Sovereign · one process</p>
+            <p style="font:500 13px/1.5 'Geist Mono',monospace;color:#0E7C6B;margin:14px 0 0">--ledger &lt;PATH&gt;</p>
+            <p style="font:400 13.5px/1.6 'Geist',sans-serif;color:#5E6B67;margin:10px 0 0">One ledger file. Binds loopback by default; starting requires the caller posture to be named — bearer, signed request, SPIFFE, AAuth, or a declared front.</p>
           </div>
           <div style="padding:24px;border-right:1px solid #0C0F0E;background:#FFFFFF">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Hosted · one host</p>
-            <p style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;margin:14px 0 0">--sharded &lt;DIR&gt;</p>
-            <p style="font:400 13.5px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0">Several server processes share one ledger — one hash chain per tenant — coordinated by a file lock.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Hosted · one host</p>
+            <p style="font:500 13px/1.5 'Geist Mono',monospace;color:#0E7C6B;margin:14px 0 0">--sharded &lt;DIR&gt;</p>
+            <p style="font:400 13.5px/1.6 'Geist',sans-serif;color:#5E6B67;margin:10px 0 0">Several server processes share one ledger, one hash chain per tenant, coordinated by a file lock.</p>
           </div>
           <div style="padding:24px;background:#FFFFFF">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Hosted · many hosts</p>
-            <p style="font:500 13px/1.5 'IBM Plex Mono',monospace;color:#0E7C6B;margin:14px 0 0">--sharded postgres://…</p>
-            <p style="font:400 13.5px/1.6 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:10px 0 0">Advisory-lock head store for replicas across hosts. Build with <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">--features postgres</span>; a URL to another host must carry sslmode=require, and the URL is never logged.</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Hosted · many hosts</p>
+            <p style="font:500 13px/1.5 'Geist Mono',monospace;color:#0E7C6B;margin:14px 0 0">--sharded postgres://…</p>
+            <p style="font:400 13.5px/1.6 'Geist',sans-serif;color:#5E6B67;margin:10px 0 0">Advisory-lock head store for replicas across hosts. Build with <span style="font-family:'Geist Mono',monospace;font-size:12.5px">--features postgres</span>; a URL to another host must carry sslmode=require, and the URL is never logged.</p>
           </div>
         </div>
-        <p style="font:400 12px/1.7 'IBM Plex Mono',monospace;letter-spacing:0.02em;color:#849490;margin:14px 0 0;max-width:80ch"><span style="color:#5E6B67">--ledger</span> and <span style="color:#5E6B67">--sharded</span> are mutually exclusive, and <code>--sharded</code> requires <code>--key</code>, the key every replica signs with, a <code>postgres://</code> URL also <code>--missions-per-host</code>, and <code>--retired-key</code> names each key it replaced. Audit a directory store with <span style="color:#5E6B67">decern verify --sharded &lt;dir&gt; --pubkey &lt;kid&gt;</span>, with <code>--pubkey</code> once per key <code>GET /pubkey</code> lists under <code>keys</code> — it checks every shard and exits non-zero if any fails; a Postgres head store has no <code>decern verify</code> path. A start, and that verify, read each shard's whole history under the shard's lock, so an append to it waits until the read ends.</p>
+        <p style="font:400 12px/1.7 'Geist Mono',monospace;letter-spacing:0.02em;color:#849490;margin:14px 0 0;max-width:80ch"><span style="color:#5E6B67">--ledger</span> and <span style="color:#5E6B67">--sharded</span> are mutually exclusive, and <code>--sharded</code> requires <code>--key</code>, the key every replica signs with, a <code>postgres://</code> URL also <code>--missions-per-host</code>, and <code>--retired-key</code> names each key it replaced. Audit a directory store with <span style="color:#5E6B67">decern verify --sharded &lt;dir&gt; --pubkey &lt;kid&gt;</span>, with <code>--pubkey</code> once per key <code>GET /pubkey</code> lists under <code>keys</code> — it checks every shard and exits non-zero if any fails; a Postgres head store has no <code>decern verify</code> path. A start, and that verify, read each shard's whole history under the shard's lock, so an append to it waits until the read ends.</p>
         <div style="border:1px solid #0C0F0E;background:#EDF3F1;margin-top:28px;padding:22px 26px">
-          <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Integrations &amp; clients</p>
-          <p style="font:400 14px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:12px 0 0;max-width:74ch;text-wrap:pretty">Five worked examples ship in the repository, all runnable and CI-tested and none published as crates: <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">examples/mcp</span> consults decern before every tool call, <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">examples/ext_authz_adapter</span> puts it behind NGINX, Traefik or Envoy, and <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">signed-request</span>, <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">spiffe</span> and <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">aauth</span> each run a workload posture end to end. Thin AuthZEN 1.0 clients are published for applications: <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">uv add decern</span> (Python), <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">npm install decern</span> (TypeScript) and <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#0C0F0E">go get github.com/anivar/decern/sdks/go</span> (Go).</p>
+          <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Integrations &amp; clients</p>
+          <p style="font:400 14px/1.62 'Geist',sans-serif;color:#5E6B67;margin:12px 0 0;max-width:74ch;text-wrap:pretty">Five worked examples ship in the repository, all runnable and CI-tested and none published as crates: <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">examples/mcp</span> consults decern before every tool call, <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">examples/ext_authz_adapter</span> puts it behind NGINX, Traefik or Envoy, and <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">signed-request</span>, <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">spiffe</span> and <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">aauth</span> each run a workload posture end to end. Thin AuthZEN 1.0 clients are published for applications: <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">uv add decern</span> (Python), <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">npm install decern</span> (TypeScript) and <span style="font-family:'Geist Mono',monospace;font-size:13px;color:#0C0F0E">go get github.com/anivar/decern/sdks/go</span> (Go).</p>
         </div>
       </div>
     </div>
@@ -797,27 +820,39 @@ $ echo $?
   <section id="stewardship" style="padding:88px 0 0">
     <div style="max-width:1180px;margin:0 auto;padding:0 40px">
       <div style="border-top:1px solid #0C0F0E;padding-top:44px">
-        <p style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Who runs this</p>
+        <p style="font:500 12px/1 'Geist Mono',monospace;letter-spacing:0.12em;text-transform:uppercase;color:#5E6B67;margin:0">Who runs this</p>
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
-        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'IBM Plex Sans',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">One maintainer, working in the open.</h2>
+        <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Maintained in the open.</h2>
 
         <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border:1px solid #0C0F0E;margin-top:36px">
           <div style="padding:28px;border-right:1px solid #0C0F0E;background:#EDF3F1">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">What is next</p>
-            <p style="font:400 14.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">0.7.0 is the last feature release of this design; after it the 0.x line takes security fixes only. The next line, built beside it, returns a signed receipt with every decision: a record anyone holding it can check offline, from a recorder that sits in front of any AuthZEN decision point, with Cedar built in as the engine whose decisions can be replayed and proven. Enforcement, OAuth, vendor credentials and approval UX stay outside.</p>
-            <p style="font:400 12px/1.7 'IBM Plex Mono',monospace;color:#849490;margin:16px 0 0"><a href="https://github.com/anivar/decern/blob/main/ROADMAP.md" style="font:400 12px/1.7 'IBM Plex Mono',monospace">ROADMAP.md</a></p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">What is next</p>
+            <p style="font:400 14.5px/1.62 'Geist',sans-serif;color:#0C0F0E;margin:16px 0 0;text-wrap:pretty">The next line returns a signed receipt with every decision: a record anyone holding it can check offline, from a recorder that sits in front of any AuthZEN decision point, with Cedar built in as the engine whose decisions can be replayed and proven. None of it exists yet; the roadmap is the plan. Enforcement, OAuth, vendor credentials and approval UX stay outside.</p>
+            <p style="font:400 12px/1.7 'Geist Mono',monospace;color:#849490;margin:16px 0 0"><a href="https://github.com/anivar/decern/blob/main/ROADMAP.md" style="font:400 12px/1.7 'Geist Mono',monospace">ROADMAP.md</a></p>
           </div>
           <div style="padding:28px;background:#FFFFFF">
-            <p style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Maintained by</p>
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Maintained by</p>
             <div style="display:flex;gap:16px;align-items:center;margin-top:18px">
-              <span style="width:44px;height:44px;border:1px solid #0C0F0E;display:flex;align-items:center;justify-content:center;font:500 13px/1 'IBM Plex Mono',monospace;letter-spacing:0.06em;color:#0C0F0E;flex:none">AA</span>
+              <img src="https://github.com/anivar.png?size=96" alt="Anivar A. Aravind" width="44" height="44" loading="lazy" style="display:block;border-radius:50%;border:1px solid #0C0F0E;flex:none">
               <div>
-                <p style="font:600 16px/1.3 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:0">Anivar A. Aravind</p>
-                <p style="font:400 12px/1.6 'IBM Plex Mono',monospace;color:#5E6B67;margin:3px 0 0"><a href="https://anivar.net">anivar.net ↗</a></p>
+                <p style="font:600 16px/1.3 'Geist',sans-serif;color:#0C0F0E;margin:0">Anivar A. Aravind</p>
+                <p style="font:400 12px/1.6 'Geist Mono',monospace;color:#5E6B67;margin:3px 0 0"><a href="https://anivar.net">anivar.net ↗</a></p>
               </div>
             </div>
-            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#0C0F0E;margin:18px 0 0;text-wrap:pretty">I maintain decern alone, in the open. No production deployments are known; <a href="https://github.com/anivar/decern/blob/main/ADOPTERS.md">ADOPTERS.md</a> says so and will keep saying so until someone asks to be listed. If you read the code or the proofs and find a hole, open an issue. A security report goes through <a href="https://github.com/anivar/decern/blob/main/SECURITY.md">SECURITY.md</a>.</p>
-            <p style="font:400 13.5px/1.62 'IBM Plex Sans',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Review and merge rules are written down in <a href="https://github.com/anivar/decern/blob/main/GOVERNANCE.md">GOVERNANCE.md</a>.</p>
+            <p style="font:400 13.5px/1.62 'Geist',sans-serif;color:#0C0F0E;margin:18px 0 0;text-wrap:pretty">I maintain decern alone, in the open. If you read the code or the proofs and something is wrong, open an issue. A vulnerability is reported privately, through the repository's Security tab, as <a href="https://github.com/anivar/decern/blob/main/SECURITY.md">SECURITY.md</a> asks; never as a public issue.</p>
+            <p style="font:400 13.5px/1.62 'Geist',sans-serif;color:#5E6B67;margin:14px 0 0;text-wrap:pretty">Review and merge rules are written down in <a href="https://github.com/anivar/decern/blob/main/GOVERNANCE.md">GOVERNANCE.md</a>.</p>
+          </div>
+        </div>
+
+        <div style="border:1px solid #E1E7E4;background:#FFFFFF;margin-top:28px;padding:22px 26px">
+          <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5E6B67;margin:0">Contributors</p>
+          <p style="font:400 13px/1.6 'Geist',sans-serif;color:#5E6B67;margin:10px 0 0">Beyond the maintainer, code has come from:</p>
+          <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;margin-top:16px">
+            <a href="https://github.com/sameer-kireap" style="display:flex;align-items:center;gap:9px;text-decoration:none"><img src="https://github.com/sameer-kireap.png?size=72" alt="" width="34" height="34" loading="lazy" style="display:block;border-radius:50%;border:1px solid #E1E7E4"><span style="font:400 13px/1 'Geist Mono',monospace;color:#0A5B4E">@sameer-kireap</span></a>
+            <a href="https://github.com/shaurya703" style="display:flex;align-items:center;gap:9px;text-decoration:none"><img src="https://github.com/shaurya703.png?size=72" alt="" width="34" height="34" loading="lazy" style="display:block;border-radius:50%;border:1px solid #E1E7E4"><span style="font:400 13px/1 'Geist Mono',monospace;color:#0A5B4E">@shaurya703</span></a>
+            <a href="https://github.com/sivasanjeevs" style="display:flex;align-items:center;gap:9px;text-decoration:none"><img src="https://github.com/sivasanjeevs.png?size=72" alt="" width="34" height="34" loading="lazy" style="display:block;border-radius:50%;border:1px solid #E1E7E4"><span style="font:400 13px/1 'Geist Mono',monospace;color:#0A5B4E">@sivasanjeevs</span></a>
+            <a href="https://github.com/vjymisal0" style="display:flex;align-items:center;gap:9px;text-decoration:none"><img src="https://github.com/vjymisal0.png?size=72" alt="" width="34" height="34" loading="lazy" style="display:block;border-radius:50%;border:1px solid #E1E7E4"><span style="font:400 13px/1 'Geist Mono',monospace;color:#0A5B4E">@vjymisal0</span></a>
+            <a href="https://github.com/anivar/decern/graphs/contributors" style="font:400 12px/1 'Geist Mono',monospace;color:#5E6B67;text-decoration:none">full list ↗</a>
           </div>
         </div>
       </div>
@@ -828,19 +863,19 @@ $ echo $?
     <div style="max-width:1180px;margin:0 auto;padding:40px;display:flex;gap:24px;flex-wrap:wrap;align-items:center;justify-content:space-between">
       <div style="display:flex;align-items:center;gap:11px">
         <img src="img/decern-mark.svg" alt="" width="20" height="20" style="display:block">
-        <span style="font:600 16px/1 'IBM Plex Mono',monospace;color:#0C0F0E">decern</span>
-        <span style="font:400 12px/1.5 'IBM Plex Mono',monospace;color:#849490;margin-left:8px">Apache-2.0</span>
+        <span style="font:600 16px/1 'Geist Mono',monospace;color:#0C0F0E">decern</span>
+        <span style="font:400 12px/1.5 'Geist Mono',monospace;color:#849490;margin-left:8px">Apache-2.0</span>
       </div>
       <div style="display:flex;gap:20px;flex-wrap:wrap">
-        <a href="https://anivar.net/writing/releasing-decern" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Announcement</a>
-        <a href="https://github.com/anivar/decern" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Repository</a>
-        <a href="https://github.com/anivar/decern/releases" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Releases</a>
-        <a href="https://github.com/anivar/decern/blob/main/ARCHITECTURE.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Architecture</a>
-        <a href="https://github.com/anivar/decern/blob/main/ROADMAP.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Roadmap</a>
-        <a href="https://github.com/anivar/decern/blob/main/ADOPTERS.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Adopters</a>
-        <a href="https://github.com/anivar/decern/blob/main/GOVERNANCE.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Governance</a>
-        <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md#known-limits-in-this-release" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Limitations</a>
-        <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md" style="font:400 13px/1.6 'IBM Plex Mono',monospace">Changelog</a>
+        <a href="https://anivar.net/writing/releasing-decern" style="font:400 13px/1.6 'Geist Mono',monospace">Announcement</a>
+        <a href="https://github.com/anivar/decern" style="font:400 13px/1.6 'Geist Mono',monospace">Repository</a>
+        <a href="https://github.com/anivar/decern/releases" style="font:400 13px/1.6 'Geist Mono',monospace">Releases</a>
+        <a href="https://github.com/anivar/decern/blob/main/ARCHITECTURE.md" style="font:400 13px/1.6 'Geist Mono',monospace">Architecture</a>
+        <a href="https://github.com/anivar/decern/blob/main/ROADMAP.md" style="font:400 13px/1.6 'Geist Mono',monospace">Roadmap</a>
+        <a href="https://github.com/anivar/decern/blob/main/ADOPTERS.md" style="font:400 13px/1.6 'Geist Mono',monospace">Adopters</a>
+        <a href="https://github.com/anivar/decern/blob/main/GOVERNANCE.md" style="font:400 13px/1.6 'Geist Mono',monospace">Governance</a>
+        <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md#known-limits-in-this-release" style="font:400 13px/1.6 'Geist Mono',monospace">Limitations</a>
+        <a href="https://github.com/anivar/decern/blob/main/CHANGELOG.md" style="font:400 13px/1.6 'Geist Mono',monospace">Changelog</a>
       </div>
     </div>
   </footer>
