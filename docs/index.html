@@ -173,6 +173,7 @@
       <nav style="margin-left:auto;display:flex;gap:26px;align-items:center;flex-wrap:wrap">
         <a href="#how" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">How</a>
         <a href="explorer.html" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#0E7C6B;text-decoration:none" style-hover="color:#0A5B4E">Explorer</a>
+        <a href="standards.html" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Standards</a>
         <a href="#contribute" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#0E7C6B;text-decoration:none" style-hover="color:#0A5B4E">Contribute</a>
         <a href="#rules" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Rules</a>
         <a href="#ledger" style="font:500 11px/1 'Geist Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;color:#5E6B67;text-decoration:none" style-hover="color:#0C0F0E">Ledger</a>
@@ -294,22 +295,32 @@
         <hr style="border:0;border-top:1px solid #0E7C6B;width:32px;margin:18px 0 0">
         <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0">Every decision is answerable to the party it lands on.</h2>
         <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:68ch;text-wrap:pretty">Authored in the open standards bodies and implemented here, the three profiles below make a decision legible to the party it was about.</p>
-        <table style="width:100%;margin-top:34px;border-top:1px solid #0C0F0E">
-          <tbody>
-            <tr>
-              <td style="padding:18px 24px 18px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top;width:206px">Decision subject</td>
-              <td style="padding:18px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">The party a decision is taken <em>upon</em> — a pseudonymous handle, distinct from who asked and who answers, recorded and never deciding. <a href="https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/" style="font-family:'Geist Mono',monospace;font-size:13px">draft-aravind-oauth-decision-subject</a> &middot; IETF OAuth</td>
-            </tr>
-            <tr>
-              <td style="padding:18px 24px 18px 0;border-bottom:1px solid #E1E7E4;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">Operator of record</td>
-              <td style="padding:18px 0;border-bottom:1px solid #E1E7E4;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">Who is answerable for it — the root of the asker's delegation chain, resolved by the server, never taken from the request. <a href="https://datatracker.ietf.org/doc/draft-aravind-oauth-operator-of-record/" style="font-family:'Geist Mono',monospace;font-size:13px">draft-aravind-oauth-operator-of-record</a> &middot; IETF OAuth</td>
-            </tr>
-            <tr>
-              <td style="padding:18px 24px 18px 0;border-bottom:1px solid #0C0F0E;font:500 14px/1.5 'Geist Mono',monospace;color:#0E7C6B;vertical-align:top">Subject-side challenge</td>
-              <td style="padding:18px 0;border-bottom:1px solid #0C0F0E;font:400 15px/1.55 'Geist',sans-serif;color:#0C0F0E;vertical-align:top">The party a decision was about can contest it, answered on the record, without touching the decision. <a href="https://github.com/openid/authzen/pull/608" style="font-family:'Geist Mono',monospace;font-size:13px">S-ARAP</a> &middot; OpenID AuthZEN</td>
-            </tr>
-          </tbody>
-        </table>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;margin-top:36px">
+          <article style="border:1px solid #C9D3CF;background:#FFFFFF;padding:28px">
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Who it is about</p>
+            <h3 style="font:600 18px/1.3 'Geist',sans-serif;color:#0C0F0E;margin:13px 0 0">Decision subject</h3>
+            <p style="font:400 14px/1.6 'Geist',sans-serif;color:#5E6B67;margin:11px 0 0;text-wrap:pretty">The party a decision is taken upon, as a pseudonymous handle. Distinct from who asked and who answers, recorded and never deciding.</p>
+            <hr style="border:0;border-top:1px solid #0E7C6B;width:28px;margin:20px 0 0">
+            <p style="margin:12px 0 0"><a href="https://datatracker.ietf.org/doc/draft-aravind-oauth-decision-subject/" style="font:400 12px/1.5 'Geist Mono',monospace">draft-aravind-oauth-decision-subject ↗</a></p>
+            <p style="font:400 10px/1.5 'Geist Mono',monospace;color:#849490;margin:5px 0 0;letter-spacing:0.04em">IETF OAuth</p>
+          </article>
+          <article style="border:1px solid #C9D3CF;background:#FFFFFF;padding:28px">
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">Who answers for it</p>
+            <h3 style="font:600 18px/1.3 'Geist',sans-serif;color:#0C0F0E;margin:13px 0 0">Operator of record</h3>
+            <p style="font:400 14px/1.6 'Geist',sans-serif;color:#5E6B67;margin:11px 0 0;text-wrap:pretty">The root of the asker's delegation chain, resolved by the server, never taken from the request.</p>
+            <hr style="border:0;border-top:1px solid #0E7C6B;width:28px;margin:20px 0 0">
+            <p style="margin:12px 0 0"><a href="https://datatracker.ietf.org/doc/draft-aravind-oauth-operator-of-record/" style="font:400 12px/1.5 'Geist Mono',monospace">draft-aravind-oauth-operator-of-record ↗</a></p>
+            <p style="font:400 10px/1.5 'Geist Mono',monospace;color:#849490;margin:5px 0 0;letter-spacing:0.04em">IETF OAuth</p>
+          </article>
+          <article style="border:1px solid #C9D3CF;background:#FFFFFF;padding:28px">
+            <p style="font:500 10px/1 'Geist Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#0E7C6B;margin:0">How it is contested</p>
+            <h3 style="font:600 18px/1.3 'Geist',sans-serif;color:#0C0F0E;margin:13px 0 0">Subject-side challenge</h3>
+            <p style="font:400 14px/1.6 'Geist',sans-serif;color:#5E6B67;margin:11px 0 0;text-wrap:pretty">The party a decision was about can contest it, answered on the record, without touching the decision.</p>
+            <hr style="border:0;border-top:1px solid #0E7C6B;width:28px;margin:20px 0 0">
+            <p style="margin:12px 0 0"><a href="https://github.com/openid/authzen/pull/608" style="font:400 12px/1.5 'Geist Mono',monospace">S-ARAP ↗</a></p>
+            <p style="font:400 10px/1.5 'Geist Mono',monospace;color:#849490;margin:5px 0 0;letter-spacing:0.04em">OpenID AuthZEN</p>
+          </article>
+        </div>
         <p style="font:400 13px/1.7 'Geist Mono',monospace;color:#849490;margin:20px 0 0;max-width:78ch">All three are being standardized now, in the IETF and the OpenID AuthZEN Working Group. decern implements them today.</p>
       </div>
     </div>
