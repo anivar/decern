@@ -230,12 +230,13 @@ authenticates them. The three workload postures (signed request, SPIFFE, AAuth) 
 bind a caller to the principals it may name. Which routes are guarded, which stay open on
 purpose, and why is in [docs/CLI.md](docs/CLI.md)'s trust-boundary section.
 
-Five worked examples ship, all runnable and CI-tested and none published as crates:
+Six worked examples ship, all runnable and CI-tested and none published as crates:
 [`mcp/`](examples/mcp/) consults decern before every tool call,
 [`ext_authz_adapter/`](examples/ext_authz_adapter/) puts it behind NGINX, Traefik or Envoy,
-and [`signed-request/`](examples/signed-request/), [`spiffe/`](examples/spiffe/) and
-[`aauth/`](examples/aauth/) each run a workload posture end to end, minting their own
-credentials.
+[`substrate_egress_extproc/`](examples/substrate_egress_extproc/) authorizes Agent Substrate
+actor egress at its gateway, and [`signed-request/`](examples/signed-request/),
+[`spiffe/`](examples/spiffe/) and [`aauth/`](examples/aauth/) each run a workload posture end to
+end, minting their own credentials.
 
 The HTTP surface is AuthZEN 1.0's: single and batch evaluation, subject, resource and
 action search, and discovery. The certification scenario's Basic, Batch and Search levels
