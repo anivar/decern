@@ -186,7 +186,7 @@
   .px .tab.seen:not([aria-selected="true"])::before{border-color:var(--teal);background:var(--teal)}
   .px .tab .tick{position:absolute;right:10px;top:11px;font:500 10px/1 var(--mono);color:var(--teal)}
   .px .tab[aria-selected="true"] .tick{color:var(--bg)}
-  .px .bind{margin:16px 0 0;font:400 13.5px/1.55 var(--sans);color:var(--mut);max-width:80ch}
+  .px .bind{margin:16px 0 0;font:400 13px/1.55 var(--sans);color:var(--mut)}
   .px .bind b{color:var(--ink);font-weight:600}
   .px .pipe{margin:26px 0 0;border:1px solid var(--line);background:var(--panel);padding:20px 16px;overflow-x:auto}
   .px .env{fill:none;stroke:var(--ink);stroke-width:1;stroke-dasharray:3 3}
@@ -221,7 +221,7 @@
   .px .earrow.cut{opacity:.18}
   @media(prefers-reduced-motion:reduce){.px .earrow.go{animation:none;stroke-dasharray:none}}
   .px .mini{display:none}
-  .px .traffic{margin:10px 0 0;font:400 12.5px/1.65 var(--mono);color:var(--mut);max-width:96ch}
+  .px .traffic{margin:14px 0 0;font:400 12px/1.6 var(--mono);color:var(--mut);padding-top:14px;border-top:1px solid var(--line)}
   .px .traffic b{font-weight:500;color:var(--ink)}
   .px .traffic span{display:block}
   .px .nextp{display:inline-block;margin-top:14px;font:500 12px/1 var(--mono);color:var(--bg);background:var(--teal);border:1px solid var(--teal);padding:10px 12px;cursor:pointer}
@@ -236,7 +236,7 @@
   .px .cmp td.none{color:var(--teal)}
   .px .cmp tbody tr:last-child td,.px .cmp tbody tr:last-child th{border-bottom:1px solid var(--ink)}
   .px .grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,360px);gap:24px;margin-top:22px;align-items:start}
-  .px .steps{list-style:none;margin:0;padding:0;border:1px solid var(--line);background:var(--panel)}
+  .px .steps{list-style:none;margin:0;padding:0;border:1px solid var(--line);background:var(--panel);position:relative;max-height:420px;overflow-y:auto}
   .px .step{border-top:1px solid var(--line);scroll-margin:14px 0}
   .px .step:first-child{border-top:0}
   .px .step .head{display:flex;gap:13px;align-items:flex-start;width:100%;padding:13px 16px;background:none;border:0;text-align:left;cursor:pointer}
@@ -257,16 +257,16 @@
   .px .tag-record{color:var(--teald);border-color:var(--teald)}
   .px .tag-out{color:var(--amber);border-color:var(--amber)}
   .px aside{position:sticky;top:14px;display:flex;flex-direction:column;gap:14px}
-  .px .controls{border:1px solid var(--ink);background:var(--panel);padding:14px}
+  .px .controls{display:flex;align-items:center;gap:13px;flex-wrap:wrap;border:1px solid var(--ink);background:var(--panel);padding:11px 13px;margin:24px 0 0}
   .px .cbar{display:flex;gap:7px}
-  .px .cbar button{font:500 12px/1 var(--mono);color:var(--ink);background:var(--panel);border:1px solid var(--ink);padding:10px 12px;cursor:pointer;flex:1}
-  .px .cbar button.play{flex:1.5;color:var(--bg);background:var(--teal);border-color:var(--teal);font-weight:600}
+  .px .cbar button{font:500 12px/1 var(--mono);color:var(--ink);background:var(--panel);border:1px solid var(--ink);padding:11px 15px;cursor:pointer}
+  .px .cbar button.play{color:var(--bg);background:var(--teal);border-color:var(--teal);font-weight:600;min-width:92px}
   .px .cbar button:hover{background:var(--ink);color:var(--bg)}
   .px .cbar button.play:hover{background:var(--teald);border-color:var(--teald);color:var(--bg)}
   .px .cbar button:disabled{opacity:.35;background:var(--panel);color:var(--ink);cursor:default}
-  .px .track{height:3px;background:var(--line);margin-top:11px}
+  .px .track{flex:1 1 140px;height:3px;background:var(--line);margin:0}
   .px .track span{display:block;height:3px;background:var(--teal);width:0;transition:width .3s}
-  .px .prog{font:400 11px/1.5 var(--mono);color:var(--faint);margin:9px 0 0;letter-spacing:.03em}
+  .px .prog{font:400 11px/1.5 var(--mono);color:var(--faint);margin:0;letter-spacing:.03em;flex:0 0 auto;white-space:nowrap}
   .px .panel{border:1px solid var(--line);background:var(--panel);padding:18px}
   .px .kind{font:500 10px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--teal);margin:0}
   .px .panel h3{font:600 16px/1.3 var(--sans);margin:11px 0 0}
@@ -290,16 +290,18 @@
     .px .mini .refuse{background:var(--redsoft);color:var(--redd);box-shadow:inset 0 3px 0 var(--red)}
     .px .mini .dim{opacity:.45}
     .px .mini .gone{opacity:.2}
-    .px .panel{display:none}
+    .px .steps{max-height:none;overflow:visible}
     .px .cmp thead{display:none}
     .px .cmp,.px .cmp tbody,.px .cmp tr,.px .cmp th,.px .cmp td{display:block;width:100%}
     .px .cmp tr{padding:12px 0;border-bottom:1px solid var(--line)}
     .px .cmp th,.px .cmp td{border:0;padding:4px 0}
     .px .cmp tbody th{white-space:normal}
     .px .cmp td::before{content:attr(data-h);display:block;font:500 9.5px/1.4 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-top:6px}
-    .px .step.on .su{display:none}
-    .px .step.on .full{display:block}
-    .px aside{position:static;display:block}
+    .px aside{position:static;display:block;order:-1}
+    .px .controls{gap:9px}
+    .px .cbar{flex:1 1 100%}
+    .px .cbar button{flex:1}
+    .px .track{flex:1 1 100%}
   }
   @media(max-width:520px){.px .step .full{padding-left:16px}}
 </style>
@@ -390,28 +392,29 @@
         <h2 style="font:600 clamp(23px,2.7vw,31px)/1.24 'Geist',sans-serif;letter-spacing:-0.01em;color:#0C0F0E;margin:22px 0 0;max-width:30ch;text-wrap:pretty">How decern establishes a caller, step by step.</h2>
         <p style="font:400 16px/1.64 'Geist',sans-serif;color:#5E6B67;margin:18px 0 0;max-width:74ch;text-wrap:pretty">decern will not start until the deployment names how its callers are established. The five postures differ in how the caller is proven, and that decides whom it may name and what the record says. From the kernel on, every request takes the same path: the solver-proven kernel, the recorded decision, the fail-closed serve. Pick a posture and step through it, or play it.</p>
 
-        <p class="choose" id="choose-label">Choose how the caller is established<span class="seen" id="seen"></span></p>
+        <p class="choose" id="choose-label">Choose a posture<span class="seen" id="seen"></span></p>
         <div class="tabs" role="tablist" aria-labelledby="choose-label" id="tabs"></div>
-        <p class="bind" id="bind"></p>
 
         <div class="pipe" id="pipe"></div>
         <div class="mini" id="mini" aria-hidden="true"></div>
-        <p class="traffic" id="traffic"></p>
+
+        <div class="controls">
+          <div class="cbar">
+            <button id="prev" type="button" aria-label="Previous step" title="Back">◀</button>
+            <button id="play" class="play" type="button">Play</button>
+            <button id="next" type="button" aria-label="Next step" title="Forward">▶</button>
+            <button id="restart" type="button" aria-label="Restart" title="Restart">↻</button>
+          </div>
+          <div class="track"><span id="fill"></span></div>
+          <p class="prog" id="prog"></p>
+        </div>
 
         <div class="grid">
           <ol class="steps" id="steps" role="tabpanel"></ol>
           <aside>
-            <div class="controls">
-              <div class="cbar">
-                <button id="prev" type="button" aria-label="Previous step" title="Back">◀</button>
-                <button id="play" class="play" type="button">Play</button>
-                <button id="next" type="button" aria-label="Next step" title="Forward">▶</button>
-                <button id="restart" type="button" aria-label="Restart" title="Restart">↻</button>
-              </div>
-              <div class="track"><span id="fill"></span></div>
-              <p class="prog" id="prog"></p>
-            </div>
             <div class="panel det" id="panel"></div>
+            <p class="bind" id="bind"></p>
+            <p class="traffic" id="traffic"></p>
           </aside>
         </div>
         <p class="sr" id="live" aria-live="polite"></p>
@@ -1394,7 +1397,9 @@ function paint(){
   each(tabsEl.children,function(b){var on=b.dataset.key===cur;b.setAttribute('aria-selected',on);b.tabIndex=on?0:-1;});
   liveEl.textContent=FLOWS[cur].label+', step '+(idx+1)+' of '+S.length+': '+plain(st.t)+(stop?'. Refused: '+st.x:'');
   var on=stepsEl.querySelector('.step.on');
-  if(on&&on.scrollIntoView&&(timer||document.activeElement&&document.activeElement.closest&&document.activeElement.closest('.cbar')))on.scrollIntoView({block:'nearest'});
+  if(on){var pr=stepsEl.getBoundingClientRect(),cr=on.getBoundingClientRect();
+    if(cr.top<pr.top+8)stepsEl.scrollTop+=cr.top-pr.top-8;
+    else if(cr.bottom>pr.bottom-8)stepsEl.scrollTop+=cr.bottom-pr.bottom+8;}
 }
 function render(){bindEl.innerHTML=FLOWS[cur].bind;layLanes();caption();buildSteps();paint();}
 function choose(k){stop();if(k!==cur){cur=k;idx=0;refused=false;render();}}
