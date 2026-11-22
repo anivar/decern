@@ -128,7 +128,7 @@ established where the proofs run, not on the request path, and nothing checks th
 Match a contribution area to the crate that owns it:
 
 - **A new client SDK** → mirror `sdks/go` / `sdks/python` / `sdks/typescript` against the AuthZEN surface in `decern-server`.
-- **Enforcement adapters** → an HTTP forward-auth shim is in `examples/ext_authz_adapter/`; extend it, or bring the gRPC `ext_authz` variant.
+- **Enforcement adapters** → an HTTP forward-auth shim is in `examples/ext_authz_adapter/`, and an Envoy `ext_proc` service that authorizes Agent Substrate actor egress is in `examples/substrate_egress_extproc/`; extend them, or bring the gRPC `ext_authz` variant.
 - **Agent-protocol integrations** → `examples/mcp/` is the worked MCP integration; other agent
   protocols compose the same way — validate the caller, consult the PDP per action, record.
 - **Authority-graph tooling** (traversal, blast-radius, export) → `decern-kernel`'s `Directory`.

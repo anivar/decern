@@ -201,6 +201,44 @@ jobs:
       - name: Run integration tests
         run: cargo test
 
+  # examples/substrate_egress_extproc is its own Cargo project, outside the workspace
+  # scripts/verify.sh builds, so it gets its own build, lints, supply-chain check and tests.
+  substrate-egress-extproc:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/substrate_egress_extproc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain (honors rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add clippy rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: examples/substrate_egress_extproc
+
+      - name: Build adapter
+        run: cargo build
+
+      - name: Lint adapter (Clippy)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Check supply-chain (cargo-deny)
+        run: cargo deny check
+
+      - name: Run integration tests
+        run: cargo test
+
   # decern-store-postgres's DB-backed tests, against a Postgres service container. They
   # skip when DECERN_TEST_POSTGRES_URL is unset, which is why the variable is set on this
   # job alone: `ci` never touches a database and the core build stays pure Rust.

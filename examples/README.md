@@ -12,6 +12,12 @@ except `quickstart.sh`, which is for running by hand.
 - [`ext_authz_adapter/`](ext_authz_adapter/) — a forward-auth shim that puts decern behind
   NGINX `auth_request`, Traefik `forwardAuth`, or Envoy `ext_authz`: the gateway
   integration. Fails closed on deny, incomplete forwards, and an unreachable PDP.
+- [`substrate_egress_extproc/`](substrate_egress_extproc/) — an Envoy `ext_proc` service that
+  evaluates [Agent Substrate](https://github.com/agent-substrate/substrate) actor **egress**
+  against decern: the platform gateway integration. Substrate calls it on every outbound request
+  with the verified actor identity; it maps that to an AuthZEN evaluation and either blocks on a
+  deny (enforce, fail-closed) or records the decision and lets it through (record, fail-open). It
+  never proxies — the decision stays separate from the forwarding.
 - [`signed-request/`](signed-request/) — a caller that proves possession of its key on
   every request (RFC 9421 message signatures bound to an RFC 7800 `cnf` claim), and the
   same token refused when the signature comes from a different key.

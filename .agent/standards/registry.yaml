@@ -563,3 +563,21 @@ standards:
       defaulted. Traefik and Envoy consume the same status-code contract through
       their own configuration. Verified against the module documentation
       2026-08-09.
+
+  - name: Agent Substrate egress ext_proc (Envoy ExternalProcessor + Network Egress Contract)
+    url: https://github.com/agent-substrate/substrate/blob/main/docs/guides/network-egress.md
+    verified: 2026-11-22
+    surface:
+      - examples/substrate_egress_extproc/
+    conformance: >-
+      Implemented ONLY in examples/substrate_egress_extproc — decern's crates carry no gateway
+      surface. The adapter is the additional egress ExternalProcessor Agent Substrate calls on the
+      request legs. It reads the actor's SPIFFE id from the ext_proc attribute
+      filter_state['dev.ate.actor.identity'] — the key Substrate's atenet dispatch sets and reads
+      back — the destination from :authority and the method from :method, and maps them to an
+      AuthZEN evaluation. In enforce mode it continues on allow and returns an ImmediateResponse 403
+      on a deny or any failure (no identity, no destination, PDP unreachable) — fail-closed, with
+      Substrate's own failure_mode_allow=false denying an unreachable adapter; in record mode it
+      records the decision and continues regardless — fail-open, decern off the request path. It
+      never proxies — the forward proxy and credential injection stay in Substrate. Verified against
+      the Network Egress Contract and the atenet ext_proc wiring 2026-11-22.
