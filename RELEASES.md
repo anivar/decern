@@ -61,7 +61,8 @@ Everything between the section's heading and the next `## [` heading becomes the
    - `Cargo.toml`: the workspace version and the seven inter-crate pins;
    - `Cargo.lock`: let `cargo metadata` rewrite the nine workspace entries, and check nothing
      else moved;
-   - `examples/ext_authz_adapter/Cargo.toml` and its `Cargo.lock`, which are outside the workspace;
+   - `examples/ext_authz_adapter/Cargo.toml` and `examples/substrate_egress_extproc/Cargo.toml`,
+     each with its `Cargo.lock`, which are outside the workspace;
    - `sdks/python/pyproject.toml` and `sdks/python/decern/__init__.py`;
    - `sdks/typescript/package.json` and both `version` fields of its `package-lock.json`;
    - the README's "Known limits in X" link text.

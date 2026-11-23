@@ -61,7 +61,8 @@ The mode chooses which one drives the egress.
   when decern is the egress authority.
 - **`record`.** Fail-open; decern is off the critical path. The adapter records the decision in
   decern for the subject to contest, then lets the request through **whatever** decern says or does
-  — a decern outage never blocks egress. Use it when Substrate's own `EgressPolicy` already enforces
+  — a decern outage never blocks egress, and a request decern could not be asked about goes through
+  unrecorded. Use it when Substrate's own `EgressPolicy` already enforces
   destinations and decern's value is the contestable log. Pair it with `observability_mode` on the
   Substrate filter so Envoy does not wait on the callout at all.
 
@@ -97,7 +98,8 @@ availability bottleneck. `enforce` is the default only because fail-closed is th
 | request `:authority` (or `host`) — the egress destination | `resource.id` (with `resource.type` = `--resource-type`) |
 
 The identity is read exactly as Agent Substrate's own atenet dispatch reads it: the string value of
-the CEL attribute key, set from the verified actor certificate — the actor cannot forge it. decern
+the CEL attribute key, which the gateway sets from the verified actor certificate and the actor does
+not control. decern
 matches the ids against the ids its model declares; map destinations and methods to the model's
 resource and action names, or declare the model in those terms. An id the model has never heard of
 denies, which is the correct default.
@@ -118,7 +120,7 @@ denies, which is the correct default.
 | PDP returns `{"decision": false}` | `403` | continue (recorded) |
 | No verified actor identity | `403` | continue |
 | Missing `:method` or `:authority` | `403` | continue |
-| PDP unreachable / timeout / non-2xx / malformed / over 64 KiB | `403` | continue |
+| PDP unreachable / timeout / non-2xx / malformed / over 64 KiB | `403` | continue (not recorded) |
 
 In `enforce`, Substrate's own `failure_mode_allow: false` denies independently if the adapter is
 unreachable, so the egress fails closed end to end.
