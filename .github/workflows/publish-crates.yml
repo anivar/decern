@@ -81,6 +81,27 @@ jobs:
           grep -q "^## \[${version}\]" CHANGELOG.md \
             || note "CHANGELOG.md has no [${version}] section"
 
+          # The index is the last guard. Re-running a version that is already fully published
+          # repackages the current tree against the stale siblings on crates.io — which fails
+          # mid-run as a compile error, not a clear message, and is exactly how a re-dispatch
+          # of an unbumped version died once. Refuse it here, before the publish job runs at
+          # all. A partially-published version is a stalled release being retried, so it is
+          # allowed through to the idempotent publish step.
+          n=0
+          published=0
+          for crate in ${CRATES}; do
+            n=$((n + 1))
+            if curl -sf -H "User-Agent: decern-release" \
+                 "https://crates.io/api/v1/crates/${crate}/${version}" >/dev/null 2>&1; then
+              published=$((published + 1))
+            fi
+          done
+          if [ "${published}" -eq "${n}" ]; then
+            note "all ${n} crates are already on the index at ${version} — bump the workspace version before publishing"
+          elif [ "${published}" -gt 0 ]; then
+            echo "::notice::${published} of ${n} crates already at ${version}; treating this as a retry of a partial publish"
+          fi
+
           exit "${fail}"
 
   publish:
@@ -106,6 +127,11 @@ jobs:
       # Crates that depend on a sibling at a version not yet on the index cannot resolve
       # here, which is expected and not a failure — those are verified by `cargo publish`
       # itself, after their dependency lands.
+      #
+      # Preflight has already refused a version that is fully on the index, so a dependent
+      # that does not resolve here is only ever one whose sibling is not yet published at
+      # this (new) version — never the current tree compiled against a stale published
+      # sibling. That case is a clean "defers to publish time", not a compile error.
       - name: Package what can be packaged
         run: |
           set -uo pipefail
