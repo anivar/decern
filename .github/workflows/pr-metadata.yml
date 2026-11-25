@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+# The pull-request template (.github/PULL_REQUEST_TEMPLATE.md) is auto-filled only in the web UI.
+# Every pull request here is opened from the CLI, where the body is whatever the author passed, so
+# the template is never seen and a pull request can land with no description at all. This gate
+# enforces the one thing the template cannot on that path: a pull request says what it changes.
+# It does not re-check the DCO sign-off (the commits carry it) or the verify.sh gates (the `ci`
+# job), and it exempts bot authors, which write their own structured bodies.
+name: pr metadata
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: pr-metadata-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  description:
+    name: pr description
+    runs-on: ubuntu-latest
+    steps:
+      - name: A pull request describes what it changes
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+          LOGIN: ${{ github.event.pull_request.user.login }}
+          TYPE: ${{ github.event.pull_request.user.type }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          # Bots (renovate, dependabot) write their own structured bodies; don't hold them to this.
+          if [ "$TYPE" = "Bot" ]; then echo "Bot author (${LOGIN}) — skipped."; exit 0; fi
+          case "$LOGIN" in *'[bot]') echo "Bot author (${LOGIN}) — skipped."; exit 0;; esac
+          # An explicit opt-out for a genuinely self-explanatory change.
+          if printf '%s' "$LABELS" | grep -q '"trivial"'; then
+            echo "Labelled trivial — skipped."; exit 0
+          fi
+          # Drop the template's HTML-comment guidance and all whitespace before measuring, so a
+          # body that is only the unfilled template, or only a title, does not pass.
+          stripped="$(printf '%s' "$BODY" | perl -0777 -pe 's/<!--.*?-->//gs')"
+          chars="$(printf '%s' "$stripped" | tr -d '[:space:]' | wc -c | tr -d ' ')"
+          if [ "${chars:-0}" -lt 40 ]; then
+            echo "::error::This pull request has no real description — say what it changes and why."
+            echo "From the CLI the template is not auto-added; seed it and fill it in:"
+            echo "  gh pr create --body-file .github/PULL_REQUEST_TEMPLATE.md"
+            echo "or open the editor pre-filled (no --body/--fill): gh pr create -T .github/PULL_REQUEST_TEMPLATE.md"
+            echo "A genuinely self-explanatory change can carry the 'trivial' label."
+            exit 1
+          fi
+          echo "Description present (${chars} characters of prose)."
