@@ -28,6 +28,16 @@ use context::{Declared, declared_context_shape, prune, union};
 
 /// The authority model: schema + policies + entity graph. Pure data —
 /// adding principals, tenants or resources never touches code.
+///
+/// # Examples
+///
+/// ```
+/// use decern_kernel::Model;
+///
+/// let model = Model::builtin();
+/// assert!(!model.schema.is_empty());
+/// assert!(!model.policies.is_empty());
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
     pub schema: String,
@@ -90,6 +100,16 @@ pub enum KernelError {
 }
 
 /// A subject/resource reference, AuthZEN-shaped.
+///
+/// # Examples
+///
+/// ```
+/// use decern_kernel::EntityRef;
+///
+/// let principal = EntityRef { ty: "Principal".into(), id: "alice".into() };
+/// let resource = EntityRef { ty: "Resource".into(), id: "doc1".into() };
+/// assert_eq!(principal.ty, "Principal");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityRef {
     #[serde(rename = "type")]
@@ -103,6 +123,32 @@ pub struct EntityRef {
 /// action, resource or context, or one the schema refuses, such as a resource type the
 /// action does not apply to) is a Deny with an error and no reasons, and a policy that
 /// failed to evaluate is reported here and skipped, whatever the decision.
+///
+/// # Examples
+///
+/// ```
+/// use decern_kernel::{EntityRef, Kernel, Model};
+/// use serde_json::json;
+///
+/// let k = Kernel::new(&Model::builtin()).unwrap();
+/// let allow = k.check(
+///     &EntityRef { ty: "Principal".into(), id: "corp".into() },
+///     "Read",
+///     &EntityRef { ty: "Resource".into(), id: "claim1".into() },
+///     &json!({"now": 100}),
+/// );
+/// assert!(allow.decision);
+/// assert!(!allow.reasons.is_empty(), "an Allow names its permits");
+///
+/// let deny = k.check(
+///     &EntityRef { ty: "Principal".into(), id: "agent1".into() },
+///     "Read",
+///     &EntityRef { ty: "Resource".into(), id: "claim1".into() },
+///     &json!({"now": 500}),
+/// );
+/// assert!(!deny.decision);
+/// assert!(!deny.reasons.is_empty(), "a forbid-caused Deny names the forbid");
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckResponse {
     pub decision: bool,
@@ -139,6 +185,14 @@ impl Kernel {
     /// Build a kernel from a model. Fail-closed: schema must parse, policies
     /// must be well-typed against it, entities must conform, and the graph
     /// must pass attenuation validation — or nothing loads.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use decern_kernel::{Kernel, Model};
+    ///
+    /// let kernel = Kernel::new(&Model::builtin()).expect("builtin model loads");
+    /// ```
     pub fn new(model: &Model) -> Result<Self, KernelError> {
         let (schema, _warnings) = Schema::from_cedarschema_str(&model.schema)
             .map_err(|e| KernelError::Schema(e.to_string()))?;
@@ -251,6 +305,22 @@ impl Kernel {
     /// The deterministic decision. `context` must be a JSON object and must
     /// carry `now` (the kernel never reads a clock). Any malformed input
     /// resolves to Deny with the cause in `errors`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use decern_kernel::{EntityRef, Kernel, Model};
+    /// use serde_json::json;
+    ///
+    /// let k = Kernel::new(&Model::builtin()).unwrap();
+    /// let r = k.check(
+    ///     &EntityRef { ty: "Principal".into(), id: "corp".into() },
+    ///     "Read",
+    ///     &EntityRef { ty: "Resource".into(), id: "claim1".into() },
+    ///     &json!({"now": 100}),
+    /// );
+    /// assert!(r.decision);
+    /// ```
     pub fn check(
         &self,
         subject: &EntityRef,

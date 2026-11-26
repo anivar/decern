@@ -40,6 +40,17 @@ pub fn canonicalize(v: &Value) -> String {
 
 /// SHA-256 (lowercase hex) over the canonical form of `v` — how every entry in
 /// [`crate::Entry::digests`] is computed, whatever is being pinned.
+///
+/// # Examples
+///
+/// ```
+/// use serde_json::json;
+///
+/// let d1 = decern_ledger::digest(&json!({"b": 1, "a": 2}));
+/// let d2 = decern_ledger::digest(&json!({"a": 2, "b": 1}));
+/// assert_eq!(d1, d2, "key order does not change the digest");
+/// assert_eq!(d1.len(), 64, "SHA-256 hex is 64 characters");
+/// ```
 pub fn digest(v: &Value) -> String {
     hex::encode(Sha256::digest(canonicalize(v).as_bytes()))
 }
