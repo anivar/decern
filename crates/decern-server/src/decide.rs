@@ -819,7 +819,7 @@ pub(crate) fn strip_client_approval_flags(ctx: &mut Value) {
 /// `None` means "this action has no scope mapping", which under a Mission is a
 /// refusal, not a pass — see `bind_mission`. An action added to the model without
 /// a mapping here must not inherit every Mission's approval by omission.
-fn scope_for_action(action: &str) -> Option<&'static str> {
+pub(crate) fn scope_for_action(action: &str) -> Option<&'static str> {
     match action {
         "Read" => Some("read"),
         "MoveMoney" => Some("move_money"),

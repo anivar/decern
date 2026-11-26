@@ -31,6 +31,18 @@ async fn echo_request_id(
     response
 }
 
+async fn nosniff(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(req).await;
+    response.headers_mut().insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        axum::http::HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
 pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
     let clock = state.clock;
     // Everything that decides, or that changes what a later decision will be. Split into
@@ -103,6 +115,7 @@ pub(crate) fn app(state: AppState, caller: Arc<caller::Caller>) -> Router {
         .merge(guarded)
         .with_state(state)
         .layer(axum::middleware::from_fn(echo_request_id))
+        .layer(axum::middleware::from_fn(nosniff))
         .layer(axum::middleware::from_fn(crate::serve::deadline))
 }
 
@@ -1986,6 +1999,33 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["decision"], false, "{body}");
         assert!(has_error(&body, "move_money"), "{body}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn every_response_carries_nosniff() {
+        use tower::ServiceExt;
+
+        let base = mission_base();
+        let (st, _pk) = mission_state_at(&base);
+        let caller = Arc::new(caller::Caller::TrustedProxy);
+        let router = app(st, caller);
+        let response = router
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/healthz")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response
+                .headers()
+                .get("x-content-type-options")
+                .map(|v| v.as_bytes()),
+            Some(b"nosniff".as_slice()),
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }
