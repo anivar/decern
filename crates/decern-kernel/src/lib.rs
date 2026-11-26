@@ -56,7 +56,7 @@ impl Model {
             env!("CARGO_MANIFEST_DIR"),
             "/model/entities.json"
         )))
-        .unwrap_or(Value::Null); // include_str is compile-time constant; parse cannot fail in practice
+        .expect("builtin entities.json must be valid JSON");
         Model {
             schema: include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
@@ -213,6 +213,11 @@ impl Kernel {
     /// resolve to for a decision to be about anything.
     pub fn entity_types(&self) -> impl Iterator<Item = String> + '_ {
         self.schema.entity_types().map(ToString::to_string)
+    }
+
+    /// The actions the schema declares, by name.
+    pub fn declared_actions(&self) -> impl Iterator<Item = &str> {
+        self.context_shape.keys().map(String::as_str)
     }
 
     /// Drop what `action`'s declared context does not include, at every level, and name
@@ -1131,5 +1136,15 @@ mod tests {
         // gate must not touch it (agent1 reads claim1 on behalf of corp).
         let r = kernel().check(&sub("agent1"), "Read", &res("claim1"), &json!({"now": 100}));
         assert!(r.decision, "non-PII delegated read must still allow: {r:?}");
+    }
+
+    #[test]
+    fn declared_actions_lists_every_action_the_schema_defines() {
+        let k = kernel();
+        let actions: Vec<&str> = k.declared_actions().collect();
+        assert!(actions.contains(&"Read"), "{actions:?}");
+        assert!(actions.contains(&"MoveMoney"), "{actions:?}");
+        assert!(actions.contains(&"AccessPII"), "{actions:?}");
+        assert!(!actions.contains(&"Nope"), "{actions:?}");
     }
 }

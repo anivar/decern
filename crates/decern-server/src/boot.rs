@@ -90,6 +90,17 @@ pub(crate) async fn prepare(args: Args) -> Result<Boot> {
         None => Model::builtin(),
     };
     let kernel = Kernel::new(&model)?;
+    let unmapped: Vec<&str> = kernel
+        .declared_actions()
+        .filter(|a| crate::decide::scope_for_action(a).is_none())
+        .collect();
+    if !unmapped.is_empty() {
+        eprintln!(
+            "warning: model declares actions with no scope mapping: {}; \
+             a Mission cannot be shown to approve them",
+            unmapped.join(", ")
+        );
+    }
     let sharded = args
         .sharded
         .as_deref()
