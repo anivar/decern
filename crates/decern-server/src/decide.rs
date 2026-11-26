@@ -588,14 +588,19 @@ fn prepare(
         now_s,
     );
     let (bound, errors) = match mission_bind {
-        // No Mission named and none required: `context` is left as the caller sent
-        // it, including any approval flags, for every action except MoveMoney (which
-        // `bind_mission` already denied above rather than reaching here). Establishing
-        // the caller (the bearer guard, or the trusted front) says who is asserting
-        // those flags, not that they are true — approval is server-derived only under
-        // a Mission, and an operator who wants that guarantee for Read/AccessPII too
-        // must run `--require-mission`.
-        MissionBind::None => (None, Vec::new()),
+        // No Mission named and none required. Mapped actions keep the caller's
+        // approval flags as-is (approval is server-derived only under a Mission,
+        // and an operator who wants that guarantee for Read/AccessPII too must run
+        // `--require-mission`). Unmapped actions strip them: the server cannot
+        // scope-check an action it has no mapping for, so a caller-supplied flag
+        // must not ride through unsupervised for an action added to the model but
+        // not to the server's scope table.
+        MissionBind::None => {
+            if scope_for_action(&action).is_none() {
+                strip_client_approval_flags(&mut ctx);
+            }
+            (None, Vec::new())
+        }
         MissionBind::Ok(mref) => {
             apply_mission_context(&mut ctx, &action);
             (Some(mref), Vec::new())
@@ -1293,6 +1298,68 @@ mod tests {
             "a body-asserted human_approved must not move money without a Mission: {body}"
         );
         assert!(has_error(&body, "MoveMoney"), "{body}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An unmapped action's caller-supplied approval flags are stripped when no Mission
+    /// is named, so a `human_approved` or `consent` asserted directly for an action the
+    /// server cannot scope-check never reaches the kernel. The action itself is still
+    /// evaluated — the Cedar forbids handle the denial — but the flag is gone.
+    #[tokio::test]
+    async fn unmapped_action_strips_approval_flags_without_a_mission() {
+        let base = mission_base();
+        let (st, pubkey) = mission_state_at(&base);
+        assert!(!st.require_mission, "fixture guard: opt-in flag is off");
+        // A mapped action (Read) keeps the caller's consent flag; an unmapped action
+        // ("UnmappedAction") strips it. Both are recorded; the difference is in the
+        // recorded context.
+        let mapped: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"corp"},
+                "action":{"name":"Read"},
+                "resource":{"type":"Resource","id":"claim1"},
+                "context":{"consent":true}}"#,
+        )
+        .unwrap();
+        let (status, _) = body_json(decide(State(st.clone()), None, Ok(Json(mapped))).await).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let unmapped: DecideReq = serde_json::from_str(
+            r#"{"subject":{"type":"Principal","id":"corp"},
+                "action":{"name":"UnmappedAction"},
+                "resource":{"type":"Resource","id":"claim1"},
+                "context":{"human_approved":true,"consent":true}}"#,
+        )
+        .unwrap();
+        let (status, body) =
+            body_json(decide(State(st.clone()), None, Ok(Json(unmapped))).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["decision"], false,
+            "unknown action still denies: {body}"
+        );
+
+        let ledger_path = base.join("decern-ledger.jsonl");
+        let (_r, records) =
+            decern_ledger::read_verified(&ledger_path, Some(&pubkey), 0, 100).unwrap();
+        // The mapped action's record kept consent.
+        assert_eq!(
+            records[0]["entry"]["context"]["consent"], true,
+            "a mapped action keeps its flags: {:?}",
+            records[0]["entry"]["context"]
+        );
+        // The unmapped action's record had both flags stripped.
+        assert!(
+            records[1]["entry"]["context"]
+                .get("human_approved")
+                .is_none(),
+            "an unmapped action's human_approved is stripped: {:?}",
+            records[1]["entry"]["context"]
+        );
+        assert!(
+            records[1]["entry"]["context"].get("consent").is_none(),
+            "an unmapped action's consent is stripped: {:?}",
+            records[1]["entry"]["context"]
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
