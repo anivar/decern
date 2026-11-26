@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "decern-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+decern-kernel = { path = "../crates/decern-kernel" }
+
+[[bin]]
+name = "fuzz_decide_req"
+path = "fuzz_targets/fuzz_decide_req.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_entity_graph"
+path = "fuzz_targets/fuzz_entity_graph.rs"
+doc = false
